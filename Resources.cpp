@@ -342,17 +342,18 @@ void CreateMipMap(WORD* src, WORD* dst, int Ls, int Ld)
 	WORD C = *(src + x + y*Ls);
 	B[ y/scale ][ x/scale ]+= (C>> 0) & 31;
 	G[ y/scale ][ x/scale ]+= (C>> 5) & 31;
-	R[ y/scale ][ x/scale ]+= (C>>10) & 31;	
+	R[ y/scale ][ x/scale ]+= (C>>10) & 31;
    }
 
   scale*=scale;
 
-  for (y=0; y<Ld; y++)
+  // SOURCEPORT: added int (MSVC6 scoping fix)
+  for (int y2=0; y2<Ld; y2++)
    for (int x=0; x<Ld; x++) {
-	   R[y][x]/=scale;
-	   G[y][x]/=scale;
-	   B[y][x]/=scale;
-	   *(dst + x + y*Ld) = (R[y][x]<<10) + (G[y][x]<<5) + B[y][x];
+	   R[y2][x]/=scale;
+	   G[y2][x]/=scale;
+	   B[y2][x]/=scale;
+	   *(dst + x + y2*Ld) = (R[y2][x]<<10) + (G[y2][x]<<5) + B[y2][x];
    }
 }
 
@@ -472,12 +473,13 @@ void DATASHIFT(WORD* d, int cnt)
 {
   cnt>>=1;
   /*
-  for (int l=0; l<cnt; l++) 
+  for (int l=0; l<cnt; l++)
 	  *(d+l)=(*(d+l)) & 0x3e0;
 */
   if (HARD3D) return;
-  
-  for (l=0; l<cnt; l++) 
+
+  // SOURCEPORT: added int (MSVC6 scoping fix)
+  for (int l=0; l<cnt; l++)
 	  *(d+l)*=2;
 
 }
@@ -606,24 +608,25 @@ void CorrectModel(TModel *mptr)
 
 	
 	int fp = 0;
-    for (f=0; f<mptr->FCount; f++) 
-		if ( (mptr->gFace[f].Flags & (sfOpacity | sfTransparent))==0)
+	// SOURCEPORT: added int to all three loops (MSVC6 scoping fix)
+    for (int f2=0; f2<mptr->FCount; f2++)
+		if ( (mptr->gFace[f2].Flags & (sfOpacity | sfTransparent))==0)
 		{
-			tface[fp] = mptr->gFace[f];
+			tface[fp] = mptr->gFace[f2];
             fp++;
 		}
 
-	for (f=0; f<mptr->FCount; f++) 
-		if ( (mptr->gFace[f].Flags & sfOpacity)!=0)
+	for (int f3=0; f3<mptr->FCount; f3++)
+		if ( (mptr->gFace[f3].Flags & sfOpacity)!=0)
 		{
-			tface[fp] = mptr->gFace[f];
+			tface[fp] = mptr->gFace[f3];
             fp++;
 		}
 
-    for (f=0; f<mptr->FCount; f++) 
-		if ( (mptr->gFace[f].Flags & sfTransparent)!=0)
+    for (int f4=0; f4<mptr->FCount; f4++)
+		if ( (mptr->gFace[f4].Flags & sfTransparent)!=0)
 		{
-			tface[fp] = mptr->gFace[f];
+			tface[fp] = mptr->gFace[f4];
             fp++;
 		}
 
@@ -1393,10 +1396,11 @@ void LoadResources()
 
 void LoadCharacters()
 {
+	int c; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
 	BOOL pres[64];
 	FillMemory(pres, sizeof(pres), 0);
 	pres[0]=TRUE;
-	for (int c=0; c<ChCount; c++) {
+	for (c=0; c<ChCount; c++) {
 		pres[Characters[c].CType] = TRUE;
 	}
 
@@ -1517,7 +1521,8 @@ void ReleaseCharacterInfo(TCharacterInfo &chinfo)
 	_HeapFree(Heap, 0, chinfo.mptr);
 	chinfo.mptr = NULL;
 
-	for (int c = 0; c<64; c++) {
+	int c; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
+	for (c = 0; c<64; c++) {
      if (!chinfo.Animation[c].aniData) break;
 	 _HeapFree(Heap, 0, chinfo.Animation[c].aniData);
      chinfo.Animation[c].aniData = NULL;

@@ -347,7 +347,8 @@ void d3dEndBufferG(BOOL ColorKey)
 
 
 void d3dFlushBuffer(int fproc1, int fproc2)
-{	
+{
+   int i; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
    BOOL ColorKey = (fproc2>0);
 
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 1024*3);
@@ -389,15 +390,15 @@ void d3dFlushBuffer(int fproc1, int fproc2)
    lpInstruction->bSize   = sizeof(D3DTRIANGLE);
    lpInstruction->wCount  = fproc1;
    lpInstruction++;
-   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;   
-   
+   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;
+
    int ii = 0;
-   for (int i=0; i<fproc1; i++) {  	   
+   for (i=0; i<fproc1; i++) {
 	lpTriangle->wV1    = ii++;
-    lpTriangle->wV2    = ii++;	
-    lpTriangle->wV3    = ii++;	
+    lpTriangle->wV2    = ii++;
+    lpTriangle->wV3    = ii++;
 	lpTriangle->wFlags = 0;
-	lpTriangle++;	
+	lpTriangle++;
    }
 
    lpInstruction = (LPD3DINSTRUCTION)lpTriangle;
@@ -959,17 +960,18 @@ void Init3DHardware()
 
 void d3dDetectCaps()
 {
-
-	for (int t=0; t<d3dmemmapsize; t++) {
+	// SOURCEPORT: moved t declaration outside for-loop (MSVC6 scoping fix)
+	int t;
+	for (t=0; t<d3dmemmapsize; t++) {
 		if (!d3dAllocTexture(t, 256, 256)) break;
 	}
 
 	d3dTexturesMem = t*256*256*2;
 
 
-    d3dDownLoadTexture(0, 256, 256, SkyPic);	
+    d3dDownLoadTexture(0, 256, 256, SkyPic);
 	DWORD T;
-	T = timeGetTime();	
+	T = timeGetTime();
 	for (t=0; t<10; t++) d3dDownLoadTexture(0, 256, 256, SkyPic);
 	T = timeGetTime() - T;	
 	
@@ -3979,8 +3981,9 @@ LNEXT:
 }
 
 void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
-{   
-   int f;   
+{
+   int f;
+   int i; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
 
    mptr = _mptr;
 
@@ -4093,15 +4096,15 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
    lpInstruction->bSize   = sizeof(D3DTRIANGLE);
    lpInstruction->wCount  = fproc1;
    lpInstruction++;
-   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;   
-   
+   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;
+
    int ii = 0;
-   for (int i=0; i<fproc1; i++) {  	   
+   for (i=0; i<fproc1; i++) {
 	lpTriangle->wV1    = ii++;
-    lpTriangle->wV2    = ii++;	
-    lpTriangle->wV3    = ii++;	
+    lpTriangle->wV2    = ii++;
+    lpTriangle->wV3    = ii++;
 	lpTriangle->wFlags = 0;
-	lpTriangle++;	
+	lpTriangle++;
    }
 
     lpInstruction = (LPD3DINSTRUCTION)lpTriangle;
@@ -5005,9 +5008,9 @@ void RenderHealthBar()
     lpVertex++;
   }
 
-  for (y=1; y<3; y++) {	  
+  for (int y2=1; y2<3; y2++) {	  // SOURCEPORT: MSVC6 scoping fix
 	lpVertex->sx       = (float)x0;
-    lpVertex->sy       = (float)y0+y;
+    lpVertex->sy       = (float)y0+y2;
     lpVertex->sz       = 0.99999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = 0xF0000000 + (G<<8) + (R<<16);
@@ -5017,7 +5020,7 @@ void RenderHealthBar()
     lpVertex++;
 
 	lpVertex->sx       = (float)x0+L0;
-    lpVertex->sy       = (float)y0+y;
+    lpVertex->sy       = (float)y0+y2;
     lpVertex->sz       = 0.99999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = 0xF0000000 + (G<<8) + (R<<16);
@@ -5061,9 +5064,9 @@ void RenderHealthBar()
    lpInstruction++;
    lpLine                 = (LPD3DLINE)lpInstruction;   
 
-   for (y=0; y<6; y++) {
-    lpLine->wV1    = y*2;
-    lpLine->wV2    = y*2+1;   
+   for (int y3=0; y3<6; y3++) { // SOURCEPORT: MSVC6 scoping fix
+    lpLine->wV1    = y3*2;
+    lpLine->wV2    = y3*2+1;
     lpLine++;
    }
       

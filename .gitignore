@@ -1,0 +1,9 @@
+build/
+*.user
+*.suo
+*.ncb
+*.sdf
+.vs/
+out/
+Debug/
+Release/
