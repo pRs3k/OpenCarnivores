@@ -13,10 +13,22 @@ DEFINE_GUID(IID_IDirect3D,
 DEFINE_GUID(IID_IDirect3DTexture,
     0x2CDCD9E0, 0x25A0, 0x11CF, 0xA3, 0x1A, 0x00, 0xAA, 0x00, 0xB9, 0x33, 0x56);
 
-// SOURCEPORT: Stub for DirectDrawCreate — the real implementation lives in
-// ddraw.dll. This stub just returns E_FAIL. The D3D renderer will be replaced
-// with OpenGL in Phase 3, so this code path will never be used in production.
+// SOURCEPORT: Load DirectDrawCreate from the real ddraw.dll at runtime.
+// Windows 10 still ships ddraw.dll for backward compatibility.
+// This avoids needing to link against ddraw.lib from the legacy DirectX SDK.
+typedef HRESULT (WINAPI *PFN_DirectDrawCreate)(GUID*, LPDIRECTDRAW*, IUnknown*);
+
+static PFN_DirectDrawCreate pfnDirectDrawCreate = nullptr;
+
+static bool LoadDirectDraw() {
+    if (pfnDirectDrawCreate) return true;
+    HMODULE hDDraw = LoadLibraryA("ddraw.dll");
+    if (!hDDraw) return false;
+    pfnDirectDrawCreate = (PFN_DirectDrawCreate)GetProcAddress(hDDraw, "DirectDrawCreate");
+    return pfnDirectDrawCreate != nullptr;
+}
+
 extern "C" HRESULT WINAPI DirectDrawCreate(GUID* lpGUID, LPDIRECTDRAW* lplpDD, IUnknown* pUnkOuter) {
-    (void)lpGUID; (void)lplpDD; (void)pUnkOuter;
-    return E_FAIL;
+    if (!LoadDirectDraw()) return E_FAIL;
+    return pfnDirectDrawCreate(lpGUID, lplpDD, pUnkOuter);
 }

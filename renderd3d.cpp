@@ -139,9 +139,12 @@ void d3dClearBuffers()
 
   lpddBack->Blt( NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &ddbltfx );  
    
-  ddbltfx.dwSize = sizeof( DDBLTFX );
-  ddbltfx.dwFillDepth = 0x0000;
-  lpddZBuffer->Blt( NULL, NULL, NULL, DDBLT_DEPTHFILL | DDBLT_WAIT, &ddbltfx );
+  // SOURCEPORT: guard against NULL z-buffer (creation may have been skipped)
+  if (lpddZBuffer) {
+      ddbltfx.dwSize = sizeof( DDBLTFX );
+      ddbltfx.dwFillDepth = 0x0000;
+      lpddZBuffer->Blt( NULL, NULL, NULL, DDBLT_DEPTHFILL | DDBLT_WAIT, &ddbltfx );
+  }
 }
 
 
@@ -711,18 +714,26 @@ HRESULT WINAPI EnumDeviceCallback(
 {
    LPD3DDEVICEDESC lpd3dDeviceDesc;
 
-   wsprintf(logt,"ENUMERATE: DDesc: %s DName: %s\n", lpszDeviceDesc, lpszDeviceName);
-   //PrintLog(logt);
-   if( !lpd3dHWDeviceDesc->dcmColorModel )
-      return D3DENUMRET_OK; // we don't need SW rasterizer
+   wsprintf(logt,"ENUMERATE: DDesc: %s DName: %s ColorModel=%d RenderBitDepth=0x%X\n",
+       lpszDeviceDesc, lpszDeviceName,
+       lpd3dHWDeviceDesc->dcmColorModel, lpd3dHWDeviceDesc->dwDeviceRenderBitDepth);
+   PrintLog(logt); // SOURCEPORT: enabled for debugging
 
-   lpd3dDeviceDesc = lpd3dHWDeviceDesc;
-
-   if( (lpd3dDeviceDesc->dwDeviceRenderBitDepth & dwDeviceBitDepth) == 0UL )
+   // SOURCEPORT: Accept HW device first, fall back to SW if no HW found
+   if( lpd3dHWDeviceDesc->dcmColorModel ) {
+      lpd3dDeviceDesc = lpd3dHWDeviceDesc;
+   } else if( lpd3dSWDeviceDesc->dcmColorModel ) {
+      // SOURCEPORT: modern Windows only provides SW D3D6 emulation — accept it
+      PrintLog("  -> Accepting SW device (no HW D3D6 available)\n");
+      lpd3dDeviceDesc = lpd3dSWDeviceDesc;
+   } else {
       return D3DENUMRET_OK;
+   }
 
-   if( !(lpd3dDeviceDesc->dpcTriCaps.dwShadeCaps & D3DPSHADECAPS_COLORGOURAUDRGB) )
-      return D3DENUMRET_OK;
+   // SOURCEPORT: skip bit-depth and caps checks — modern emulation is limited
+   // Original checks disabled for compatibility:
+   // if( (lpd3dDeviceDesc->dwDeviceRenderBitDepth & dwDeviceBitDepth) == 0UL ) return D3DENUMRET_OK;
+   // if( !(lpd3dDeviceDesc->dpcTriCaps.dwShadeCaps & D3DPSHADECAPS_COLORGOURAUDRGB) ) return D3DENUMRET_OK;
 
    fDeviceFound = TRUE;
    CopyMemory( &guidDevice, lpGUID, sizeof(GUID) );
@@ -744,18 +755,39 @@ HRESULT CreateDirect3D( HWND hwnd )
    PrintLog("\n");
    PrintLog("=== Init Direct3D ===\n" );
 
+   // SOURCEPORT: try exclusive fullscreen first, fall back to windowed mode
+   // Modern GPUs often don't support 16bpp exclusive fullscreen
    hRes = lpDD->SetCooperativeLevel( hwnd, DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN );
-   if (FAILED(hRes)) DoHalt("Error setting cooperative level\n");      
+   if (FAILED(hRes)) {
+       PrintLog("DDraw: exclusive mode failed, trying normal\n");
+       hRes = lpDD->SetCooperativeLevel( hwnd, DDSCL_NORMAL );
+   }
+   if (FAILED(hRes)) DoHalt("Error setting cooperative level\n");
 
+   // SOURCEPORT: force minimum 640x480 — lower resolutions unsupported on modern displays
+   if (WinW < 640) { WinW = 640; WinH = 480; OptRes = 3; }
    hRes = lpDD->SetDisplayMode( WinW, WinH, 16 );
    if (FAILED(hRes)) {
-	   PrintLog("DDraw: can't set selected video mode\n");
+	   PrintLog("DDraw: can't set selected video mode, trying 640x480\n");
 	   WinW = 640;
 	   WinH = 480;
 	   OptRes = 3;
 	   hRes = lpDD->SetDisplayMode( WinW, WinH, 16 );
    }
-   if (FAILED(hRes)) DoHalt("Error setting display mode\n");
+   if (FAILED(hRes)) {
+       // SOURCEPORT: 16bpp modes may not be available; try 32bpp
+       PrintLog("DDraw: 16bpp failed, trying 32bpp\n");
+       hRes = lpDD->SetDisplayMode( WinW, WinH, 32 );
+   }
+   if (FAILED(hRes)) {
+       // SOURCEPORT: fullscreen modes unavailable — use windowed mode with DDSCL_NORMAL
+       PrintLog("DDraw: all fullscreen modes failed, switching to windowed\n");
+       lpDD->SetCooperativeLevel( hwnd, DDSCL_NORMAL );
+       // Resize window to desired dimensions
+       SetWindowLong(hwnd, GWL_STYLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE);
+       SetWindowPos(hwnd, HWND_TOP, 100, 100, WinW+16, WinH+39, SWP_SHOWWINDOW);
+       hRes = DD_OK; // skip SetDisplayMode in windowed mode
+   }
    wsprintf(logt, "Set Display mode %dx%d, 16bpp\n", WinW, WinH);
    PrintLog(logt);
    
@@ -804,34 +836,96 @@ HRESULT CreateDevice(DWORD dwWidth, DWORD dwHeight)
    ddsd.dwHeight       = dwHeight;
    ddsd.ddsCaps.dwCaps = DDSCAPS_3DDEVICE | DDSCAPS_OFFSCREENPLAIN | DDSCAPS_VIDEOMEMORY;
    hRes = lpDD->CreateSurface( &ddsd, &lpddBack, NULL);
+   // SOURCEPORT: fallback to system memory if VRAM back buffer fails
+   if (FAILED(hRes)) {
+       PrintLog("BackBuffer: VRAM failed, trying without VIDEOMEMORY\n");
+       ddsd.ddsCaps.dwCaps = DDSCAPS_3DDEVICE | DDSCAPS_OFFSCREENPLAIN;
+       hRes = lpDD->CreateSurface( &ddsd, &lpddBack, NULL);
+   }
    if (FAILED(hRes)) DoHalt("Error creating back buffer surface\n");
    PrintLog("CreateSurface: Ok. (BackBuffer)\n");   
 
          
+   wsprintf(logt, "Z-Buffer caps: dwDeviceZBufferBitDepth=0x%X\n", d3dHWDeviceDesc.dwDeviceZBufferBitDepth);
+   PrintLog(logt); // SOURCEPORT: debug
    if( d3dHWDeviceDesc.dwDeviceZBufferBitDepth != 0UL ) {
       dwZBufferBitDepth = FlagsToBitDepth( d3dHWDeviceDesc.dwDeviceZBufferBitDepth );
 
-      ZeroMemory(&ddsd, sizeof(ddsd));
-      ddsd.dwSize            = sizeof(ddsd);
-      ddsd.dwFlags           = DDSD_CAPS|DDSD_WIDTH|DDSD_HEIGHT|DDSD_ZBUFFERBITDEPTH;
-      ddsd.ddsCaps.dwCaps    = DDSCAPS_ZBUFFER | DDSCAPS_VIDEOMEMORY;
-      ddsd.dwWidth           = dwWidth;
-      ddsd.dwHeight          = dwHeight;
-      ddsd.dwZBufferBitDepth = 16;//dwZBufferBitDepth;
-      hRes = lpDD->CreateSurface( &ddsd, &lpddZBuffer, NULL);
-/*
-	  if (FAILED(hRes)) {
-	   ddsd.dwZBufferBitDepth = 16;//dwZBufferBitDepth;
-       hRes = lpDD->CreateSurface( &ddsd, &lpddZBuffer, NULL);
-	   PrintLog("Z-Buffer: 16 bit\n");
-	  } else 
-	   PrintLog("Z-Buffer: 32 bit\n");
-*/
-      if (FAILED(hRes)) DoHalt("Error creating z-buffer\n");
-         
-      hRes = lpddBack->AddAttachedSurface( lpddZBuffer );
-      if (FAILED(hRes)) DoHalt("Error attaching z-buffer\n");         
-	  PrintLog("CreateSurface: Ok. (Z-buffer)\n");
+      // SOURCEPORT: Try two Z-buffer creation methods:
+      // Method 1: DDSD_PIXELFORMAT (modern, works with dgVoodoo2)
+      // Method 2: DDSD_ZBUFFERBITDEPTH (legacy, works with original DX6)
+
+      // SOURCEPORT: Try multiple Z-buffer creation strategies
+      // dgVoodoo2 reports 16+24bit Z-buffer support
+
+      // Try DDSD_PIXELFORMAT method (preferred for dgVoodoo2)
+      DWORD zbDepths[] = {16, 24, 32};
+      DWORD zbMasks[]  = {0x0000FFFF, 0x00FFFFFF, 0xFFFFFFFF};
+      hRes = E_FAIL;
+      for (int zi = 0; zi < 3 && FAILED(hRes); zi++) {
+          ZeroMemory(&ddsd, sizeof(ddsd));
+          ddsd.dwSize            = sizeof(ddsd);
+          ddsd.dwFlags           = DDSD_CAPS|DDSD_WIDTH|DDSD_HEIGHT|DDSD_PIXELFORMAT;
+          ddsd.ddsCaps.dwCaps    = DDSCAPS_ZBUFFER | DDSCAPS_VIDEOMEMORY;
+          ddsd.dwWidth           = dwWidth;
+          ddsd.dwHeight          = dwHeight;
+          ddsd.ddpfPixelFormat.dwSize  = sizeof(DDPIXELFORMAT);
+          ddsd.ddpfPixelFormat.dwFlags = 0x00000400; // DDPF_ZBUFFER
+          ddsd.ddpfPixelFormat.dwZBufferBitDepth = zbDepths[zi];
+          ddsd.ddpfPixelFormat.dwRBitMask = zbMasks[zi];
+          wsprintf(logt, "Z-Buffer: trying %dbit VRAM+PIXFMT -> ", zbDepths[zi]);
+          PrintLog(logt);
+          hRes = lpDD->CreateSurface( &ddsd, &lpddZBuffer, NULL);
+          wsprintf(logt, "0x%08X\n", hRes);
+          PrintLog(logt);
+      }
+      // Try without VIDEOMEMORY
+      for (int zi = 0; zi < 3 && FAILED(hRes); zi++) {
+          ZeroMemory(&ddsd, sizeof(ddsd));
+          ddsd.dwSize            = sizeof(ddsd);
+          ddsd.dwFlags           = DDSD_CAPS|DDSD_WIDTH|DDSD_HEIGHT|DDSD_PIXELFORMAT;
+          ddsd.ddsCaps.dwCaps    = DDSCAPS_ZBUFFER;
+          ddsd.dwWidth           = dwWidth;
+          ddsd.dwHeight          = dwHeight;
+          ddsd.ddpfPixelFormat.dwSize  = sizeof(DDPIXELFORMAT);
+          ddsd.ddpfPixelFormat.dwFlags = 0x00000400; // DDPF_ZBUFFER
+          ddsd.ddpfPixelFormat.dwZBufferBitDepth = zbDepths[zi];
+          ddsd.ddpfPixelFormat.dwRBitMask = zbMasks[zi];
+          wsprintf(logt, "Z-Buffer: trying %dbit SYSMEM+PIXFMT -> ", zbDepths[zi]);
+          PrintLog(logt);
+          hRes = lpDD->CreateSurface( &ddsd, &lpddZBuffer, NULL);
+          wsprintf(logt, "0x%08X\n", hRes);
+          PrintLog(logt);
+      }
+      // Try legacy ZBUFFERBITDEPTH method
+      for (int zi = 0; zi < 3 && FAILED(hRes); zi++) {
+          ZeroMemory(&ddsd, sizeof(ddsd));
+          ddsd.dwSize            = sizeof(ddsd);
+          ddsd.dwFlags           = DDSD_CAPS|DDSD_WIDTH|DDSD_HEIGHT|DDSD_ZBUFFERBITDEPTH;
+          ddsd.ddsCaps.dwCaps    = DDSCAPS_ZBUFFER | DDSCAPS_VIDEOMEMORY;
+          ddsd.dwWidth           = dwWidth;
+          ddsd.dwHeight          = dwHeight;
+          ddsd.dwZBufferBitDepth = zbDepths[zi];
+          wsprintf(logt, "Z-Buffer: trying %dbit VRAM+legacy -> ", zbDepths[zi]);
+          PrintLog(logt);
+          hRes = lpDD->CreateSurface( &ddsd, &lpddZBuffer, NULL);
+          wsprintf(logt, "0x%08X\n", hRes);
+          PrintLog(logt);
+      }
+      if (FAILED(hRes)) {
+          // SOURCEPORT: skip Z-buffer if creation fails entirely — D3D6 emulation may not support it
+          PrintLog("WARNING: Z-buffer creation failed — depth testing disabled\n");
+          lpddZBuffer = NULL;
+      } else {
+          hRes = lpddBack->AddAttachedSurface( lpddZBuffer );
+          if (FAILED(hRes)) {
+              PrintLog("WARNING: Z-buffer attach failed\n");
+              lpddZBuffer->Release();
+              lpddZBuffer = NULL;
+          } else {
+              PrintLog("CreateSurface: Ok. (Z-buffer)\n");
+          }
+      }
    }
 
       
@@ -899,10 +993,9 @@ HRESULT CreateScene(void)
     d3dExecuteData.dwSize              = sizeof(d3dExecuteData);
     d3dExecuteData.dwVertexCount       = 1024;
     d3dExecuteData.dwInstructionOffset = dwVertexSize;
-    d3dExecuteData.dwInstructionLength = dwInstructionSize;	
+    d3dExecuteData.dwInstructionLength = dwInstructionSize;
     hRes = lpd3dExecuteBuffer->SetExecuteData( &d3dExecuteData );
     if (FAILED(hRes)) DoHalt("Error setting execute data\n");
-
 
 		//=========== CREATING EXECUTE BUFFER ======================//
     dwVertexSize        = ((400*3)            * sizeof(D3DVERTEX));
@@ -916,20 +1009,16 @@ HRESULT CreateScene(void)
     d3dExecuteBufferDesc.dwSize       = sizeof(d3dExecuteBufferDesc);
     d3dExecuteBufferDesc.dwFlags      = D3DDEB_BUFSIZE;
     d3dExecuteBufferDesc.dwBufferSize = dwExecuteBufferSize;
-    hRes = lpd3dDevice->CreateExecuteBuffer( &d3dExecuteBufferDesc, &lpd3dExecuteBufferG, NULL);	
-	if (FAILED(hRes)) DoHalt( "Error creating execute buffer\n");       
-    PrintLog("CreateExecuteBuffer: Ok.\n");
+    hRes = lpd3dDevice->CreateExecuteBuffer( &d3dExecuteBufferDesc, &lpd3dExecuteBufferG, NULL);
+	if (FAILED(hRes)) DoHalt( "Error creating execute buffer\n");
 
 	ZeroMemory(&d3dExecuteData, sizeof(d3dExecuteData));
     d3dExecuteData.dwSize              = sizeof(d3dExecuteData);
     d3dExecuteData.dwVertexCount       = 400;
     d3dExecuteData.dwInstructionOffset = dwVertexSize;
-    d3dExecuteData.dwInstructionLength = dwInstructionSize;	
+    d3dExecuteData.dwInstructionLength = dwInstructionSize;
     hRes = lpd3dExecuteBufferG->SetExecuteData( &d3dExecuteData );
     if (FAILED(hRes)) DoHalt("Error setting execute data\n");
-       
-
-
 
 	FillExecuteBuffer_State(lpd3dExecuteBuffer);
     hRes = lpd3dDevice->Execute( lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
@@ -979,6 +1068,8 @@ void d3dDetectCaps()
 	PrintLog(logt);
 	ResetTextureMap();
 
+	// SOURCEPORT: guard against divide-by-zero on modern fast hardware
+	if (T == 0) T = 1;
 	wsprintf(logt, "DETECTED: Texture transfer speed: %dK/sec.\n", 128*10000 / T);
 	PrintLog(logt);
 
@@ -1135,20 +1226,26 @@ int  d3dTestAlpha()
 
 
 void Activate3DHardware()
-{   	
+{
+	PrintLog("Activate3DHardware: SetVideoMode...\n"); // SOURCEPORT: debug
 	SetVideoMode(WinW,WinH);
 
+	PrintLog("Activate3DHardware: CreateDirect3D...\n"); // SOURCEPORT: debug
     HRESULT hRes = CreateDirect3D(hwndMain);
     if (FAILED(hRes)) DoHalt("CreateDirect3D Failed.\n");
 
+	PrintLog("Activate3DHardware: CreateDevice...\n"); // SOURCEPORT: debug
 	hRes = CreateDevice((DWORD)WinW, (DWORD)WinH);
     if (FAILED(hRes))  DoHalt("Create Device Failed.\n");
 
+	PrintLog("Activate3DHardware: d3dClearBuffers...\n"); // SOURCEPORT: debug
 	d3dClearBuffers();
 
+	PrintLog("Activate3DHardware: CreateScene...\n"); // SOURCEPORT: debug
     hRes = CreateScene();
-    if (FAILED(hRes))  DoHalt("CreateScene Failed.\n");   
+    if (FAILED(hRes))  DoHalt("CreateScene Failed.\n");
 
+	PrintLog("Activate3DHardware: d3dDetectCaps...\n"); // SOURCEPORT: debug
 	d3dDetectCaps();	
 
 	OPT_ALPHA_COLORKEY=FALSE;

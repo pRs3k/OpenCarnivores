@@ -217,13 +217,13 @@ typedef struct _D3DINSTRUCTION {
     WORD wCount;
 } D3DINSTRUCTION, *LPD3DINSTRUCTION;
 
+// SOURCEPORT: Must match real DX6 layout — state type then value, 8 bytes total
 typedef struct _D3DSTATE {
     union {
         D3DRENDERSTATETYPE drstRenderStateType;
-        DWORD dwArg[1];
     };
     union {
-        DWORD dwArg2[1];
+        DWORD dwArg[1];
         D3DVALUE dvArg[1];
     };
 } D3DSTATE, *LPD3DSTATE;
@@ -236,13 +236,29 @@ typedef struct _D3DPROCESSVERTICES {
     DWORD dwReserved;
 } D3DPROCESSVERTICES, *LPD3DPROCESSVERTICES;
 
+// SOURCEPORT: D3DRECT and D3DSTATUS needed for correct D3DEXECUTEDATA layout
+typedef struct _D3DRECT {
+    union { LONG x1; LONG lX1; };
+    union { LONG y1; LONG lY1; };
+    union { LONG x2; LONG lX2; };
+    union { LONG y2; LONG lY2; };
+} D3DRECT, *LPD3DRECT;
+
+typedef struct _D3DSTATUS {
+    DWORD   dwFlags;
+    DWORD   dwStatus;
+    D3DRECT drExtent;
+} D3DSTATUS, *LPD3DSTATUS;
+
+// SOURCEPORT: Fixed — was missing dsStatus field at the end
 typedef struct _D3DEXECUTEDATA {
-    DWORD dwSize;
-    DWORD dwVertexOffset;
-    DWORD dwVertexCount;
-    DWORD dwInstructionOffset;
-    DWORD dwInstructionLength;
-    DWORD dwHVertexOffset;
+    DWORD     dwSize;
+    DWORD     dwVertexOffset;
+    DWORD     dwVertexCount;
+    DWORD     dwInstructionOffset;
+    DWORD     dwInstructionLength;
+    DWORD     dwHVertexOffset;
+    D3DSTATUS dsStatus;
 } D3DEXECUTEDATA;
 
 typedef struct _D3DEXECUTEBUFFERDESC {
@@ -270,18 +286,61 @@ typedef struct _D3DPRIMCAPS {
     DWORD dwStippleHeight;
 } D3DPRIMCAPS;
 
+// SOURCEPORT: D3DTRANSFORMCAPS and D3DLIGHTINGCAPS needed for correct D3DDEVICEDESC layout
+typedef struct _D3DTRANSFORMCAPS {
+    DWORD dwSize;
+    DWORD dwCaps;
+} D3DTRANSFORMCAPS;
+
+typedef struct _D3DLIGHTINGCAPS {
+    DWORD dwSize;
+    DWORD dwCaps;
+    DWORD dwLightingModel;
+    DWORD dwNumLights;
+} D3DLIGHTINGCAPS;
+
+// SOURCEPORT: Full D3DDEVICEDESC matching the real DX6 SDK layout exactly.
+// The original stub had fields in wrong order and missing dtcTransformCaps,
+// bClipping, dlcLightingCaps, and all DX5/6 extension fields.
+// This caused memory corruption when dgVoodoo2 (or any real D3D6 implementation)
+// wrote the full struct into our undersized buffer.
 typedef struct _D3DDEVICEDESC {
-    DWORD           dwSize;
-    DWORD           dwFlags;
-    DWORD           dcmColorModel;
-    DWORD           dwDevCaps;
-    DWORD           dwDeviceRenderBitDepth;
-    DWORD           dwDeviceZBufferBitDepth;
-    DWORD           dwMaxBufferSize;
-    DWORD           dwMaxVertexCount;
-    D3DPRIMCAPS     dpcLineCaps;
-    D3DPRIMCAPS     dpcTriCaps;
-    DWORD           dwDeviceZBufferBitDepth2;
+    DWORD              dwSize;
+    DWORD              dwFlags;
+    DWORD              dcmColorModel;     // D3DCOLORMODEL
+    DWORD              dwDevCaps;
+    D3DTRANSFORMCAPS   dtcTransformCaps;
+    BOOL               bClipping;
+    D3DLIGHTINGCAPS    dlcLightingCaps;
+    D3DPRIMCAPS        dpcLineCaps;
+    D3DPRIMCAPS        dpcTriCaps;
+    DWORD              dwDeviceRenderBitDepth;
+    DWORD              dwDeviceZBufferBitDepth;
+    DWORD              dwMaxBufferSize;
+    DWORD              dwMaxVertexCount;
+    // DX5 extensions
+    DWORD              dwMinTextureWidth;
+    DWORD              dwMinTextureHeight;
+    DWORD              dwMaxTextureWidth;
+    DWORD              dwMaxTextureHeight;
+    DWORD              dwMinStippleWidth;
+    DWORD              dwMaxStippleWidth;
+    DWORD              dwMinStippleHeight;
+    DWORD              dwMaxStippleHeight;
+    // DX6 extensions
+    DWORD              dwMaxTextureRepeat;
+    DWORD              dwMaxTextureAspectRatio;
+    DWORD              dwMaxAnisotropy;
+    D3DVALUE           dvGuardBandLeft;
+    D3DVALUE           dvGuardBandTop;
+    D3DVALUE           dvGuardBandRight;
+    D3DVALUE           dvGuardBandBottom;
+    D3DVALUE           dvExtentsAdjust;
+    DWORD              dwStencilCaps;
+    DWORD              dwFVFCaps;
+    DWORD              dwTextureOpCaps;
+    WORD               wMaxTextureBlendStages;
+    WORD               wMaxSimultaneousTextures;
 } D3DDEVICEDESC, *LPD3DDEVICEDESC;
 
 typedef struct _D3DVIEWPORT {
