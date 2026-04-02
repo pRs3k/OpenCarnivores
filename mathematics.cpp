@@ -607,6 +607,7 @@ void CalcLights(TModel* mptr)
 	int VCount = mptr->VCount;
 	int FCount = mptr->FCount;
     int FUsed;
+	int f; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
 	float c;
 	Vector3d norms[1024];
 	Vector3d a, b, nv, rv;
@@ -618,7 +619,7 @@ void CalcLights(TModel* mptr)
 
 	NormVector(slight, 1.0f);
 
-    for (int f=0; f<FCount; f++) {
+    for (f=0; f<FCount; f++) {
 		int v1 = mptr->gFace[f].v1;
 		int v2 = mptr->gFace[f].v2;
 		int v3 = mptr->gFace[f].v3;

@@ -1063,5 +1063,5 @@ _EXTORNOT char KeysName[256][24] = {
 "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
 	};
 #else
-   _EXTORNOT char KeysName[128][24];
+   _EXTORNOT char KeysName[256][24]; // SOURCEPORT: was 128, must match _MAIN_ definition
 #endif

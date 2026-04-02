@@ -1,4 +1,4 @@
-#define INITGUID
+// SOURCEPORT: removed #define INITGUID — GUIDs are defined in compat/dxguids.cpp
 #include "Hunt.h"
 #include "stdio.h"
 
