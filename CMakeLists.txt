@@ -26,6 +26,8 @@ include_directories(${CMAKE_SOURCE_DIR}/compat)
 # C4267: size_t to int (64-bit pointer width issues)
 if(MSVC)
     add_compile_options(/W3 /wd4996 /wd4244 /wd4267)
+    # SOURCEPORT: Generate map file for crash address resolution during development
+    add_link_options(/MAP)
 endif()
 
 set(SOURCES

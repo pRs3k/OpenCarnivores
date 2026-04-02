@@ -98,13 +98,14 @@ void InitAudioSystem(HWND hw, HANDLE hlog, int  driver)
 	if (!audio_setenvironment) DoHalt("Can't find procedure address.");
 
 	audio_uploadgeometry = (LPFUNC9) GetProcAddress(hAudioDLL, "Audio_UploadGeometry");
-	if (!audio_uploadgeometry) DoHalt("Can't find procedure Audio_UploadGeometry address.");
+	// SOURCEPORT: Audio_UploadGeometry is optional — not exported by retail 1.0 DLLs
 	
 
 	int v1 = audio_getversion()>>16;
 	int v2 = audio_getversion() & 0xFFFF;
+	// SOURCEPORT: downgrade version mismatch from halt to warning for retail DLL compat
 	if ( (v1!=req_versionH) || (v2<req_versionL) )
-		DoHalt("Incorrect audio driver version.");
+		PrintLog("WARNING: Audio driver version mismatch (expected 1.2+)\n");
 
 	initaudiosystem(hw, hlog);	    	
 }
@@ -112,7 +113,8 @@ void InitAudioSystem(HWND hw, HANDLE hlog, int  driver)
 void Audio_UploadGeometry()
 {
 	UploadGeometry();
-	audio_uploadgeometry(AudioFCount, data);
+	if (audio_uploadgeometry) // SOURCEPORT: optional, not in retail 1.0 DLLs
+		audio_uploadgeometry(AudioFCount, data);
 }
 
 

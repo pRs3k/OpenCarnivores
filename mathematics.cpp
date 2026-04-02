@@ -220,7 +220,9 @@ void CheckCollision(float &cx, float &cz)
          if (MObjects[ob].info.YLo + LandY > PlayerY + 256) continue;
 		}
 
-		if (MObjects[ob].info.flags & ofBOUND) {          
+		if (MObjects[ob].info.flags & ofBOUND) {
+			// SOURCEPORT: guard against NULL bound pointer
+			if (MObjects[ob].bound)
 			CheckBoundCollision(cx, cz, ox, oz, LandY, MObjects[ob].bound, ((FMap[ccz+z][ccx+x] >> 2) & 3)  );
 		} 
 		  else

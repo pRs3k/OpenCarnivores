@@ -308,40 +308,50 @@ void AddShadowCircle(int x, int y, int R, int D)
 
 
 
+// SOURCEPORT: debug stage tracking for crash diagnosis
+static const char* drawSceneStage = "init";
 void DrawScene()
-{       
+{
    dFacesCount = 0;
+   drawSceneStage = "trig";
 
    ca = (float)cos(CameraAlpha);
-   sa = (float)sin(CameraAlpha);      
+   sa = (float)sin(CameraAlpha);
 
    cb = (float)cos(CameraBeta);
    sb = (float)sin(CameraBeta);
-   
+
    CCX = ((int)CameraX / 512) * 2;
    CCY = ((int)CameraZ / 512) * 2;
 
-   PreCashGroundModel();         
+   drawSceneStage = "PreCash";
+   PreCashGroundModel();
 
 #ifdef _soft
    CreateChRenderList();
 #endif
-   
-   RenderSkyPlane();   
+
+   drawSceneStage = "SkyPlane";
+   RenderSkyPlane();
 
    cb = (float)cos(CameraBeta);
-   sb = (float)sin(CameraBeta);   
-   
+   sb = (float)sin(CameraBeta);
 
+   drawSceneStage = "Ground";
    RenderGround();
 
+   drawSceneStage = "Models";
    RenderModelsList();
 
+   drawSceneStage = "HWPosts";
    Render3DHardwarePosts();
-   
+
+   drawSceneStage = "Water";
    if (NeedWater) RenderWater();
 
+   drawSceneStage = "Elements";
    RenderElements();
+   drawSceneStage = "done";
 }
 
 
@@ -1526,9 +1536,10 @@ void ProcessGame()
 
     _GameState = 1;
 
-    if (NeedRVM) {		
+    if (NeedRVM) {
+		PrintLog("Activate3DHardware: starting...\n"); // SOURCEPORT: debug
 		SetWindowPos(hwndMain, HWND_TOP, 0,0,0,0,  SWP_SHOWWINDOW);
-		SetFocus(hwndMain);							    
+		SetFocus(hwndMain);
 		Activate3DHardware();		
 		NeedRVM = FALSE;
 	}
@@ -1547,26 +1558,49 @@ void ProcessGame()
 		if (MyHealth) MyHealth = MAX_HEALTH;
 	if (DEBUG) ShotsLeft[CurrentWeapon] = WeapInfo[CurrentWeapon].Shots;
     
-	DrawScene();   	
+	DrawScene();
 
+    drawSceneStage = "DrawHMap"; // SOURCEPORT: debug
 	if (!TrophyMode)
      if (MapMode) DrawHMap();
 
-    DrawPostObjects(); 
-	
+    drawSceneStage = "PostObj"; // SOURCEPORT: debug
+    DrawPostObjects();
+
+    drawSceneStage = "Controls"; // SOURCEPORT: debug
     ShowControlElements();
-	        
-    ShowVideo();    
+
+    drawSceneStage = "ShowVideo"; // SOURCEPORT: debug
+    ShowVideo();
+    drawSceneStage = "frameDone"; // SOURCEPORT: debug
 }
 
 
 
+// SOURCEPORT: top-level crash handler to log crash info during development
+extern const char* drawSceneStage; // SOURCEPORT: defined in DrawScene
+static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
+    char buf[1024];
+    wsprintfA(buf, "CRASH: code=0x%08X addr=0x%p\nDrawScene stage: %s\n",
+        ep->ExceptionRecord->ExceptionCode,
+        ep->ExceptionRecord->ExceptionAddress,
+        drawSceneStage ? drawSceneStage : "NULL");
+    HANDLE hf = CreateFileA("crash.log", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    if (hf != INVALID_HANDLE_VALUE) {
+        DWORD w; WriteFile(hf, buf, lstrlenA(buf), &w, NULL); CloseHandle(hf);
+    }
+    OutputDebugStringA(buf);
+    MessageBoxA(NULL, buf, "OpenCarnivores Crash", MB_OK | MB_ICONERROR);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			       LPSTR lpszCmdLine, int nCmdShow)
 {
-    MSG msg;	
-	
-	hInst = hInstance;    
+    SetUnhandledExceptionFilter(CrashHandler); // SOURCEPORT
+    MSG msg;
+
+	hInst = hInstance;
 	CreateLog();
 	   
 	CreateMainWindow();            

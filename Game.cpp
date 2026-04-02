@@ -782,7 +782,8 @@ void InitEngine()
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, NULL);	
 
 
-    Heap = HeapCreate( 0, 60000000, 64000000 );
+    // SOURCEPORT: use growable heap (0 max = no limit) instead of fixed 64MB
+    Heap = HeapCreate( 0, 60000000, 0 );
     if( Heap == NULL ) {
       MessageBox(hwndMain,"Error creating heap.","Error",IDOK);     
       return; }

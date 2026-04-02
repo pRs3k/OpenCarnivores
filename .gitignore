@@ -7,3 +7,21 @@ build/
 out/
 Debug/
 Release/
+
+# Game assets (copyrighted, must be supplied by user from retail install)
+HUNTDAT/
+*.DLL
+*.dll
+
+# dgVoodoo2 wrapper (downloaded separately)
+dgvoodoo2/
+DDraw.dll
+D3DImm.dll
+dgVoodoo.conf
+dgVoodooCpl.exe
+
+# Runtime logs
+render.log
+crash.log
+early_start.log
+*.log
