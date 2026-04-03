@@ -4638,7 +4638,7 @@ void CreateChMorphedModel(TCharacter *cptr)
    TAni *aptr  = &cptr->pinfo->Animation[cptr->Phase];   
    TAni *paptr = &cptr->pinfo->Animation[cptr->PrevPhase];   
 
-   int CurFrame, SplineD, PCurFrame, PSplineD;
+   int CurFrame, SplineD, PCurFrame = 0, PSplineD = 0;  // SOURCEPORT: initialize to fix MSVC RTC #3 (used uninitialized when PMorph is false)
    float scale = cptr->scale;
 
    CurFrame = ( (aptr->FramesCount-1) * cptr->FTime * 256) / aptr->AniTime;

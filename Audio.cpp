@@ -98,15 +98,11 @@ int InitDirectSound( HWND hwnd)
    PrintLog("DirectSoundCreate: Ok\n");
 
 
-   PrimaryMode = TRUE;
-   PrintLog("Attempting to set WRITEPRIMARY CooperativeLevel:\n");
-   hres = lpDS->SetCooperativeLevel( hwnd, DSSCL_WRITEPRIMARY );
-   if (hres != DS_OK) {	  
-	  wsprintf(logtt, "SetCooperativeLevel Error: %Xh\n", hres);
-	  PrintLog(logtt);
-      PrimaryMode = FALSE;
-   } else
-    PrintLog("Set Cooperative  : Ok\n");
+   // SOURCEPORT: Skip WRITEPRIMARY mode — it's broken on Windows Vista+ where DirectSound
+   // is emulated through WASAPI. Writing directly to the primary buffer causes audio squealing
+   // and garbage output on modern systems. Force secondary buffer mode instead.
+   PrimaryMode = FALSE;
+   PrintLog("Skipping WRITEPRIMARY (broken on modern Windows), using secondary buffer.\n");
 
 
    if (!PrimaryMode) {

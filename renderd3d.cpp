@@ -31,6 +31,9 @@ WORD                    *lpwTriCount;
 HRESULT                 hRes;
 D3DEXECUTEBUFFERDESC    d3dExeBufDesc;
 D3DEXECUTEBUFFERDESC    d3dExeBufDescG;
+// SOURCEPORT: stored execute data params for per-Execute SetExecuteData calls
+static DWORD            dwExeInstrOffset = 0, dwExeInstrLength = 0;
+static DWORD            dwExeGInstrOffset = 0, dwExeGInstrLength = 0;
 LPD3DINSTRUCTION        lpInstruction, lpInstructionG;
 LPD3DPROCESSVERTICES    lpProcessVertices;
 LPD3DTRIANGLE           lpTriangle;
@@ -120,7 +123,8 @@ void CalcFogLevel_Gradient(Vector3d v)
 
 void Hardware_ZBuffer(BOOL bl)
 {
-	if (!bl) {		
+	if (!bl) {
+		if (!lpddZBuffer) return;  // SOURCEPORT: guard against NULL z-buffer
 		DDBLTFX ddbltfx;
 		ddbltfx.dwSize = sizeof( DDBLTFX );
         ddbltfx.dwFillDepth = 0x0000;
@@ -337,14 +341,25 @@ void d3dEndBufferG(BOOL ColorKey)
 
    lpd3dExecuteBufferG->Unlock( );
 
+   // SOURCEPORT: update execute data with actual vertex count before each Execute
+   {
+       D3DEXECUTEDATA exeData;
+       ZeroMemory(&exeData, sizeof(exeData));
+       exeData.dwSize              = sizeof(exeData);
+       exeData.dwVertexCount       = GVCnt;
+       exeData.dwInstructionOffset = dwExeGInstrOffset;
+       exeData.dwInstructionLength = dwExeGInstrLength;
+       lpd3dExecuteBufferG->SetExecuteData(&exeData);
+   }
+
    dFacesCount+=GVCnt/3;
    lpInstructionG = NULL;
    lpVertexG      = NULL;
    GVCnt          = 0;
-   
+
    hRes = lpd3dDevice->Execute(lpd3dExecuteBufferG, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
    LINEARFILTER = TRUE;
-   
+
 }
 
 
@@ -479,9 +494,19 @@ void d3dFlushBuffer(int fproc1, int fproc2)
 
    lpd3dExecuteBuffer->Unlock( );
    LINEARFILTER = TRUE;
-   
+
+   // SOURCEPORT: update execute data with actual vertex count before each Execute
+   {
+       D3DEXECUTEDATA exeData;
+       ZeroMemory(&exeData, sizeof(exeData));
+       exeData.dwSize              = sizeof(exeData);
+       exeData.dwVertexCount       = (fproc1+fproc2)*3;
+       exeData.dwInstructionOffset = dwExeInstrOffset;
+       exeData.dwInstructionLength = dwExeInstrLength;
+       lpd3dExecuteBuffer->SetExecuteData(&exeData);
+   }
+
    hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
-   //if (FAILED(hRes)) DoHalt("Error execute buffer");   
    dFacesCount+=fproc1+fproc2;
 }
 
@@ -539,14 +564,15 @@ HRESULT FillExecuteBuffer_State( LPDIRECT3DEXECUTEBUFFER lpd3dExecuteBuffer)
    lpInstruction++;
    lpState = (LPD3DSTATE)lpInstruction;
 
+   // SOURCEPORT: disable Z-testing when no Z-buffer exists to prevent crashes
    lpState->drstRenderStateType = D3DRENDERSTATE_ZENABLE;
-   lpState->dwArg[0] = TRUE;
+   lpState->dwArg[0] = (lpddZBuffer != NULL) ? TRUE : FALSE;
    lpState++;
 
    lpState->drstRenderStateType = D3DRENDERSTATE_ZWRITEENABLE;
-   lpState->dwArg[0] = TRUE;
+   lpState->dwArg[0] = (lpddZBuffer != NULL) ? TRUE : FALSE;
    lpState++;
-   
+
    lpState->drstRenderStateType = D3DRENDERSTATE_ZFUNC;
    lpState->dwArg[0] = D3DCMP_GREATEREQUAL;
    lpState++;
@@ -684,9 +710,9 @@ void SetRenderStates(BOOL ZWRITE, int DST_BLEND)
    
 
    lpState->drstRenderStateType = D3DRENDERSTATE_ZWRITEENABLE;
-   lpState->dwArg[0] = ZWRITE;
+   lpState->dwArg[0] = (lpddZBuffer != NULL) ? ZWRITE : FALSE; // SOURCEPORT: no Z-write without Z-buffer
    lpState++;
-                  
+
    lpState->drstRenderStateType = D3DRENDERSTATE_DESTBLEND;
    lpState->dwArg[0] = DST_BLEND;
    lpState++;
@@ -717,7 +743,7 @@ HRESULT WINAPI EnumDeviceCallback(
    wsprintf(logt,"ENUMERATE: DDesc: %s DName: %s ColorModel=%d RenderBitDepth=0x%X\n",
        lpszDeviceDesc, lpszDeviceName,
        lpd3dHWDeviceDesc->dcmColorModel, lpd3dHWDeviceDesc->dwDeviceRenderBitDepth);
-   PrintLog(logt); // SOURCEPORT: enabled for debugging
+   PrintLog(logt);
 
    // SOURCEPORT: Accept HW device first, fall back to SW if no HW found
    if( lpd3dHWDeviceDesc->dcmColorModel ) {
@@ -847,7 +873,7 @@ HRESULT CreateDevice(DWORD dwWidth, DWORD dwHeight)
 
          
    wsprintf(logt, "Z-Buffer caps: dwDeviceZBufferBitDepth=0x%X\n", d3dHWDeviceDesc.dwDeviceZBufferBitDepth);
-   PrintLog(logt); // SOURCEPORT: debug
+   PrintLog(logt);
    if( d3dHWDeviceDesc.dwDeviceZBufferBitDepth != 0UL ) {
       dwZBufferBitDepth = FlagsToBitDepth( d3dHWDeviceDesc.dwDeviceZBufferBitDepth );
 
@@ -969,7 +995,9 @@ HRESULT CreateScene(void)
     d3dViewport.dvScaleY = D3DVAL((float)d3dViewport.dwHeight / 2.0);
     d3dViewport.dvMaxX   = D3DVAL(1.0);
     d3dViewport.dvMaxY   = D3DVAL(1.0);
-    
+    d3dViewport.dvMinZ   = D3DVAL(0.0);  // SOURCEPORT: explicit Z range for dgVoodoo2 compat
+    d3dViewport.dvMaxZ   = D3DVAL(1.0);
+
 	lpd3dViewport->SetViewport( &d3dViewport);
 
     
@@ -991,9 +1019,11 @@ HRESULT CreateScene(void)
 
 	ZeroMemory(&d3dExecuteData, sizeof(d3dExecuteData));
     d3dExecuteData.dwSize              = sizeof(d3dExecuteData);
-    d3dExecuteData.dwVertexCount       = 1024;
+    d3dExecuteData.dwVertexCount       = 1024*3;  // SOURCEPORT: fix — must match actual vertex count, not triangle count
     d3dExecuteData.dwInstructionOffset = dwVertexSize;
     d3dExecuteData.dwInstructionLength = dwInstructionSize;
+    dwExeInstrOffset = dwVertexSize;      // SOURCEPORT: store for per-Execute SetExecuteData
+    dwExeInstrLength = dwInstructionSize;
     hRes = lpd3dExecuteBuffer->SetExecuteData( &d3dExecuteData );
     if (FAILED(hRes)) DoHalt("Error setting execute data\n");
 
@@ -1014,16 +1044,18 @@ HRESULT CreateScene(void)
 
 	ZeroMemory(&d3dExecuteData, sizeof(d3dExecuteData));
     d3dExecuteData.dwSize              = sizeof(d3dExecuteData);
-    d3dExecuteData.dwVertexCount       = 400;
+    d3dExecuteData.dwVertexCount       = 400*3;  // SOURCEPORT: fix — must match actual vertex count, not triangle count
     d3dExecuteData.dwInstructionOffset = dwVertexSize;
     d3dExecuteData.dwInstructionLength = dwInstructionSize;
+    dwExeGInstrOffset = dwVertexSize;     // SOURCEPORT: store for per-Execute SetExecuteData
+    dwExeGInstrLength = dwInstructionSize;
     hRes = lpd3dExecuteBufferG->SetExecuteData( &d3dExecuteData );
     if (FAILED(hRes)) DoHalt("Error setting execute data\n");
 
 	FillExecuteBuffer_State(lpd3dExecuteBuffer);
     hRes = lpd3dDevice->Execute( lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
-	
-    return DD_OK;		
+
+    return DD_OK;
 }
 
 
@@ -1227,25 +1259,19 @@ int  d3dTestAlpha()
 
 void Activate3DHardware()
 {
-	PrintLog("Activate3DHardware: SetVideoMode...\n"); // SOURCEPORT: debug
 	SetVideoMode(WinW,WinH);
 
-	PrintLog("Activate3DHardware: CreateDirect3D...\n"); // SOURCEPORT: debug
     HRESULT hRes = CreateDirect3D(hwndMain);
     if (FAILED(hRes)) DoHalt("CreateDirect3D Failed.\n");
 
-	PrintLog("Activate3DHardware: CreateDevice...\n"); // SOURCEPORT: debug
 	hRes = CreateDevice((DWORD)WinW, (DWORD)WinH);
     if (FAILED(hRes))  DoHalt("Create Device Failed.\n");
 
-	PrintLog("Activate3DHardware: d3dClearBuffers...\n"); // SOURCEPORT: debug
 	d3dClearBuffers();
 
-	PrintLog("Activate3DHardware: CreateScene...\n"); // SOURCEPORT: debug
     hRes = CreateScene();
     if (FAILED(hRes))  DoHalt("CreateScene Failed.\n");
 
-	PrintLog("Activate3DHardware: d3dDetectCaps...\n"); // SOURCEPORT: debug
 	d3dDetectCaps();	
 
 	OPT_ALPHA_COLORKEY=FALSE;
@@ -1507,13 +1533,14 @@ float GetTraceK(int x, int y)
 {	
 	
   if (x<8 || y<8 || x>WinW-8 || y>WinH-8) return 0.f;
-  
+  if (!lpddZBuffer) return 0.f;  // SOURCEPORT: guard against NULL z-buffer
+
   float k = 0;
 
-  DDSURFACEDESC ddsd;	 
+  DDSURFACEDESC ddsd;
   ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
   ddsd.dwSize = sizeof(DDSURFACEDESC);
-  if( lpddZBuffer->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) {	  
+  if( lpddZBuffer->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) {
 	  return 0;
   }
 
@@ -1658,9 +1685,8 @@ void ShowVideo()
 
 
   hRes = lpd3dDevice->EndScene();
+  hRes = lpddPrimary->Blt( NULL, lpddBack, NULL, DDBLT_WAIT, NULL );
 
-  hRes = lpddPrimary->Blt( NULL, lpddBack, NULL, DDBLT_WAIT, NULL );  
-  
   d3dClearBuffers();
 
   hRes = lpd3dDevice->BeginScene( );

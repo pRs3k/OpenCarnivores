@@ -452,6 +452,7 @@ void ProcessCommandLine()
 	 if (strstr(s,"-radar"))   RadarMode = TRUE;
 	 if (strstr(s,"-tranq")) Tranq = TRUE;
 	 if (strstr(s,"-observ")) ObservMode = TRUE;
+	 if (strstr(s,"-nosnd"))  OptSound = -1;  // SOURCEPORT: disable audio
   } 
 }
 
