@@ -146,7 +146,7 @@ typedef enum _D3DOPCODE {
     D3DOP_STATETRANSFORM    = 6,
     D3DOP_STATELIGHT        = 7,
     D3DOP_STATERENDER       = 8,
-    D3DOP_PROCESSVERTICES   = 25,
+    D3DOP_PROCESSVERTICES   = 9,   // SOURCEPORT: fix — was incorrectly 25
     D3DOP_EXIT              = 11,
 } D3DOPCODE;
 
@@ -159,7 +159,8 @@ typedef enum _D3DOPCODE {
 // Execute buffer flags
 // ============================================================
 #define D3DDEB_BUFSIZE      0x00000001
-#define D3DEXECUTE_UNCLIPPED    0x00000001
+#define D3DEXECUTE_CLIPPED      0x00000001  // SOURCEPORT: was missing
+#define D3DEXECUTE_UNCLIPPED    0x00000002  // SOURCEPORT: fix — was incorrectly 0x01 (CLIPPED)
 
 // ============================================================
 // Process vertices flags
