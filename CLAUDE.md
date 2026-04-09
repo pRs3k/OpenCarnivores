@@ -93,23 +93,20 @@ renderer/
 - Adaptive VSync (`SDL_GL_SetSwapInterval(-1)` with fallback to 1), toggle with `-vsync`/`-novsync`
 - HiDPI: `SDL_WINDOW_ALLOW_HIGHDPI`, drawable size synced back to game globals
 
-## Current Rendering Status (active work)
+## Current Rendering Status ✅ FULLY WORKING
 
 ### Working
 - Game launches, loads AREA1, enters hunt scene
 - Terrain tiles with correct RGB555 textures, GL_REPEAT wrapping
 - Sky plane (RenderSkyPlane) with correct sunset colors, slow world-position scroll
 - Trees/vegetation (RenderElements) — billboard circles visible
-- Character model silhouettes (RenderModel / RenderModelClip) with correct alpha
+- Character models (RenderModel / RenderModelClip) with correct textures, alpha, and fog
 - Water circles (RenderWCircles via RenderModel)
 - Fog system (CalcFogLevel → specular alpha channel → shader mix)
 - Depth test (GL_GEQUAL, clear=0) — correct front-to-back order
+- All HUD/UI elements: compass, wind indicator, sun, bullet indicator, call indicator, exit prompt
 - Run with: `OpenCarnivores.exe "prj=HUNTDAT/AREAS/AREA1" -nosnd`
   - Note: use forward slashes in bash; the game accepts either
-
-### Known Rendering Bugs (open)
-- **Horizontal banding** on terrain — likely terrain LOD seam z-fighting between ProcessMap/ProcessMap2 quads; sky now depth-disabled but bands remain
-- **Upper-right dark model artifact** — character model (probably the ship) still renders a large polygon overlay; behind-camera sentinel check added for RenderModel but may need similar fix in other paths
 
 ### Key GL compatibility fixes applied
 | Issue | Root cause | Fix |
@@ -123,6 +120,8 @@ renderer/
 | Model alpha corruption | `ml + VLight > 255` overflows alpha byte of packed color DWORD | Clamp `_ml` to 255 before `* 0x00010101` |
 | Sky jitter on look | World position (CameraX/Z ~ 100000) rotated through camera-space for sky UV | Divide `vbase.x/z` by 128 to damp rotation effect |
 | Terrain banding | Sky plane (sz=0.0001) written to depth buffer, fights distant terrain | Disable depth test/write for sky geometry |
+| Wrong model UVs (solid single color) | `fp_conv` in Resources.cpp divided UV coords by 256 only for `_d3d`; `_opengl` used raw integer UVs → GL_REPEAT collapsed all samples to texel (0,0) | `#if defined(_d3d) \|\| defined(_opengl)` so both paths divide by 256 |
+| All models fog-colored (grey) | `RenderModelClip` computed `ev.Fog = (float)(vFogT[v] >> 24)` but `vFogT` is 0–255 (not pre-shifted), so fog factor was always 0 → full fog | Remove `>> 24`: `ev.Fog = (float)vFogT[v]`; then `specular = ev.Fog << 24` gives `0xFF000000` (no fog) correctly |
 
 ## Phase 5 — Modern Asset Pipeline (FUTURE)
 

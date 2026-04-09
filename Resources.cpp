@@ -572,7 +572,7 @@ void fp_conv(LPVOID d)
 	int i;
 	float f;
 	memcpy(&i, d, 4);
-#ifdef _d3d
+#if defined(_d3d) || defined(_opengl)
 	f = ((float)i) / 256.f;
 #else
 	f = ((float)i);
