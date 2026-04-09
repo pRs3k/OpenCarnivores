@@ -1,12 +1,4 @@
 build/
-*.user
-*.suo
-*.ncb
-*.sdf
-.vs/
-out/
-Debug/
-Release/
 
 # Game assets (copyrighted, must be supplied by user from retail install)
 HUNTDAT/
@@ -20,8 +12,29 @@ D3DImm.dll
 dgVoodoo.conf
 dgVoodooCpl.exe
 
-# Runtime logs
-render.log
-crash.log
-early_start.log
+# Runtime logs and saves
 *.log
+*.sav
+
+# Screenshots (dev artifacts)
+screenshot.png
+test_screenshot.png
+
+# SDL2 binary distribution — headers/libs committed, zip not needed
+deps/SDL2-devel-*.zip
+
+# SDL2 compiled binaries — libs committed for convenience but pdbs not needed
+deps/SDL2-*/lib/**/*.pdb
+
+# Kiro IDE spec/steering files
+.kiro/
+
+# VS/build artifacts
+*.user
+*.suo
+*.ncb
+*.sdf
+.vs/
+out/
+Debug/
+Release/
