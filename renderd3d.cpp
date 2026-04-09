@@ -4116,9 +4116,9 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
     CMASK|=gScrp[fptr->v3].y;         
 
 	
-    cp[0].ev.v = rVertex[fptr->v1]; cp[0].tx = fptr->tax;  cp[0].ty = fptr->tay; cp[0].ev.Fog = (float)(vFogT[fptr->v1] >> 24); cp[0].ev.Light = mptr->VLight[VT][fptr->v1];
-    cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = fptr->tbx;  cp[1].ty = fptr->tby; cp[1].ev.Fog = (float)(vFogT[fptr->v2] >> 24); cp[1].ev.Light = mptr->VLight[VT][fptr->v2];
-    cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = fptr->tcx;  cp[2].ty = fptr->tcy; cp[2].ev.Fog = (float)(vFogT[fptr->v3] >> 24); cp[2].ev.Light = mptr->VLight[VT][fptr->v3];
+    cp[0].ev.v = rVertex[fptr->v1]; cp[0].tx = fptr->tax;  cp[0].ty = fptr->tay; cp[0].ev.Fog = (float)vFogT[fptr->v1]; cp[0].ev.Light = mptr->VLight[VT][fptr->v1]; // SOURCEPORT: was >> 24 (wrong — vFogT is 0-255, not pre-shifted)
+    cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = fptr->tbx;  cp[1].ty = fptr->tby; cp[1].ev.Fog = (float)vFogT[fptr->v2]; cp[1].ev.Light = mptr->VLight[VT][fptr->v2];
+    cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = fptr->tcx;  cp[2].ty = fptr->tcy; cp[2].ev.Fog = (float)vFogT[fptr->v3]; cp[2].ev.Light = mptr->VLight[VT][fptr->v3];
    
 	{
      for (u=0; u<vused; u++) cp[u].ev.v.z+= 8.0f;
