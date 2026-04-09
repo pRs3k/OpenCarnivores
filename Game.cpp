@@ -66,16 +66,22 @@ void UploadGeometry()
 
 void SetupRes()
 {
+    // SOURCEPORT: explicit width=/height= override takes priority
+    if (OptResW > 0 && OptResH > 0) {
+        WinW = OptResW;
+        WinH = OptResH;
+        return;
+    }
 	if (!HARD3D)
 		if (OptRes>5) OptRes=5;
-    if (OptRes==0) { WinW = 320; WinH=240; }
-	if (OptRes==1) { WinW = 400; WinH=300; }
-	if (OptRes==2) { WinW = 512; WinH=384; }
-	if (OptRes==3) { WinW = 640; WinH=480; }
-	if (OptRes==4) { WinW = 800; WinH=600; }
-	if (OptRes==5) { WinW =1024; WinH=768; }		
-	if (OptRes==6) { WinW =1280; WinH=1024; }
-	if (OptRes==7) { WinW =1600; WinH=1200; }	
+    if (OptRes==0) { WinW = 320;  WinH = 240;  }
+	if (OptRes==1) { WinW = 400;  WinH = 300;  }
+	if (OptRes==2) { WinW = 512;  WinH = 384;  }
+	if (OptRes==3) { WinW = 640;  WinH = 480;  }
+	if (OptRes==4) { WinW = 800;  WinH = 600;  }
+	if (OptRes==5) { WinW = 1024; WinH = 768;  }
+	if (OptRes==6) { WinW = 1280; WinH = 1024; }
+	if (OptRes==7) { WinW = 1600; WinH = 1200; }
 }
 
 
@@ -453,7 +459,16 @@ void ProcessCommandLine()
 	 if (strstr(s,"-tranq")) Tranq = TRUE;
 	 if (strstr(s,"-observ")) ObservMode = TRUE;
 	 if (strstr(s,"-nosnd"))  OptSound = -1;  // SOURCEPORT: disable audio
-  } 
+
+     // SOURCEPORT: Phase 4 display options
+     if (strstr(s,"width="))      OptResW        = atoi(s + 6);
+     if (strstr(s,"height="))     OptResH        = atoi(s + 7);
+     if (strstr(s,"-fullscreen")) OptDisplayMode = 1;
+     if (strstr(s,"-borderless")) OptDisplayMode = 2;
+     if (strstr(s,"-windowed"))   OptDisplayMode = 0;
+     if (strstr(s,"-vsync"))      OptVSync       = 1;
+     if (strstr(s,"-novsync"))    OptVSync       = 0;
+  }
 }
 
 
@@ -721,6 +736,15 @@ void InitGameInfo()
 void InitEngine()
 {
     DEBUG        = FALSE;
+
+    // SOURCEPORT: Phase 4 display defaults
+    OptDisplayMode = 0; // windowed
+    OptVSync       = 1; // vsync on
+    OptResW        = 0; // use SetupRes() preset
+    OptResH        = 0;
+    // SOURCEPORT: neutral brightness — formula is SkyR*(OptBrightness+128)/256;
+    // 0 = half-bright (D3D legacy default), 128 = full FadeRGB value (GL neutral)
+    OptBrightness  = 128;
 
 	WATERANI     = TRUE;
 	NODARKBACK   = TRUE;
@@ -999,18 +1023,26 @@ void AddElements(float x, float y, float z, int etype, int cnt)
 	int c;
 
 	switch (etype) {
-	case partBlood:		
+	case partBlood:
 #ifdef _d3d
 		Elements[ElCount].RGBA = 0xE0600000;
-	    Elements[ElCount].RGBA2= 0x20300000;	    
+	    Elements[ElCount].RGBA2= 0x20300000;
+#elif defined(_opengl)
+		// SOURCEPORT: GL uses same ARGB convention as D3D (GL_BGRA vertex attrib)
+		Elements[ElCount].RGBA = 0xE0600000;
+	    Elements[ElCount].RGBA2= 0x20300000;
 #else
 		Elements[ElCount].RGBA = 0xE0000060;
-	    Elements[ElCount].RGBA2= 0x20000030;		
+	    Elements[ElCount].RGBA2= 0x20000030;
 #endif
 		break;
 
-	case partGround:		
+	case partGround:
 #ifdef _d3d
+	    Elements[ElCount].RGBA = 0xF0F09E55;
+	    Elements[ElCount].RGBA2= 0x10F09E55;
+#elif defined(_opengl)
+		// SOURCEPORT: GL uses same ARGB convention as D3D (GL_BGRA vertex attrib)
 	    Elements[ElCount].RGBA = 0xF0F09E55;
 	    Elements[ElCount].RGBA2= 0x10F09E55;
 #else
@@ -1020,20 +1052,22 @@ void AddElements(float x, float y, float z, int etype, int cnt)
 		break;
 
 
-    case partBubble:		
+    case partBubble:
 		c = WaterList[ WMap[ (int)z / 256][ (int)x / 256] ].fogRGB;
-#ifdef _d3d
+#if defined(_d3d) || defined(_opengl)
+		// SOURCEPORT: GL uses same ARGB color convention as D3D
 		c = ColorSum( ((c & 0xFEFEFE)>>1) , 0x152020);
 #else
 		c = ColorSum( ((c & 0xFEFEFE)>>1) , 0x202015);
 #endif
 		Elements[ElCount].RGBA = 0x70000000 + (ColorSum(c, ColorSum(c,c)));
-	    Elements[ElCount].RGBA2= 0x40000000 + (ColorSum(c, c));		
+	    Elements[ElCount].RGBA2= 0x40000000 + (ColorSum(c, c));
 		break;
 
     case partWater:
 		c = WaterList[ WMap[ (int)z / 256][ (int)x / 256] ].fogRGB;
-#ifdef _d3d
+#if defined(_d3d) || defined(_opengl)
+		// SOURCEPORT: GL uses same ARGB color convention as D3D
 		c = ColorSum( ((c & 0xFEFEFE)>>1) , 0x152020);
 #else
 		c = ColorSum( ((c & 0xFEFEFE)>>1) , 0x202015);

@@ -1,34 +1,70 @@
 cmake_minimum_required(VERSION 3.20)
-project(OpenCarnivores LANGUAGES CXX RC)
+project(OpenCarnivores LANGUAGES C CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# SOURCEPORT: Build with Direct3D 6 renderer path (_d3d).
-# The software renderer (_soft) and Glide renderer (_3dfx) are excluded
-# because _soft requires x86-only inline ASM and _3dfx requires the
-# defunct 3Dfx Glide SDK.
-add_compile_definitions(_d3d)
+# SOURCEPORT: Select renderer backend. Use -DRENDERER=opengl to build the new
+# SDL2+OpenGL 3.3 backend. Default is the original Direct3D 6 backend.
+set(RENDERER "opengl" CACHE STRING "Renderer backend: d3d or opengl")
 
 # SOURCEPORT: Suppress MSVC deprecation warnings for legacy C functions
 # (sprintf, strcpy, etc.) that permeate the original 1999 source code.
-# These will be replaced in a later phase.
 add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 
-# SOURCEPORT: Use our local compat/ directory for stub DirectX 6 headers.
-# The original code needs ddraw.h and d3d.h which are not in the modern
-# Windows SDK. These stubs provide just enough type definitions to compile.
-include_directories(${CMAKE_SOURCE_DIR}/compat)
-
 # SOURCEPORT: Disable specific warnings that flood the build from 1999-era code.
-# C4996: deprecated functions (covered by _CRT_SECURE_NO_WARNINGS but belt-and-suspenders)
-# C4244: conversion warnings (float/double/int narrowing everywhere in original)
-# C4267: size_t to int (64-bit pointer width issues)
 if(MSVC)
     add_compile_options(/W3 /wd4996 /wd4244 /wd4267)
-    # SOURCEPORT: Generate map file for crash address resolution during development
     add_link_options(/MAP)
 endif()
+
+# ─── Renderer-specific setup ────────────────────────────────────────────────
+
+if(RENDERER STREQUAL "opengl")
+    message(STATUS "Building with OpenGL 3.3 + SDL2 renderer")
+    add_compile_definitions(_opengl)
+
+    set(SDL2_DIR "${CMAKE_SOURCE_DIR}/deps/SDL2-2.30.12")
+    set(GLAD_DIR "${CMAKE_SOURCE_DIR}/deps/glad")
+
+    set(RENDERER_SOURCES
+        renderer/RendererGL.cpp
+        ${GLAD_DIR}/src/gl.c
+    )
+
+    set(RENDERER_INCLUDES
+        ${SDL2_DIR}/include
+        ${GLAD_DIR}/include
+        ${CMAKE_SOURCE_DIR}          # so renderer/ headers resolve from project root
+    )
+
+    set(RENDERER_LIBS
+        ${SDL2_DIR}/lib/x64/SDL2.lib
+        ${SDL2_DIR}/lib/x64/SDL2main.lib
+        opengl32
+    )
+
+    # SDL2 needs SDL_main.h to redirect WinMain→main on Windows.
+    # The executable must NOT be a WIN32 subsystem app for SDL_main to work
+    # (SDL2main.lib handles the subsystem entry correctly).
+    set(EXE_SUBSYSTEM "")    # console subsystem — SDL2main provides WinMain
+
+else()
+    message(STATUS "Building with Direct3D 6 renderer (legacy)")
+    add_compile_definitions(_d3d)
+
+    # SOURCEPORT: Use our local compat/ directory for stub DirectX 6 headers.
+    include_directories(${CMAKE_SOURCE_DIR}/compat)
+
+    set(RENDERER_SOURCES
+        compat/dxguids.cpp
+    )
+    set(RENDERER_INCLUDES "")
+    set(RENDERER_LIBS "")
+    set(EXE_SUBSYSTEM WIN32)
+endif()
+
+# ─── Common sources ──────────────────────────────────────────────────────────
 
 set(SOURCES
     Hunt2.cpp
@@ -39,32 +75,41 @@ set(SOURCES
     mathematics.cpp
     Audio_DLL.cpp
     renderd3d.cpp
-    compat/dxguids.cpp
-    # SOURCEPORT: Excluded — not in original D3D build; Interface.cpp provides loading UI
-    # Loading.cpp
-    # SOURCEPORT: Excluded — compiled as separate DLL (a_soft.dll), not linked into main exe
-    # Audio.cpp
-    # SOURCEPORT: Excluded — requires 3Dfx Glide SDK (defunct hardware)
-    # Render3DFX.cpp
-    # SOURCEPORT: Excluded — requires _soft define and x86 inline ASM
-    # RenderSoft.cpp
-    # renderasm.cpp
+    ${RENDERER_SOURCES}
+    # SOURCEPORT: Loading.cpp excluded — Interface.cpp provides loading UI
+    # SOURCEPORT: Audio.cpp excluded — compiled as a_soft.dll, loaded at runtime
+    # SOURCEPORT: Render3DFX.cpp excluded — requires defunct 3Dfx Glide SDK
+    # SOURCEPORT: RenderSoft.cpp/renderasm.cpp excluded — requires x86 inline ASM
 )
 
-add_executable(OpenCarnivores WIN32
+# ─── Executable ──────────────────────────────────────────────────────────────
+
+add_executable(OpenCarnivores ${EXE_SUBSYSTEM}
     ${SOURCES}
     resource.rc
 )
 
-# Link against Windows system libraries the original code uses
-# SOURCEPORT: dsound and dxguid are not linked — Audio_DLL.cpp loads audio
-# DLLs at runtime, and DirectX GUIDs are defined in compat/dxguids.cpp.
-# DirectDrawCreate is loaded at runtime via ddraw.dll in the original code,
-# but renderd3d.cpp calls it directly, so we link ddraw.lib.
+target_include_directories(OpenCarnivores PRIVATE
+    ${RENDERER_INCLUDES}
+)
+
+# Link against Windows system libraries
 target_link_libraries(OpenCarnivores PRIVATE
     kernel32
     user32
     gdi32
     winmm
     ole32
+    ${RENDERER_LIBS}
 )
+
+# ─── Post-build: copy SDL2.dll next to the executable ────────────────────────
+
+if(RENDERER STREQUAL "opengl")
+    add_custom_command(TARGET OpenCarnivores POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${SDL2_DIR}/lib/x64/SDL2.dll"
+            $<TARGET_FILE_DIR:OpenCarnivores>
+        COMMENT "Copying SDL2.dll"
+    )
+endif()

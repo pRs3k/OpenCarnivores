@@ -4,10 +4,24 @@
 
 #include "resource.h"
 
-#include "ddraw.h"
-
 #ifdef _d3d
+#include "ddraw.h"
 #include <d3d.h>
+#endif
+
+#ifdef _opengl
+// SOURCEPORT: OpenGL path — provide D3D type aliases so geometry code compiles unchanged.
+// RenderVertex has identical binary layout to D3DTLVERTEX (sx,sy,sz,rhw,color,specular,tu,tv).
+#include "renderer/Renderer.h"
+typedef RenderVertex D3DTLVERTEX;
+typedef RenderVertex* LPD3DTLVERTEX;
+typedef float D3DVALUE;
+typedef unsigned int D3DTEXTUREHANDLE;
+#define D3DVAL(x) ((float)(x))
+// SOURCEPORT: Stub DirectDraw types not used under OpenGL but referenced in globals
+typedef void* LPDIRECTDRAW;
+typedef void* LPDIRECTDRAW2;
+typedef void* LPDIRECTDRAWSURFACE;
 #endif
 
 #define ctHScale  64
@@ -197,7 +211,7 @@ typedef struct TagMODEL {
 	 TFacef   gFacef [1024];
 	};
     WORD     *lpTexture, *lpTexture2, *lpTexture3;
-#ifdef _d3d
+#if defined(_d3d) || defined(_opengl)
 	int      VLight[4][1024];
 #else
 	float    VLight[4][1024];
@@ -874,6 +888,12 @@ _EXTORNOT int OptDayNight, OptAgres, OptDens, OptSens, OptRes, OptViewR,
               OptMsSens, OptBrightness, OptSound, OptRender,
               OptText, OptSys, WaitKey, OPT_ALPHA_COLORKEY;
 _EXTORNOT BOOL SHADOWS3D,REVERSEMS;
+
+// SOURCEPORT: Phase 4 display options (OpenGL path only)
+// OptDisplayMode: 0=windowed, 1=fullscreen, 2=borderless
+// OptVSync:       0=disabled, 1=enabled (default)
+// OptResW/H:      0 = use SetupRes() preset; nonzero = override resolution
+_EXTORNOT int  OptDisplayMode, OptVSync, OptResW, OptResH;
 
 _EXTORNOT BOOL SLOW, DEBUG, MORPHP, MORPHA;
 _EXTORNOT HANDLE hlog;

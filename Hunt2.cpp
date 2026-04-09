@@ -2,6 +2,56 @@
 #include "Hunt.h"
 #include "stdio.h"
 
+#ifdef _opengl
+#include <SDL.h>
+#include <SDL_syswm.h>
+#include "renderer/RendererGL.h"
+
+// SOURCEPORT: SDL2 platform state
+// Under OpenGL, keyboard state is maintained via SDL events;
+// GetKeyboardState() is never called — we update KeyboardState[] directly.
+static int  g_sdlMouseDX = 0;  // accumulated relative mouse X since last ProcessPlayerMovement
+static int  g_sdlMouseDY = 0;
+
+// Translate SDL scancode to Win32 VK code (covers keys actually used by KeyMap)
+static int SDL_ScancodeToVK(SDL_Scancode sc)
+{
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
+        return 'A' + (sc - SDL_SCANCODE_A);
+    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9)
+        return '1' + (sc - SDL_SCANCODE_1);
+    if (sc == SDL_SCANCODE_0) return '0';
+    switch (sc) {
+    case SDL_SCANCODE_UP:       return 0x26; // VK_UP
+    case SDL_SCANCODE_DOWN:     return 0x28; // VK_DOWN
+    case SDL_SCANCODE_LEFT:     return 0x25; // VK_LEFT
+    case SDL_SCANCODE_RIGHT:    return 0x27; // VK_RIGHT
+    case SDL_SCANCODE_ESCAPE:   return 0x1B; // VK_ESCAPE
+    case SDL_SCANCODE_RETURN:   return 0x0D; // VK_RETURN
+    case SDL_SCANCODE_SPACE:    return 0x20; // VK_SPACE
+    case SDL_SCANCODE_LSHIFT:
+    case SDL_SCANCODE_RSHIFT:   return 0x10; // VK_SHIFT
+    case SDL_SCANCODE_LCTRL:
+    case SDL_SCANCODE_RCTRL:    return 0x11; // VK_CONTROL
+    case SDL_SCANCODE_LALT:
+    case SDL_SCANCODE_RALT:     return 0x12; // VK_MENU
+    case SDL_SCANCODE_F1:       return 0x70;
+    case SDL_SCANCODE_F2:       return 0x71;
+    case SDL_SCANCODE_F3:       return 0x72;
+    case SDL_SCANCODE_F4:       return 0x73;
+    case SDL_SCANCODE_F5:       return 0x74;
+    case SDL_SCANCODE_F6:       return 0x75;
+    case SDL_SCANCODE_F7:       return 0x76;
+    case SDL_SCANCODE_F8:       return 0x77;
+    case SDL_SCANCODE_F9:       return 0x78;
+    case SDL_SCANCODE_F10:      return 0x79;
+    case SDL_SCANCODE_F11:      return 0x7A;
+    case SDL_SCANCODE_F12:      return 0x7B;
+    default:                    return 0;
+    }
+}
+#endif // _opengl
+
 float rav=0;
 float rbv=0;
 
@@ -29,8 +79,11 @@ int  cheati = 0;
 
 
 void ResetMousePos()
-{	
-   SetCursorPos(VideoCX, VideoCY);    
+{
+#ifdef _d3d
+   SetCursorPos(VideoCX, VideoCY);
+#endif
+   // Under _opengl: SDL_SetRelativeMouseMode keeps cursor captured — no warp needed
 }
 
 
@@ -212,10 +265,17 @@ void PreCashGroundModel()
 	  }
       
 
-  	  if (HARD3D) 	
+  	  if (HARD3D)
+#ifndef _opengl
+		// SOURCEPORT: in GL path, VMap[].Fog stays 0 (initialized).
+		// Per-vertex terrain fog is a D3D specular-fog feature; in GL we apply
+		// scene fog globally via SetFogColor/FOGENABLE, not per-vertex here.
 		if (  ((FMap[yy][xx] & fmWater)==0) || UNDERWATER)
 		  VMap[128+y][128+x].Fog = CalcFogLevel(v[0]); else
 		  VMap[128+y][128+x].Fog = 0;
+#else
+          {} // GL: leave Fog at 0
+#endif
 
       VMap[128+y][128+x].ALPHA = 255;
 
@@ -703,8 +763,9 @@ void ShowShifts()
 	AddMessage(logt);
 }
 
+#ifdef _d3d
 LONG APIENTRY MainWndProc( HWND hWnd, UINT message, UINT wParam, LONG lParam)
-{   
+{
     BOOL A = (GetActiveWindow() == hWnd);			
 
     if (A!=blActive) {
@@ -879,36 +940,33 @@ LONG APIENTRY MainWndProc( HWND hWnd, UINT message, UINT wParam, LONG lParam)
     return 0;
 }
 
-
-
-
 BOOL CreateMainWindow()
 {
 	PrintLog("Creating main window...");
     WNDCLASS wc;
     wc.style = CS_OWNDC;
-    wc.lpfnWndProc = (WNDPROC)MainWndProc; 
-    wc.cbClsExtra = 0;                  
-    wc.cbWndExtra = 0;                  
+    wc.lpfnWndProc = (WNDPROC)MainWndProc;
+    wc.cbClsExtra = 0;
+    wc.cbWndExtra = 0;
     wc.hInstance = hInst;
     wc.hIcon = wc.hIcon = (HICON)LoadIcon(hInst,"ACTION");
     wc.hCursor = NULL;
-	wc.hbrBackground = (HBRUSH)GetStockObject( BLACK_BRUSH );
+    wc.hbrBackground = (HBRUSH)GetStockObject( BLACK_BRUSH );
     wc.lpszMenuName = NULL;
-    //wc.lpfnWndProc  = NULL;
-	wc.lpszClassName = "HuntRenderWindow";
+    wc.lpszClassName = "HuntRenderWindow";
     if (!RegisterClass(&wc)) return FALSE;
-    
+
     hwndMain = CreateWindow(
         "HuntRenderWindow","Carnivores 2 Renderer",
-  		WS_VISIBLE |  WS_POPUP,
-		0, 0, 0, 0, NULL,  NULL, hInst, NULL );
+        WS_VISIBLE | WS_POPUP,
+        0, 0, 0, 0, NULL, NULL, hInst, NULL );
 
-	if (hwndMain)
-	  PrintLog("Ok.\n");
+    if (hwndMain)
+        PrintLog("Ok.\n");
 
     return TRUE;
 }
+#endif // _d3d
 
 
 
@@ -1012,16 +1070,25 @@ void ProcessSlide()
 void ProcessPlayerMovement()
 {
 
+#ifdef _d3d
    POINT ms;
-   
-    GetCursorPos(&ms);
-	if (REVERSEMS) ms.y = -ms.y+VideoCY*2;
-    rav += (float)(ms.x-VideoCX) * (OptMsSens+64) / 600.f / 192.f;
-    rbv += (float)(ms.y-VideoCY) * (OptMsSens+64) / 600.f / 192.f;
-    if (KeyFlags & kfStrafe) 
-		SSpeed+= (float)rav * 10; else 
-		PlayerAlpha += rav;   
-    PlayerBeta  += rbv;      
+   GetCursorPos(&ms);
+   if (REVERSEMS) ms.y = -ms.y+VideoCY*2;
+   int mouseDX = ms.x - VideoCX;
+   int mouseDY = ms.y - VideoCY;
+#elif defined(_opengl)
+   // SOURCEPORT: relative mouse motion accumulated from SDL_MOUSEMOTION events
+   int mouseDX = g_sdlMouseDX;
+   int mouseDY = REVERSEMS ? -g_sdlMouseDY : g_sdlMouseDY;
+   g_sdlMouseDX = 0;
+   g_sdlMouseDY = 0;
+#endif
+    rav += (float)mouseDX * (OptMsSens+64) / 600.f / 192.f;
+    rbv += (float)mouseDY * (OptMsSens+64) / 600.f / 192.f;
+    if (KeyFlags & kfStrafe)
+		SSpeed+= (float)rav * 10; else
+		PlayerAlpha += rav;
+    PlayerBeta  += rbv;
 
     rav/=(2.f + (float)TimeDt/20.f);
     rbv/=(2.f + (float)TimeDt/20.f);
@@ -1228,7 +1295,10 @@ void ProcessControls()
 {      
    int _KeyFlags = KeyFlags;
    KeyFlags = 0;
-   GetKeyboardState(KeyboardState);   
+#ifdef _d3d
+   GetKeyboardState(KeyboardState);
+#endif
+   // Under _opengl: KeyboardState[] is populated by SDL events in the main loop
 
   
    if (KeyboardState [KeyMap.fkStrafe] & 128) KeyFlags+=kfStrafe;   
@@ -1538,9 +1608,11 @@ void ProcessGame()
 
     if (NeedRVM) {
 		PrintLog("Activate3DHardware: starting...\n"); // SOURCEPORT: debug
+#ifdef _d3d
 		SetWindowPos(hwndMain, HWND_TOP, 0,0,0,0,  SWP_SHOWWINDOW);
 		SetFocus(hwndMain);
-		Activate3DHardware();		
+#endif
+		Activate3DHardware();
 		NeedRVM = FALSE;
 	}
 	
@@ -1594,6 +1666,7 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
+#ifdef _d3d
 int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			       LPSTR lpszCmdLine, int nCmdShow)
 {
@@ -1602,19 +1675,18 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	hInst = hInstance;
 	CreateLog();
-	   
-	CreateMainWindow();            
-	
-	Init3DHardware();
-	InitEngine();    	
-	InitAudioSystem(hwndMain, hlog, OptSound);	
 
-	StartLoading();    
+	CreateMainWindow();
+
+	Init3DHardware();
+	InitEngine();
+	InitAudioSystem(hwndMain, hlog, OptSound);
+
+	StartLoading();
 	PrintLoad("Loading...");
-    
+
 	PrintLog("== Loading resources ==\n");
     hcArrow = LoadCursor(NULL, IDC_ARROW);
-
 
 	PrintLog("Loading common resources:");
 	PrintLoad("Loading common resources...");
@@ -1626,47 +1698,42 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LoadModelEx(CompasModel, "HUNTDAT\\COMPAS.3DF");
 	LoadModelEx(Binocular,   "HUNTDAT\\BINOCUL.3DF");
 
-	LoadCharacterInfo(WCircleModel , "HUNTDAT\\WCIRCLE2.CAR"); 	
-	LoadCharacterInfo(ShipModel, "HUNTDAT\\ship2a.car"); 
+	LoadCharacterInfo(WCircleModel , "HUNTDAT\\WCIRCLE2.CAR");
+	LoadCharacterInfo(ShipModel, "HUNTDAT\\ship2a.car");
 	LoadCharacterInfo(WindModel, "HUNTDAT\\WIND.CAR");
-    
 
 	LoadWav("HUNTDAT\\SOUNDFX\\a_underw.wav",  fxUnderwater);
-
 	LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\hwalk1.wav",  fxStep[0]);
 	LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\hwalk2.wav",  fxStep[1]);
 	LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\hwalk3.wav",  fxStep[2]);
-
 	LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\footw1.wav",  fxStepW[0]);
 	LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\footw2.wav",  fxStepW[1]);
 	LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\footw3.wav",  fxStepW[2]);
-
 	LoadWav("HUNTDAT\\SOUNDFX\\hum_die1.wav",  fxScream[0]);
 	LoadWav("HUNTDAT\\SOUNDFX\\hum_die2.wav",  fxScream[1]);
 	LoadWav("HUNTDAT\\SOUNDFX\\hum_die3.wav",  fxScream[2]);
-	LoadWav("HUNTDAT\\SOUNDFX\\hum_die4.wav",  fxScream[3]);		
-	
+	LoadWav("HUNTDAT\\SOUNDFX\\hum_die4.wav",  fxScream[3]);
+
 	LoadPictureTGA(PausePic,   "HUNTDAT\\MENU\\pause.tga");       conv_pic(PausePic);
 	LoadPictureTGA(ExitPic,    "HUNTDAT\\MENU\\exit.tga");        conv_pic(ExitPic);
-	LoadPictureTGA(TrophyExit, "HUNTDAT\\MENU\\trophy_e.tga");    conv_pic(TrophyExit);		
+	LoadPictureTGA(TrophyExit, "HUNTDAT\\MENU\\trophy_e.tga");    conv_pic(TrophyExit);
 	LoadPictureTGA(MapPic,     "HUNTDAT\\MENU\\mapframe.tga");    conv_pic(MapPic);
-		
+
 	LoadPictureTGA(TFX_ENVMAP,    "HUNTDAT\\FX\\envmap.tga");   ApplyAlphaFlags(TFX_ENVMAP.lpImage, TFX_ENVMAP.W*TFX_ENVMAP.W);
 	LoadPictureTGA(TFX_SPECULAR,  "HUNTDAT\\FX\\specular.tga"); ApplyAlphaFlags(TFX_SPECULAR.lpImage, TFX_SPECULAR.W*TFX_SPECULAR.W);
 
-	
 	PrintLog(" Done.\n");
-    
+
 	PrintLoad("Loading area...");
 	LoadResources();
 
 	PrintLoad("Starting game...");
-	PrintLog("Loading area: Done.\n");	
-	
-	EndLoading();	
+	PrintLog("Loading area: Done.\n");
 
-	ProcessSyncro();	
-	blActive = TRUE;    
+	EndLoading();
+
+	ProcessSyncro();
+	blActive = TRUE;
 
     PrintLog("Entering messages loop.\n");
     for( ; ; )
@@ -1675,20 +1742,193 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		TranslateMessage( &msg );
 		DispatchMessage( &msg );
 	  } else {
-        if (blActive) ProcessGame();                  
-                 else Sleep(100); 
+        if (blActive) ProcessGame();
+                 else Sleep(100);
 	  }
 
-     AudioStop();
-     Audio_Shutdown();
-
-     ShutDown3DHardware();
-     
-     ShutDownEngine();          
-
-     ShowCursor(TRUE);   
-	 PrintLog("Game normal shutdown.\n");
-	 
-	 CloseLog();
-     return msg.wParam;	 
+	AudioStop();
+	Audio_Shutdown();
+	ShutDown3DHardware();
+	ShutDownEngine();
+	ShowCursor(TRUE);
+	PrintLog("Game normal shutdown.\n");
+	CloseLog();
+    return msg.wParam;
 }
+
+#elif defined(_opengl)
+
+// SOURCEPORT: SDL2 entry point for the OpenGL backend.
+// SDL_main.h redirects WinMain → main on Windows.
+int main(int argc, char* argv[])
+{
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
+        MessageBoxA(NULL, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    CreateLog();
+    InitEngine();
+    // SOURCEPORT: Match the D3D path — Init3DHardware() sets HARD3D=TRUE before resource
+    // loading. Without this, DATASHIFT() runs on all model/terrain textures (multiplying
+    // every pixel by 2), and CalcLights is never called, and GenerateModelMipMaps uses
+    // the wrong bit-shift path. Setting it here before LoadModelEx/LoadResources matches
+    // the exact same code paths the D3D path exercises.
+    HARD3D = TRUE;
+    // SOURCEPORT: Audio uses DirectSound which needs an HWND.
+    // We defer audio init until after Activate3DHardware creates the SDL window.
+    // InitAudioSystem is called below after the first Activate3DHardware.
+
+    StartLoading();
+    PrintLoad("Loading...");
+
+    PrintLog("== Loading resources ==\n");
+    PrintLog("Loading common resources:");
+    PrintLoad("Loading common resources...");
+
+    if (OptDayNight==2)
+        LoadModelEx(SunModel,    "HUNTDAT\\MOON.3DF");
+    else
+        LoadModelEx(SunModel,    "HUNTDAT\\SUN2.3DF");
+    LoadModelEx(CompasModel, "HUNTDAT\\COMPAS.3DF");
+    LoadModelEx(Binocular,   "HUNTDAT\\BINOCUL.3DF");
+
+    LoadCharacterInfo(WCircleModel , "HUNTDAT\\WCIRCLE2.CAR");
+    LoadCharacterInfo(ShipModel, "HUNTDAT\\ship2a.car");
+    LoadCharacterInfo(WindModel, "HUNTDAT\\WIND.CAR");
+
+    LoadWav("HUNTDAT\\SOUNDFX\\a_underw.wav",  fxUnderwater);
+    LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\hwalk1.wav",  fxStep[0]);
+    LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\hwalk2.wav",  fxStep[1]);
+    LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\hwalk3.wav",  fxStep[2]);
+    LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\footw1.wav",  fxStepW[0]);
+    LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\footw2.wav",  fxStepW[1]);
+    LoadWav("HUNTDAT\\SOUNDFX\\STEPS\\footw3.wav",  fxStepW[2]);
+    LoadWav("HUNTDAT\\SOUNDFX\\hum_die1.wav",  fxScream[0]);
+    LoadWav("HUNTDAT\\SOUNDFX\\hum_die2.wav",  fxScream[1]);
+    LoadWav("HUNTDAT\\SOUNDFX\\hum_die3.wav",  fxScream[2]);
+    LoadWav("HUNTDAT\\SOUNDFX\\hum_die4.wav",  fxScream[3]);
+
+    LoadPictureTGA(PausePic,   "HUNTDAT\\MENU\\pause.tga");       conv_pic(PausePic);
+    LoadPictureTGA(ExitPic,    "HUNTDAT\\MENU\\exit.tga");        conv_pic(ExitPic);
+    LoadPictureTGA(TrophyExit, "HUNTDAT\\MENU\\trophy_e.tga");    conv_pic(TrophyExit);
+    LoadPictureTGA(MapPic,     "HUNTDAT\\MENU\\mapframe.tga");    conv_pic(MapPic);
+
+    LoadPictureTGA(TFX_ENVMAP,    "HUNTDAT\\FX\\envmap.tga");   ApplyAlphaFlags(TFX_ENVMAP.lpImage, TFX_ENVMAP.W*TFX_ENVMAP.W);
+    LoadPictureTGA(TFX_SPECULAR,  "HUNTDAT\\FX\\specular.tga"); ApplyAlphaFlags(TFX_SPECULAR.lpImage, TFX_SPECULAR.W*TFX_SPECULAR.W);
+
+    PrintLog(" Done.\n");
+
+    PrintLoad("Loading area...");
+    LoadResources();
+
+    PrintLoad("Starting game...");
+    PrintLog("Loading area: Done.\n");
+
+    EndLoading();
+
+    // Run Activate3DHardware once here to create the GL window before the loop
+    Activate3DHardware();
+    NeedRVM = FALSE;
+
+    // SOURCEPORT: Phase 4 — after the GL window is created, sync WinW/WinH/CameraW/CameraH
+    // to the actual drawable resolution (may differ from SetupRes() if borderless/HiDPI).
+    {
+        extern RendererGL* g_glRenderer;
+        if (g_glRenderer) {
+            int dw, dh;
+            SDL_GL_GetDrawableSize(g_glRenderer->GetWindow(), &dw, &dh);
+            if (dw > 0 && dh > 0)
+                SetVideoMode(dw, dh);
+        }
+    }
+
+    // SOURCEPORT: Now that the SDL window exists, get its HWND for DirectSound
+    {
+        extern RendererGL* g_glRenderer;  // defined in renderd3d.cpp
+        SDL_SysWMinfo wmInfo;
+        SDL_VERSION(&wmInfo.version);
+        if (g_glRenderer && SDL_GetWindowWMInfo(g_glRenderer->GetWindow(), &wmInfo))
+            hwndMain = (HWND)wmInfo.info.win.window;
+    }
+    InitAudioSystem(hwndMain, hlog, OptSound);
+
+    SDL_SetRelativeMouseMode(SDL_TRUE);  // capture mouse, get relative motion
+
+    ProcessSyncro();
+    blActive = TRUE;
+
+    PrintLog("Entering SDL event loop.\n");
+    bool running = true;
+    while (running) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            switch (ev.type) {
+            case SDL_QUIT:
+                running = false;
+                break;
+            case SDL_KEYDOWN: {
+                int vk = SDL_ScancodeToVK(ev.key.keysym.scancode);
+                if (vk > 0 && vk < 256) KeyboardState[vk] |= 128;
+                // Game actions that WndProc handled on WM_KEYDOWN:
+                if (vk == KeyMap.fkBinoc) ToggleBinocular();
+                if (vk == KeyMap.fkCCall)  ChangeCall();
+                if (vk == KeyMap.fkRun)    ToggleRunMode();
+                // 1-6 weapon select
+                if (vk >= '1' && vk <= '6') {
+                    int w = vk - '1';
+                    if (!Weapon.FTime && ShotsLeft[w]) {
+                        TargetWeapon = w;
+                        if (!Weapon.state) CurrentWeapon = TargetWeapon;
+                        HideWeapon();
+                    }
+                }
+                // Escape / Enter / Y / R  (mirror WndProc)
+                if (vk == 0x1B) { // VK_ESCAPE
+                    if (TrophyMode) { SaveTrophy(); ExitTime = 1; }
+                    else { if (PAUSE) PAUSE = FALSE; else EXITMODE = !EXITMODE; }
+                }
+                if (vk == 0x0D || vk == 'Y') { // VK_RETURN or Y
+                    if (EXITMODE) { if (MyHealth) ExitTime = 4000; else ExitTime = 1; EXITMODE = FALSE; }
+                }
+                if (vk == 'R') {
+                    if (TrophyBody != -1) RemoveCurrentTrophy();
+                    if (EXITMODE) { LoadTrophy(); RestartMode = TRUE; _GameState = 0; }
+                }
+                if (vk == 0x78) { // VK_F9
+                    ShutDown3DHardware(); AudioStop(); DoHalt("");
+                }
+                break; }
+            case SDL_KEYUP: {
+                int vk = SDL_ScancodeToVK(ev.key.keysym.scancode);
+                if (vk > 0 && vk < 256) KeyboardState[vk] &= ~128;
+                break; }
+            case SDL_MOUSEMOTION:
+                g_sdlMouseDX += ev.motion.xrel;
+                g_sdlMouseDY += ev.motion.yrel;
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+                if (ev.button.button == SDL_BUTTON_LEFT)
+                    KeyboardState[KeyMap.fkFire] |= 128;
+                break;
+            case SDL_MOUSEBUTTONUP:
+                if (ev.button.button == SDL_BUTTON_LEFT)
+                    KeyboardState[KeyMap.fkFire] &= ~128;
+                break;
+            }
+        }
+        if (!running) break;
+        if (blActive) ProcessGame();
+        else SDL_Delay(100);
+    }
+
+    AudioStop();
+    Audio_Shutdown();
+    ShutDown3DHardware();
+    ShutDownEngine();
+    PrintLog("Game normal shutdown.\n");
+    CloseLog();
+    SDL_Quit();
+    return 0;
+}
+#endif // _d3d / _opengl
