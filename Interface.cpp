@@ -88,9 +88,12 @@ void DoHalt(LPSTR Mess)
 
 void WaitRetrace()
 {
+#ifdef _d3d
     BOOL bv = FALSE;
     if (DirectActive)
       while (!bv)  lpDD->GetVerticalBlankStatus(&bv);
+#endif
+    // Under _opengl: VSync is handled by SDL_GL_SetSwapInterval in RendererGL::Init
 }
 
 
@@ -169,23 +172,28 @@ void PrintLoad(char *t)
 
 void SetVideoMode(int W, int H)
 {
-   WinW = W; 
+   WinW = W;
    WinH = H;
 
    WinEX = WinW - 1;
    WinEY = WinH - 1;
    VideoCX = WinW / 2;
    VideoCY = WinH / 2;
-    
-   CameraW = (float)VideoCX*1.25f;
-   CameraH = CameraW * (WinH * 1.3333f / WinW);
-   
+
+   // SOURCEPORT: Horizontal FOV is fixed; vertical FOV scales with actual aspect ratio.
+   // Original formula used 1.3333 (4/3) which was correct for 4:3 and still works for
+   // widescreen since WinH/WinW naturally yields the correct vertical FOV.
+   CameraW = (float)VideoCX * 1.25f;
+   CameraH = CameraW * ((float)WinH / (float)WinW) * (4.0f / 3.0f);
+
+#ifdef _d3d
    SetWindowPos(hwndMain, HWND_TOP, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), SWP_SHOWWINDOW);
    SetCursorPos(VideoCX, VideoCY);
-   
-   LoDetailSky =(W>400);
    SetCursor(hcArrow);
-   while (ShowCursor(FALSE)>=0) ;   
+   while (ShowCursor(FALSE)>=0) ;
+#endif
+
+   LoDetailSky = (W > 400);
 }
 
 

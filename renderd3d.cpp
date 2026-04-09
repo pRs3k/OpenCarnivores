@@ -1,7 +1,12 @@
-#ifdef _d3d
+#if defined(_d3d) || defined(_opengl)
 #include "Hunt.h"
 
 #include "stdio.h"
+
+#ifdef _opengl
+#include "renderer/RendererGL.h"
+#include <SDL.h>
+#endif
 
 #undef  TCMAX 
 #undef  TCMIN 
@@ -14,6 +19,13 @@
 Vector2di ORList[2048];
 int ORLCount = 0;
 
+// SOURCEPORT: Vertex pointers — used by all geometry code in both backends.
+// Under D3D6: point into locked execute buffer memory.
+// Under OpenGL: point into CPU staging arrays.
+LPD3DTLVERTEX           lpVertex, lpVertexG;
+D3DTEXTUREHANDLE        hTexture, hGTexture;
+
+#ifdef _d3d
 LPDIRECTDRAWSURFACE     lpddPrimary               = NULL;
 LPDIRECTDRAWSURFACE     lpddBack                  = NULL;
 LPDIRECTDRAWSURFACE     lpddZBuffer               = NULL;
@@ -25,7 +37,6 @@ LPDIRECT3DDEVICE        lpd3dDevice               = NULL;
 LPDIRECT3DVIEWPORT      lpd3dViewport             = NULL;
 LPDIRECT3DEXECUTEBUFFER lpd3dExecuteBuffer        = NULL;
 LPDIRECT3DEXECUTEBUFFER lpd3dExecuteBufferG       = NULL;
-LPD3DTLVERTEX           lpVertex, lpVertexG;
 WORD                    *lpwTriCount;
 
 HRESULT                 hRes;
@@ -46,8 +57,20 @@ GUID                    guidDevice;
 char                    szDeviceName[256];
 char                    szDeviceDesc[256];
 D3DDEVICEDESC           d3dHWDeviceDesc;
-D3DTEXTUREHANDLE        hTexture, hGTexture;
 HDC                     ddBackDC;
+#endif // _d3d
+
+#ifdef _opengl
+// SOURCEPORT: OpenGL backend globals
+RendererGL*             g_glRenderer              = nullptr;
+static RenderVertex     g_mainVertices[1024 * 3]; // main vertex buffer staging
+static RenderVertex     g_geomVertices[400 * 3];  // geometry buffer staging
+static int              g_geomVertCount           = 0;
+static bool             g_geomLocked              = false;
+static D3DTEXTUREHANDLE g_geomCurTexture          = 0;
+// SOURCEPORT: Under GL, execute buffer instruction pointers are not used.
+// DrawTPlaneClip's inline instruction building is replaced with simple vertex writes.
+#endif // _opengl
 
 BOOL                    D3DACTIVE;
 BOOL                    VMFORMAT565;
@@ -85,12 +108,22 @@ int lsw;
 int vFogT[1024];
 BOOL SmallFont;
 
-
+#ifdef _d3d
 typedef struct _d3dmemmap {
-  int cpuaddr, size, lastused;  
+  int cpuaddr, size, lastused;
   LPDIRECTDRAWSURFACE     lpddTexture;
-  D3DTEXTUREHANDLE        hTexture;    
-} Td3dmemmap;    
+  D3DTEXTUREHANDLE        hTexture;
+} Td3dmemmap;
+#endif
+
+#ifdef _opengl
+// SOURCEPORT: GL texture cache entry
+typedef struct _d3dmemmap {
+  int cpuaddr, size, lastused;
+  GLuint                  glTexId;
+  D3DTEXTUREHANDLE        hTexture;
+} Td3dmemmap;
+#endif    
 
 
 #define d3dmemmapsize 128
@@ -123,6 +156,7 @@ void CalcFogLevel_Gradient(Vector3d v)
 
 void Hardware_ZBuffer(BOOL bl)
 {
+#ifdef _d3d
 	if (!bl) {
 		if (!lpddZBuffer) return;  // SOURCEPORT: guard against NULL z-buffer
 		DDBLTFX ddbltfx;
@@ -130,51 +164,70 @@ void Hardware_ZBuffer(BOOL bl)
         ddbltfx.dwFillDepth = 0x0000;
         lpddZBuffer->Blt( NULL, NULL, NULL, DDBLT_DEPTHFILL | DDBLT_WAIT, &ddbltfx );
 	}
+#elif defined(_opengl)
+	if (!bl && g_glRenderer) {
+		g_glRenderer->ClearZBuffer();
+	}
+#endif
 }
 
 void d3dClearBuffers()
 {
+#ifdef _d3d
   DDBLTFX ddbltfx;
 
   ddbltfx.dwSize = sizeof( DDBLTFX );
-  
-  if (VMFORMAT565) ddbltfx.dwFillColor = (SkyR>>3)*32*32*2 + (SkyG>>2)*32 + (SkyB>>3);
-              else ddbltfx.dwFillColor = (SkyR>>3)*32*32   + (SkyG>>3)*32 + (SkyB>>3);  
 
-  lpddBack->Blt( NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &ddbltfx );  
-   
+  if (VMFORMAT565) ddbltfx.dwFillColor = (SkyR>>3)*32*32*2 + (SkyG>>2)*32 + (SkyB>>3);
+              else ddbltfx.dwFillColor = (SkyR>>3)*32*32   + (SkyG>>3)*32 + (SkyB>>3);
+
+  lpddBack->Blt( NULL, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &ddbltfx );
+
   // SOURCEPORT: guard against NULL z-buffer (creation may have been skipped)
   if (lpddZBuffer) {
       ddbltfx.dwSize = sizeof( DDBLTFX );
       ddbltfx.dwFillDepth = 0x0000;
       lpddZBuffer->Blt( NULL, NULL, NULL, DDBLT_DEPTHFILL | DDBLT_WAIT, &ddbltfx );
   }
+#elif defined(_opengl)
+  if (g_glRenderer) {
+      uint32_t fogColor = ((SkyR & 0xFF) << 16) | ((SkyG & 0xFF) << 8) | (SkyB & 0xFF);
+      g_glRenderer->SetFogColor(fogColor);
+      g_glRenderer->ClearBuffers();
+  }
+#endif
 }
 
 
 void d3dStartBuffer()
 {
+#ifdef _d3d
    ZeroMemory(&d3dExeBufDesc, sizeof(d3dExeBufDesc));
    d3dExeBufDesc.dwSize = sizeof(d3dExeBufDesc);
    hRes = lpd3dExecuteBuffer->Lock( &d3dExeBufDesc );
    if (FAILED(hRes)) DoHalt("Error locking execute buffer");
-   lpVertex = (LPD3DTLVERTEX)d3dExeBufDesc.lpData;   
+   lpVertex = (LPD3DTLVERTEX)d3dExeBufDesc.lpData;
+#elif defined(_opengl)
+   // SOURCEPORT: write directly into the renderer's buffer so UnlockAndDrawTriangles sees the data
+   lpVertex = (LPD3DTLVERTEX)(g_glRenderer ? g_glRenderer->LockVertexBuffer() : g_mainVertices);
+#endif
 }
 
 
 
 void d3dStartBufferG()
 {
+#ifdef _d3d
    ZeroMemory(&d3dExeBufDescG, sizeof(d3dExeBufDescG));
    d3dExeBufDescG.dwSize = sizeof(d3dExeBufDescG);
    hRes = lpd3dExecuteBufferG->Lock( &d3dExeBufDescG );
-   if (FAILED(hRes)) DoHalt("Error locking execute buffer");   
+   if (FAILED(hRes)) DoHalt("Error locking execute buffer");
 
    GVCnt     = 0;
    hGTexture = -1;
 
-   lpVertexG = (LPD3DTLVERTEX)d3dExeBufDescG.lpData;   
-   lpInstructionG = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDescG.lpData + 400*3);   
+   lpVertexG = (LPD3DTLVERTEX)d3dExeBufDescG.lpData;
+   lpInstructionG = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDescG.lpData + 400*3);
 
    lpInstructionG->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstructionG->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -188,7 +241,7 @@ void d3dStartBufferG()
    lpProcessVertices->dwCount    = 400*3;
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
-   
+
    lpInstructionG = (LPD3DINSTRUCTION)lpProcessVertices;
 
    if (!LINEARFILTER) {
@@ -204,9 +257,9 @@ void d3dStartBufferG()
      lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREMIN;
      lpState->dwArg[0] = D3DFILTER_LINEAR;
      lpState++;
-     lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+     lpInstructionG = (LPD3DINSTRUCTION)lpState;
    }
-   
+
    if (FOGENABLE) {
 	 lpInstructionG->bOpcode = D3DOP_STATERENDER;
      lpInstructionG->bSize = sizeof(D3DSTATE);
@@ -215,27 +268,45 @@ void d3dStartBufferG()
      lpState = (LPD3DSTATE)lpInstructionG;
      lpState->drstRenderStateType = D3DRENDERSTATE_FOGCOLOR;
 	 lpState->dwArg[0] = CurFogColor;
-     
-     lpState++;	 
-     lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+
+     lpState++;
+     lpInstructionG = (LPD3DINSTRUCTION)lpState;
    }
-         
+#elif defined(_opengl)
+   GVCnt     = 0;
+   hGTexture = (D3DTEXTUREHANDLE)-1;
+   g_geomVertCount = 0;
+   g_geomLocked = true;
+   g_geomCurTexture = 0;
+   lpVertexG = (LPD3DTLVERTEX)(g_glRenderer ? g_glRenderer->LockGeometryBuffer() : g_geomVertices);
+   if (g_glRenderer) {
+       g_glRenderer->SetLinearFilter(LINEARFILTER ? true : false);
+       if (FOGENABLE) {
+           // SOURCEPORT: use sky color as fog color when not in a fog zone
+           uint32_t fc = CurFogColor
+                         ? CurFogColor
+                         : (uint32_t)(((SkyR & 0xFF) << 16) | ((SkyG & 0xFF) << 8) | (SkyB & 0xFF));
+           g_glRenderer->SetFogColor(fc);
+       }
+   }
+#endif
 }
 
 
 
 void d3dStartBufferGBMP()
 {
+#ifdef _d3d
    ZeroMemory(&d3dExeBufDescG, sizeof(d3dExeBufDescG));
    d3dExeBufDescG.dwSize = sizeof(d3dExeBufDescG);
    hRes = lpd3dExecuteBufferG->Lock( &d3dExeBufDescG );
-   if (FAILED(hRes)) DoHalt("Error locking execute buffer");   
+   if (FAILED(hRes)) DoHalt("Error locking execute buffer");
 
    GVCnt     = 0;
    hGTexture = -1;
 
-   lpVertexG = (LPD3DTLVERTEX)d3dExeBufDescG.lpData;   
-   lpInstructionG = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDescG.lpData + 400*3);   
+   lpVertexG = (LPD3DTLVERTEX)d3dExeBufDescG.lpData;
+   lpInstructionG = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDescG.lpData + 400*3);
 
    lpInstructionG->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstructionG->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -249,10 +320,9 @@ void d3dStartBufferGBMP()
    lpProcessVertices->dwCount    = 400*3;
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
-   
+
    lpInstructionG = (LPD3DINSTRUCTION)lpProcessVertices;
 
-    
 	 lpInstructionG->bOpcode = D3DOP_STATERENDER;
      lpInstructionG->bSize = sizeof(D3DSTATE);
      if (FOGENABLE) lpInstructionG->wCount = 5;
@@ -266,7 +336,7 @@ void d3dStartBufferGBMP()
 
 	 lpState->drstRenderStateType = D3DRENDERSTATE_ALPHATESTENABLE;
      lpState->dwArg[0] = TRUE;
-     lpState++;  
+     lpState++;
 
      lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREMAG;
      lpState->dwArg[0] = D3DFILTER_NEAREST;
@@ -279,26 +349,45 @@ void d3dStartBufferGBMP()
 	 if (FOGENABLE) {
       lpState->drstRenderStateType = D3DRENDERSTATE_FOGCOLOR;
 	  lpState->dwArg[0] = CurFogColor;
-      /*if (UNDERWATER) lpState->dwArg[0] = 0x00004560;	
-	             else lpState->dwArg[0] = 0x00606065;*/
-      lpState++;	 
+      lpState++;
 	 }
 
-     lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+     lpInstructionG = (LPD3DINSTRUCTION)lpState;
      LINEARFILTER = FALSE;
+#elif defined(_opengl)
+   GVCnt     = 0;
+   hGTexture = (D3DTEXTUREHANDLE)-1;
+   g_geomVertCount = 0;
+   g_geomLocked = true;
+   g_geomCurTexture = 0;
+   // SOURCEPORT: write directly into the renderer's geometry buffer
+   lpVertexG = (LPD3DTLVERTEX)(g_glRenderer ? g_glRenderer->LockGeometryBuffer() : g_geomVertices);
+   LINEARFILTER = FALSE;
+   if (g_glRenderer) {
+       g_glRenderer->SetLinearFilter(false);
+       g_glRenderer->SetAlphaTest(true);
+       if (FOGENABLE) {
+           uint32_t fc = CurFogColor
+                         ? CurFogColor
+                         : (uint32_t)(((SkyR & 0xFF) << 16) | ((SkyG & 0xFF) << 8) | (SkyB & 0xFF));
+           g_glRenderer->SetFogColor(fc);
+       }
+   }
+#endif
 }
 
 
 void d3dEndBufferG(BOOL ColorKey)
-{   	 
+{
    if (!lpVertexG) return;
 
+#ifdef _d3d
    if (ColorKey) {
      lpInstructionG->bOpcode = D3DOP_STATERENDER;
-     lpInstructionG->bSize = sizeof(D3DSTATE);   
+     lpInstructionG->bSize = sizeof(D3DSTATE);
      lpInstructionG->wCount = 4;
      lpInstructionG++;
-     
+
 	 lpState = (LPD3DSTATE)lpInstructionG;
 
 	 lpState->drstRenderStateType = D3DRENDERSTATE_COLORKEYENABLE;
@@ -307,7 +396,7 @@ void d3dEndBufferG(BOOL ColorKey)
 
 	 lpState->drstRenderStateType = D3DRENDERSTATE_ALPHATESTENABLE;
      lpState->dwArg[0] = FALSE;
-     lpState++;  
+     lpState++;
 
      lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREMAG;
      lpState->dwArg[0] = D3DFILTER_LINEAR;
@@ -318,12 +407,12 @@ void d3dEndBufferG(BOOL ColorKey)
      lpState++;
 	 lpInstructionG = (LPD3DINSTRUCTION)lpState;
    }
-  
+
    lpInstructionG->bOpcode = D3DOP_EXIT;
    lpInstructionG->bSize   = 0UL;
    lpInstructionG->wCount  = 0U;
 
-   lpInstructionG = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDescG.lpData + 400*3);   
+   lpInstructionG = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDescG.lpData + 400*3);
 
    lpInstructionG->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstructionG->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -359,20 +448,34 @@ void d3dEndBufferG(BOOL ColorKey)
 
    hRes = lpd3dDevice->Execute(lpd3dExecuteBufferG, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
    LINEARFILTER = TRUE;
-
+#elif defined(_opengl)
+   if (g_glRenderer && GVCnt > 0) {
+       g_glRenderer->UnlockAndDrawGeometry(GVCnt, ColorKey ? true : false);
+   }
+   dFacesCount += GVCnt / 3;
+   lpVertexG = NULL;
+   GVCnt = 0;
+   g_geomLocked = false;
+   LINEARFILTER = TRUE;
+   if (g_glRenderer) {
+       g_glRenderer->SetLinearFilter(true);
+       g_glRenderer->SetAlphaTest(false);
+   }
+#endif
 }
 
 
 
 void d3dFlushBuffer(int fproc1, int fproc2)
 {
+#ifdef _d3d
    int i; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
    BOOL ColorKey = (fproc2>0);
 
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 1024*3);
    lpInstruction->bOpcode = D3DOP_STATERENDER;
    lpInstruction->bSize = sizeof(D3DSTATE);
-   
+
    lpInstruction->wCount = 3;
    lpInstruction++;
    lpState = (LPD3DSTATE)lpInstruction;
@@ -508,9 +611,22 @@ void d3dFlushBuffer(int fproc1, int fproc2)
 
    hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
    dFacesCount+=fproc1+fproc2;
+#elif defined(_opengl)
+   if (g_glRenderer) {
+       // SOURCEPORT: when no texture is set (hTexture==0, e.g. RenderCircle/RenderElements),
+       // bind a white 1x1 texture so vertex color passes through unchanged.
+       if (!hTexture) {
+           glActiveTexture(GL_TEXTURE0);
+           glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture());
+       }
+       g_glRenderer->UnlockAndDrawTriangles(fproc1, fproc2);
+   }
+   LINEARFILTER = TRUE;
+   dFacesCount += fproc1 + fproc2;
+#endif
 }
 
-
+#ifdef _d3d
 DWORD BitDepthToFlags( DWORD dwBitDepth )
 {
    switch( dwBitDepth ) {
@@ -1251,14 +1367,16 @@ int  d3dTestAlpha()
    Sleep(1000);
 */
    SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);	
-   lpd3dDevice->EndScene( );  
+   lpd3dDevice->EndScene( );
    return RF;
 }
+#endif // _d3d  (end of D3D6-only init/state/device code)
 
 
 
 void Activate3DHardware()
 {
+#ifdef _d3d
 	SetVideoMode(WinW,WinH);
 
     HRESULT hRes = CreateDirect3D(hwndMain);
@@ -1272,32 +1390,46 @@ void Activate3DHardware()
     hRes = CreateScene();
     if (FAILED(hRes))  DoHalt("CreateScene Failed.\n");
 
-	d3dDetectCaps();	
+	d3dDetectCaps();
 
 	OPT_ALPHA_COLORKEY=FALSE;
 	PrintLog("TEST COLOR KEY: ");
 	int r1 = d3dTestAlpha();
-	
+
 	OPT_ALPHA_COLORKEY=TRUE;
     PrintLog("TEST ALPHA KEY: ");
 	int r2 = d3dTestAlpha();
 	OPT_ALPHA_COLORKEY = (r2>=r1);
 	if (OPT_ALPHA_COLORKEY) PrintLog("ALPHA KEY mode selected.\n");
 	                   else PrintLog("COLOR KEY mode selected.\n");
-	
+
 	hRes = lpd3dDevice->BeginScene( );
+#elif defined(_opengl)
+    // SOURCEPORT: OpenGL initialization — create RendererGL and SDL2 window
+    if (!g_glRenderer) {
+        g_glRenderer = new RendererGL();
+    }
+    if (!g_glRenderer->Init(NULL, WinW, WinH)) {
+        DoHalt("OpenGL renderer initialization failed.\n");
+    }
+    VMFORMAT565 = TRUE;
+    OPT_ALPHA_COLORKEY = FALSE;
+    g_glRenderer->SetFogEnabled(FOGENABLE ? true : false);
+    // SOURCEPORT: initial clear so first frame doesn't flash black
+    d3dClearBuffers();
+    g_glRenderer->BeginFrame();
+    PrintLog("=== OpenGL 3.3 started ===\n");
+#endif
 
 	if (OptText==0) LOWRESTX = TRUE;
     if (OptText==1) LOWRESTX = FALSE;
 	if (OptText==2) LOWRESTX = FALSE;
     d3dMemLoaded = 0;
-	                   
-    D3DACTIVE = TRUE;    
-	
-    d3dLastTexture = d3dmemmapsize+1;
-	PrintLog("=== Direct3D started === \n");
-	PrintLog("\n");
 
+    D3DACTIVE = TRUE;
+
+    d3dLastTexture = d3dmemmapsize+1;
+	PrintLog("\n");
 }
 
 
@@ -1306,15 +1438,21 @@ void ResetTextureMap()
   d3dEndBufferG(FALSE);
 
   d3dMemUsageCount = 0;
-  //d3dMemLoaded = 0;
   d3dLastTexture = d3dmemmapsize+1;
   for (int m=0; m<d3dmemmapsize+2; m++) {
       d3dMemMap[m].lastused    = 0;
       d3dMemMap[m].cpuaddr     = 0;
+#ifdef _d3d
 	  if (d3dMemMap[m].lpddTexture) {
 		  d3dMemMap[m].lpddTexture->Release();
 		  d3dMemMap[m].lpddTexture = NULL;
-	  }      
+	  }
+#elif defined(_opengl)
+      if (d3dMemMap[m].glTexId) {
+          glDeleteTextures(1, &d3dMemMap[m].glTexId);
+          d3dMemMap[m].glTexId = 0;
+      }
+#endif
   }
 }
 
@@ -1323,10 +1461,11 @@ void ResetTextureMap()
 void ShutDown3DHardware()
 {
   D3DACTIVE = FALSE;
-  
+
+#ifdef _d3d
   if (lpd3dDevice)
     hRes = lpd3dDevice->EndScene();
-  
+
   ResetTextureMap();
 
   lpInstructionG = NULL;
@@ -1334,7 +1473,7 @@ void ShutDown3DHardware()
 
   if (NULL != lpd3dExecuteBuffer) {
       lpd3dExecuteBuffer->Release( );
-	  lpd3dExecuteBufferG->Release( );	  
+	  lpd3dExecuteBufferG->Release( );
       lpd3dExecuteBuffer = NULL;
    }
 
@@ -1352,7 +1491,7 @@ void ShutDown3DHardware()
       lpddZBuffer->Release( );
       lpddZBuffer = NULL;
    }
- 
+
   if (NULL != lpddBack) {
       lpddBack->Release();
       lpddBack = NULL;
@@ -1369,6 +1508,15 @@ void ShutDown3DHardware()
    }
 
   lpDD->SetCooperativeLevel( hwndMain, DDSCL_NORMAL);
+#elif defined(_opengl)
+  ResetTextureMap();
+  lpVertexG = NULL;
+  if (g_glRenderer) {
+      g_glRenderer->Shutdown();
+      delete g_glRenderer;
+      g_glRenderer = nullptr;
+  }
+#endif
 }
 
 
@@ -1383,6 +1531,7 @@ void InsertFxMM(int m)
 
 
 
+#ifdef _d3d
 BOOL d3dAllocTexture(int i, int w, int h)
 {
    DDSURFACEDESC ddsd;
@@ -1500,28 +1649,112 @@ int DownLoadTexture(LPVOID tptr, int w, int h)
    d3dDownLoadTexture(0, w, h, tptr);
    return 0;
 }
+#endif // _d3d (end D3D6 texture allocation/upload)
 
+#ifdef _opengl
+// SOURCEPORT: OpenGL texture upload — convert 16-bit to RGBA and create GL texture
+static GLuint gl_UploadTexture16(void* data, int w, int h)
+{
+    std::vector<uint32_t> rgba(w * h);
+    uint16_t* src = (uint16_t*)data;
+    for (int i = 0; i < w * h; i++) {
+        uint16_t c = src[i];
+        if (c == 0) { rgba[i] = 0x00000000; continue; } // color key
+        uint32_t r, g, b;
+        // SOURCEPORT: all game textures (terrain, sky, models) are stored in RGB555
+        // by BrightenTexture/LoadTexture — always decode as 555 here.
+        // (TPicture UI images go through conv_565 and use DrawBitmap separately.)
+        r = ((c >> 10) & 0x1F) * 255 / 31;
+        g = ((c >> 5)  & 0x1F) * 255 / 31;
+        b = ((c)       & 0x1F) * 255 / 31;
+        rgba[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+    }
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    // SOURCEPORT: D3D6 default is wrap/repeat — terrain UVs tile far beyond 0..1
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    // SOURCEPORT: only generate mipmaps for fully-opaque textures (terrain).
+    // Textures with color-keyed transparent pixels (sprites, foliage, models) must NOT
+    // use mipmaps: lower mip levels blend transparent+opaque pixels, averaging alpha to
+    // < 0.5 for fine details (branches, leaves) → alpha test discards them entirely.
+    // Terrain textures have no transparent pixels, so they safely get trilinear filtering
+    // to eliminate the moiré/banding aliasing at grazing angles.
+    bool hasTransparency = false;
+    for (int i = 0; i < w * h; i++) {
+        if ((rgba[i] >> 24) == 0) { hasTransparency = true; break; }
+    }
+    if (!hasTransparency) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    return tex;
+}
 
+BOOL d3dAllocTexture(int i, int w, int h) { return TRUE; }
+void d3dDownLoadTexture(int i, int w, int h, LPVOID tptr)
+{
+    if (d3dMemMap[i].glTexId) glDeleteTextures(1, &d3dMemMap[i].glTexId);
+    d3dMemMap[i].glTexId = gl_UploadTexture16(tptr, w, h);
+    d3dMemMap[i].hTexture = d3dMemMap[i].glTexId;
+    d3dMemMap[i].cpuaddr = (int)(uintptr_t)tptr;
+    d3dMemMap[i].size = w * h * 2;
+    d3dMemLoaded += w * h * 2;
+}
+
+int DownLoadTexture(LPVOID tptr, int w, int h)
+{
+    if (!d3dMemMap[0].cpuaddr) {
+        d3dDownLoadTexture(0, w, h, tptr);
+        return 0;
+    }
+    for (int m = 0; m < d3dmemmapsize; m++)
+        if (!d3dMemMap[m].cpuaddr) {
+            d3dDownLoadTexture(m, w, h, tptr);
+            return m;
+        }
+    // LRU eviction
+    int unusedtime = 2, rt = -1;
+    for (int m = 0; m < d3dmemmapsize; m++) {
+        if (!d3dMemMap[m].cpuaddr) break;
+        if (d3dMemMap[m].size != w*h*2) continue;
+        int ut = d3dMemUsageCount - d3dMemMap[m].lastused;
+        if (ut >= unusedtime) { unusedtime = ut; rt = m; }
+    }
+    if (rt != -1) { d3dDownLoadTexture(rt, w, h, tptr); return rt; }
+    ResetTextureMap();
+    d3dDownLoadTexture(0, w, h, tptr);
+    return 0;
+}
+#endif // _opengl
 
 
 void d3dSetTexture(LPVOID tptr, int w, int h)
-{    
-	
-  if (d3dMemMap[d3dLastTexture].cpuaddr == (int)tptr) return;
+{
+  if (d3dMemMap[d3dLastTexture].cpuaddr == (int)(uintptr_t)tptr) return;
 
   int fxm = -1;
   for (int m=0; m<d3dmemmapsize; m++) {
-     if (d3dMemMap[m].cpuaddr == (int)tptr) { fxm = m; break; }
+     if (d3dMemMap[m].cpuaddr == (int)(uintptr_t)tptr) { fxm = m; break; }
      if (!d3dMemMap[m].cpuaddr) break;
   }
 
   if (fxm==-1) fxm = DownLoadTexture(tptr, w, h);
 
-  d3dMemMap[fxm].lastused = d3dMemUsageCount;  
-  hTexture = d3dMemMap[fxm].hTexture;  
+  d3dMemMap[fxm].lastused = d3dMemUsageCount;
+  hTexture = d3dMemMap[fxm].hTexture;
   d3dLastTexture = fxm;
 
-  
+#ifdef _opengl
+  // SOURCEPORT: bind the GL texture immediately
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+#endif
 }
 
 
@@ -1530,10 +1763,16 @@ void d3dSetTexture(LPVOID tptr, int w, int h)
 
 
 float GetTraceK(int x, int y)
-{	
-	
+{
+
   if (x<8 || y<8 || x>WinW-8 || y>WinH-8) return 0.f;
-  if (!lpddZBuffer) return 0.f;  // SOURCEPORT: guard against NULL z-buffer
+
+#ifdef _opengl
+  // SOURCEPORT: GL z-buffer readback not implemented; no sun occlusion check
+  DeltaFunc(TraceK, 0.f, TimeDt / 1024.f);
+  return TraceK;
+#else // _d3d
+  if (!lpddZBuffer) return 0.f;
 
   float k = 0;
 
@@ -1555,13 +1794,14 @@ float GetTraceK(int x, int y)
   if ( *((WORD*)ddsd.lpSurface + (y+8)*bw + x+8) < CC ) k+=1.f;
   if ( *((WORD*)ddsd.lpSurface + (y+8)*bw + x-8) < CC ) k+=1.f;
   if ( *((WORD*)ddsd.lpSurface + (y-8)*bw + x+8) < CC ) k+=1.f;
-  if ( *((WORD*)ddsd.lpSurface + (y-8)*bw + x-8) < CC ) k+=1.f;  
-    
+  if ( *((WORD*)ddsd.lpSurface + (y-8)*bw + x-8) < CC ) k+=1.f;
+
   lpddZBuffer->Unlock(ddsd.lpSurface);
   k/=9.f;
-  
+
   DeltaFunc(TraceK, k, TimeDt / 1024.f);
   return TraceK;
+#endif
 }
 
 
@@ -1582,20 +1822,26 @@ void AddSkySum(WORD C)
 
 
 float GetSkyK(int x, int y)
-{	
+{
   if (x<10 || y<10 || x>WinW-10 || y>WinH-10) return 0.5;
+
+#ifdef _opengl
+  // SOURCEPORT: GL framebuffer readback not implemented; return constant sky brightness
+  DeltaFunc(SkyTraceK, 0.5f, (0.07f + (float)fabs(0.5f - SkyTraceK)) * (TimeDt / 512.f));
+  return SkyTraceK;
+#else // _d3d
   SkySumR = 0;
   SkySumG = 0;
-  SkySumB = 0;  
+  SkySumB = 0;
   float k = 0;
 
-  DDSURFACEDESC ddsd;	 
+  DDSURFACEDESC ddsd;
   ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
   ddsd.dwSize = sizeof(DDSURFACEDESC);
-  if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) {	  
+  if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) {
 	  return 0;
   }
-  
+
   int bw = (ddsd.lPitch>>1);
   AddSkySum(*((WORD*)ddsd.lpSurface + (y+0)*bw + x+0));
   AddSkySum(*((WORD*)ddsd.lpSurface + (y+6)*bw + x+0));
@@ -1607,14 +1853,14 @@ float GetSkyK(int x, int y)
   AddSkySum(*((WORD*)ddsd.lpSurface + (y+4)*bw + x-4));
   AddSkySum(*((WORD*)ddsd.lpSurface + (y-4)*bw + x+4));
   AddSkySum(*((WORD*)ddsd.lpSurface + (y-4)*bw + x-4));
-    
+
   lpddBack->Unlock(ddsd.lpSurface);
-  
+
   SkySumR-=SkyTR*9;
   SkySumG-=SkyTG*9;
   SkySumB-=SkyTB*9;
 
-  k = (float)sqrt(SkySumR*SkySumR + SkySumG*SkySumG + SkySumB*SkySumB) / 9;  
+  k = (float)sqrt(SkySumR*SkySumR + SkySumG*SkySumG + SkySumB*SkySumB) / 9;
 
   if (k>80) k = 80;
   if (k<  0) k = 0;
@@ -1623,6 +1869,7 @@ float GetSkyK(int x, int y)
   if (OptDayNight==2) k=0.3 + k/2.75;
   DeltaFunc(SkyTraceK, k, (0.07f + (float)fabs(k-SkyTraceK)) * (TimeDt / 512.f) );
   return SkyTraceK;
+#endif
 }
 
 
@@ -1684,51 +1931,63 @@ void ShowVideo()
   d3dMemLoaded = 0;
 
 
+#ifdef _d3d
   hRes = lpd3dDevice->EndScene();
   hRes = lpddPrimary->Blt( NULL, lpddBack, NULL, DDBLT_WAIT, NULL );
-
   d3dClearBuffers();
-
   hRes = lpd3dDevice->BeginScene( );
-  
+#elif defined(_opengl)
+  // SOURCEPORT: present frame via SDL, then clear for next frame
+  g_glRenderer->EndFrame();
+  d3dClearBuffers();
+  g_glRenderer->BeginFrame();
+#endif
 }
 
 
 
 void CopyBackToDIB()
 {
-  DDSURFACEDESC ddsd;	 
+#ifdef _d3d
+  DDSURFACEDESC ddsd;
   ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
   ddsd.dwSize = sizeof(DDSURFACEDESC);
   if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) return;
-    
+
   WORD *lpVMem = (WORD*) ddsd.lpSurface;
   ddsd.lPitch/=2;
 
-  for (int y=0; y<=256; y++) 
+  for (int y=0; y<=256; y++)
 		CopyMemory( (WORD*)lpVideoBuf + y*1024,
-		            lpVMem + y*ddsd.lPitch, 
+		            lpVMem + y*ddsd.lPitch,
 					256*2);
-    
+
   lpddBack->Unlock(ddsd.lpSurface);
+#elif defined(_opengl)
+  // SOURCEPORT: not implemented for GL backend
+#endif
 }
 
 void CopyHARDToDIB()
 {
-  DDSURFACEDESC ddsd;	 
+#ifdef _d3d
+  DDSURFACEDESC ddsd;
   ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
   ddsd.dwSize = sizeof(DDSURFACEDESC);
   if( lpddPrimary->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) return;
-    
+
   WORD *lpVMem = (WORD*) ddsd.lpSurface;
   ddsd.lPitch/=2;
 
-  for (int y=0; y<=WinH; y++) 
+  for (int y=0; y<=WinH; y++)
 		CopyMemory( (WORD*)lpVideoBuf + y*1024,
-		            lpVMem + y*ddsd.lPitch, 
+		            lpVMem + y*ddsd.lPitch,
 					WinW*2);
-    
+
   lpddPrimary->Unlock(ddsd.lpSurface);
+#elif defined(_opengl)
+  // SOURCEPORT: not implemented for GL backend
+#endif
 }
 
 
@@ -1736,20 +1995,24 @@ void CopyHARDToDIB()
 
 
 void FXPutBitMap(int x0, int y0, int w, int h, int smw, LPVOID lpData)
-{  
-    DDSURFACEDESC ddsd;	 
-	ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
-    ddsd.dwSize = sizeof(DDSURFACEDESC);
-    if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) return;
-    
-	WORD *lpVMem = (WORD*) ddsd.lpSurface;
-	ddsd.lPitch/=2;
-	lpVMem+=x0+y0 * ddsd.lPitch;
+{
+#ifdef _d3d
+  DDSURFACEDESC ddsd;
+  ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
+  ddsd.dwSize = sizeof(DDSURFACEDESC);
+  if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) return;
 
-	for (int y=0; y<h; y++) 
-		CopyMemory( lpVMem + y*ddsd.lPitch, ((WORD*)lpData)+y*smw, w*2);
-    
-	lpddBack->Unlock(ddsd.lpSurface);
+  WORD *lpVMem = (WORD*) ddsd.lpSurface;
+  ddsd.lPitch/=2;
+  lpVMem+=x0+y0 * ddsd.lPitch;
+
+  for (int y=0; y<h; y++)
+      CopyMemory( lpVMem + y*ddsd.lPitch, ((WORD*)lpData)+y*smw, w*2);
+
+  lpddBack->Unlock(ddsd.lpSurface);
+#elif defined(_opengl)
+  if (g_glRenderer) g_glRenderer->DrawBitmap(x0, y0, w, h, smw, lpData);
+#endif
 }
 
 
@@ -1763,12 +2026,13 @@ void DrawPicture(int x, int y, TPicture &pic)
 
 void ddTextOut(int x, int y, LPSTR t, int color)
 {
+#ifdef _d3d
   lpddBack->GetDC( &ddBackDC );
   SetBkMode( ddBackDC, TRANSPARENT );
 
   HFONT oldfont;
   if (SmallFont) oldfont = (HFONT)SelectObject(ddBackDC, fnt_Small);
-    
+
   SetTextColor(ddBackDC, 0x00101010);
   TextOut(ddBackDC, x+2, y+1, t, strlen(t));
 
@@ -1776,8 +2040,11 @@ void ddTextOut(int x, int y, LPSTR t, int color)
   TextOut(ddBackDC, x+1, y, t, strlen(t));
 
   if (SmallFont) SelectObject(ddBackDC, oldfont);
-  
+
   lpddBack->ReleaseDC( ddBackDC );
+#elif defined(_opengl)
+  if (g_glRenderer) g_glRenderer->DrawText(x, y, t, (uint32_t)color);
+#endif
 }
 
 
@@ -1899,8 +2166,11 @@ void ShowControlElements()
   
   //ddTextOut(100, 100, "!", 0x0020A0A0);
 
+#ifdef _d3d
+  // SOURCEPORT: Under D3D6, GetDC/ReleaseDC is needed before GDI TextOut calls
   lpddBack->GetDC( &ddBackDC );
   lpddBack->ReleaseDC( ddBackDC );
+#endif
 
   if (TIMER) {
    wsprintf(buf,"msc: %d", TimeDt);
@@ -2156,70 +2426,80 @@ void DrawTPlaneClip(BOOL SECONT)
 
    if (hGTexture!=hTexture) {
      hGTexture=hTexture;
-	 lpInstructionG->bOpcode = D3DOP_STATERENDER;
+#ifdef _d3d
+     lpInstructionG->bOpcode = D3DOP_STATERENDER;
      lpInstructionG->bSize = sizeof(D3DSTATE);
      lpInstructionG->wCount = 1;
      lpInstructionG++;
      lpState = (LPD3DSTATE)lpInstructionG;
      lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
      lpState->dwArg[0] = hTexture;
-     lpState++;	 
-     lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+     lpState++;
+     lpInstructionG = (LPD3DINSTRUCTION)lpState;
 
-	 lpwTriCount = &(lpInstructionG->wCount);
-	 lpInstructionG->bOpcode = D3DOP_TRIANGLE;
+     lpwTriCount = &(lpInstructionG->wCount);
+     lpInstructionG->bOpcode = D3DOP_TRIANGLE;
      lpInstructionG->bSize   = sizeof(D3DTRIANGLE);
-     lpInstructionG->wCount  = 0; 	 	 
+     lpInstructionG->wCount  = 0;
      lpInstructionG++;
-     
+#elif defined(_opengl)
+     // SOURCEPORT: flush pending geometry and bind the new GL texture
+     if (GVCnt > 0) { d3dEndBufferG(FALSE); d3dStartBufferG(); }
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+#endif
    }
 
-           	   	 
-   lpTriangle             = (LPD3DTRIANGLE)lpInstructionG;
+#ifdef _d3d
+   lpTriangle = (LPD3DTRIANGLE)lpInstructionG;
+#endif
 
-   for (u=0; u<vused-2; u++) {    
+   for (u=0; u<vused-2; u++) {
 
      lpVertexG->sx       = (float)cp[0].ev.scrx / 16.f;
      lpVertexG->sy       = (float)cp[0].ev.scry / 16.f;
      lpVertexG->sz       = _ZSCALE / cp[0].ev.v.z;
      lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
      lpVertexG->color    = (int)(cp[0].ev.Light) * 0x00010101 | ((int)cp[0].ev.ALPHA<<24);
-	 lpVertexG->specular = (255-(int)cp[0].ev.Fog)<<24;//0x7F000000;
+     lpVertexG->specular = (255-(int)cp[0].ev.Fog)<<24;
      lpVertexG->tu       = (float)(cp[0].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(cp[0].ty) / (128.f*65536.f);
-     lpVertexG++;	
+     lpVertexG++;
 
-	 lpVertexG->sx       = (float)cp[u+1].ev.scrx / 16.f;
+     lpVertexG->sx       = (float)cp[u+1].ev.scrx / 16.f;
      lpVertexG->sy       = (float)cp[u+1].ev.scry / 16.f;
      lpVertexG->sz       = _ZSCALE / cp[u+1].ev.v.z;
      lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
      lpVertexG->color    = (int)(cp[u+1].ev.Light) * 0x00010101 | ((int)cp[u+1].ev.ALPHA<<24);
-	 lpVertexG->specular = (255-(int)cp[u+1].ev.Fog)<<24;//0x7F000000;
+     lpVertexG->specular = (255-(int)cp[u+1].ev.Fog)<<24;
      lpVertexG->tu       = (float)(cp[u+1].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(cp[u+1].ty) / (128.f*65536.f);
-     lpVertexG++;	
+     lpVertexG++;
 
-	 lpVertexG->sx       = (float)cp[u+2].ev.scrx / 16.f;
+     lpVertexG->sx       = (float)cp[u+2].ev.scrx / 16.f;
      lpVertexG->sy       = (float)cp[u+2].ev.scry / 16.f;
      lpVertexG->sz       = _ZSCALE / cp[u+2].ev.v.z;
      lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
      lpVertexG->color    = (int)(cp[u+2].ev.Light) * 0x00010101 | ((int)cp[u+2].ev.ALPHA<<24);
-	 lpVertexG->specular = (255-(int)cp[u+2].ev.Fog)<<24;//0x7F000000;
+     lpVertexG->specular = (255-(int)cp[u+2].ev.Fog)<<24;
      lpVertexG->tu       = (float)(cp[u+2].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(cp[u+2].ty) / (128.f*65536.f);
-     lpVertexG++;	    	 
-          
-     lpTriangle->wV1    = GVCnt;
-     lpTriangle->wV2    = GVCnt+1;	
-     lpTriangle->wV3    = GVCnt+2;	
-	 lpTriangle->wFlags = 0;
-	 lpTriangle++;	 
-     *lpwTriCount = (*lpwTriCount) + 1;
+     lpVertexG++;
 
-	 GVCnt+=3;             	 
-	}            	
-     
-     lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
+#ifdef _d3d
+     lpTriangle->wV1    = GVCnt;
+     lpTriangle->wV2    = GVCnt+1;
+     lpTriangle->wV3    = GVCnt+2;
+     lpTriangle->wFlags = 0;
+     lpTriangle++;
+     *lpwTriCount = (*lpwTriCount) + 1;
+#endif
+     GVCnt+=3;
+   }
+
+#ifdef _d3d
+   lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
+#endif
 }
 
 
@@ -2392,41 +2672,48 @@ void DrawTPlane(BOOL SECONT)
      lpVertexG->sy       = (float)ev[2].scry / 16;
      lpVertexG->sz       = _ZSCALE / ev[2].v.z;
      lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | alpha3<<24;     
-	 lpVertexG->specular = (255-(int)ev[2].Fog)<<24;//0x7F000000;
+     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | alpha3<<24;
+     lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
      lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
-     lpVertexG++;		 	      
+     lpVertexG++;
 
      if (hGTexture!=hTexture) {
       hGTexture=hTexture;
-	  lpInstructionG->bOpcode = D3DOP_STATERENDER;
+#ifdef _d3d
+      lpInstructionG->bOpcode = D3DOP_STATERENDER;
       lpInstructionG->bSize = sizeof(D3DSTATE);
       lpInstructionG->wCount = 1;
       lpInstructionG++;
       lpState = (LPD3DSTATE)lpInstructionG;
       lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
       lpState->dwArg[0] = hTexture;
-      lpState++;	 
-      lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+      lpState++;
+      lpInstructionG = (LPD3DINSTRUCTION)lpState;
 
-	  lpwTriCount = (&lpInstructionG->wCount);
-	  lpInstructionG->bOpcode = D3DOP_TRIANGLE;
+      lpwTriCount = (&lpInstructionG->wCount);
+      lpInstructionG->bOpcode = D3DOP_TRIANGLE;
       lpInstructionG->bSize   = sizeof(D3DTRIANGLE);
-      lpInstructionG->wCount  = 0; 	  
-      lpInstructionG++;     
-	 }
-     
-     lpTriangle             = (LPD3DTRIANGLE)lpInstructionG;      	   	 
-     lpTriangle->wV1    = GVCnt;
-     lpTriangle->wV2    = GVCnt+1;	
-     lpTriangle->wV3    = GVCnt+2;	
-	 lpTriangle->wFlags = 0;
-	 lpTriangle++;	 
-	 *lpwTriCount = (*lpwTriCount) + 1;
-     lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
+      lpInstructionG->wCount  = 0;
+      lpInstructionG++;
+#elif defined(_opengl)
+      if (GVCnt > 0) { d3dEndBufferG(FALSE); d3dStartBufferG(); }
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+#endif
+     }
 
-	 GVCnt+=3; 	   
+#ifdef _d3d
+     lpTriangle = (LPD3DTRIANGLE)lpInstructionG;
+     lpTriangle->wV1    = GVCnt;
+     lpTriangle->wV2    = GVCnt+1;
+     lpTriangle->wV3    = GVCnt+2;
+     lpTriangle->wFlags = 0;
+     lpTriangle++;
+     *lpwTriCount = (*lpwTriCount) + 1;
+     lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
+#endif
+     GVCnt+=3;
 }
 
 
@@ -2597,37 +2884,44 @@ void DrawTPlaneW(BOOL SECONT)
 	 lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
      lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
-     lpVertexG++;		 	      
+     lpVertexG++;
 
      if (hGTexture!=hTexture) {
       hGTexture=hTexture;
-	  lpInstructionG->bOpcode = D3DOP_STATERENDER;
+#ifdef _d3d
+      lpInstructionG->bOpcode = D3DOP_STATERENDER;
       lpInstructionG->bSize = sizeof(D3DSTATE);
       lpInstructionG->wCount = 1;
       lpInstructionG++;
       lpState = (LPD3DSTATE)lpInstructionG;
       lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
       lpState->dwArg[0] = hTexture;
-      lpState++;	 
-      lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+      lpState++;
+      lpInstructionG = (LPD3DINSTRUCTION)lpState;
 
-	  lpwTriCount = (&lpInstructionG->wCount);
-	  lpInstructionG->bOpcode = D3DOP_TRIANGLE;
+      lpwTriCount = (&lpInstructionG->wCount);
+      lpInstructionG->bOpcode = D3DOP_TRIANGLE;
       lpInstructionG->bSize   = sizeof(D3DTRIANGLE);
-      lpInstructionG->wCount  = 0; 	  
-      lpInstructionG++;     
-	 }
-     
-     lpTriangle             = (LPD3DTRIANGLE)lpInstructionG;      	   	 
-     lpTriangle->wV1    = GVCnt;
-     lpTriangle->wV2    = GVCnt+1;	
-     lpTriangle->wV3    = GVCnt+2;	
-	 lpTriangle->wFlags = 0;
-	 lpTriangle++;	 
-	 *lpwTriCount = (*lpwTriCount) + 1;
-     lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
+      lpInstructionG->wCount  = 0;
+      lpInstructionG++;
+#elif defined(_opengl)
+      if (GVCnt > 0) { d3dEndBufferG(FALSE); d3dStartBufferG(); }
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+#endif
+     }
 
-	 GVCnt+=3; 	   
+#ifdef _d3d
+     lpTriangle = (LPD3DTRIANGLE)lpInstructionG;
+     lpTriangle->wV1    = GVCnt;
+     lpTriangle->wV2    = GVCnt+1;
+     lpTriangle->wV3    = GVCnt+2;
+     lpTriangle->wFlags = 0;
+     lpTriangle++;
+     *lpwTriCount = (*lpwTriCount) + 1;
+     lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
+#endif
+     GVCnt+=3;
 }
 
 
@@ -3029,8 +3323,12 @@ void RenderWCircles()
 }
 
 void RenderWater()
-{  
+{
+#ifdef _d3d
   SetRenderStates(FALSE, D3DBLEND_INVSRCALPHA);
+#elif defined(_opengl)
+  if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_INVSRCALPHA);
+#endif
 
   
   for (int r=ctViewR; r>=ctViewR1; r-=2) {
@@ -3064,9 +3362,17 @@ void RenderWater()
    d3dEndBufferG(FALSE);
 
    FogYBase = 0;
+#ifdef _d3d
    SetRenderStates(FALSE, D3DBLEND_ONE);
+#elif defined(_opengl)
+   if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_ONE);
+#endif
    RenderWCircles();
+#ifdef _d3d
    SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
+#elif defined(_opengl)
+   if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
+#endif
 }
 
 
@@ -3321,14 +3627,34 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
  
    //d3dStartBuffer();
    
-   if (!lpVertexG) 
+   if (!lpVertexG)
        d3dStartBufferGBMP();
-	 
+
    if (GVCnt>380) {
 		 if (lpVertexG) d3dEndBufferG(TRUE);
 		 d3dStartBufferGBMP();
-   } 
+   }
 
+#ifdef _opengl
+   // SOURCEPORT: pre-check texture change BEFORE writing vertices.
+   // In the GL path we must flush the old batch (with old texture) before
+   // writing new vertices, otherwise the old batch is drawn with the new
+   // texture and the new sprite's vertices are orphaned after the restart.
+   if (hGTexture != hTexture) {
+       if (GVCnt > 0) {
+           // Rebind old texture so the pending batch draws correctly
+           if (hGTexture != (D3DTEXTUREHANDLE)-1) {
+               glActiveTexture(GL_TEXTURE0);
+               glBindTexture(GL_TEXTURE_2D, (GLuint)hGTexture);
+           }
+           d3dEndBufferG(TRUE);
+           d3dStartBufferGBMP();
+       }
+       hGTexture = hTexture;
+       glActiveTexture(GL_TEXTURE0);
+       glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+   }
+#endif
 
    lpVertexG->sx       = (float)gScrp[0].x;
    lpVertexG->sy       = (float)gScrp[0].y;
@@ -3393,43 +3719,47 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
    lpVertexG++;
 
    //d3dFlushBuffer(0, 2);
-   
+
+#ifdef _d3d
      if (hGTexture!=hTexture) {
       hGTexture=hTexture;
-	  lpInstructionG->bOpcode = D3DOP_STATERENDER;
+      lpInstructionG->bOpcode = D3DOP_STATERENDER;
       lpInstructionG->bSize = sizeof(D3DSTATE);
       lpInstructionG->wCount = 1;
       lpInstructionG++;
       lpState = (LPD3DSTATE)lpInstructionG;
       lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
       lpState->dwArg[0] = hTexture;
-      lpState++;	 
-      lpInstructionG = (LPD3DINSTRUCTION)lpState;     
+      lpState++;
+      lpInstructionG = (LPD3DINSTRUCTION)lpState;
 
-	  lpwTriCount = (&lpInstructionG->wCount);
-	  lpInstructionG->bOpcode = D3DOP_TRIANGLE;
+      lpwTriCount = (&lpInstructionG->wCount);
+      lpInstructionG->bOpcode = D3DOP_TRIANGLE;
       lpInstructionG->bSize   = sizeof(D3DTRIANGLE);
-      lpInstructionG->wCount  = 0; 	  
-      lpInstructionG++;     
-	 }
-     
-     lpTriangle             = (LPD3DTRIANGLE)lpInstructionG;      	   	 
+      lpInstructionG->wCount  = 0;
+      lpInstructionG++;
+     }
+     // In the GL path, texture change is handled BEFORE vertex write (see above).
+#endif
+
+#ifdef _d3d
+     lpTriangle = (LPD3DTRIANGLE)lpInstructionG;
      lpTriangle->wV1    = GVCnt;
-     lpTriangle->wV2    = GVCnt+1;	
-     lpTriangle->wV3    = GVCnt+2;	
-	 lpTriangle->wFlags = 0;
-	 lpTriangle++;	 
-	 
+     lpTriangle->wV2    = GVCnt+1;
+     lpTriangle->wV3    = GVCnt+2;
+     lpTriangle->wFlags = 0;
+     lpTriangle++;
+
      lpTriangle->wV1    = GVCnt+3;
-     lpTriangle->wV2    = GVCnt+4;	
-     lpTriangle->wV3    = GVCnt+5;	
-	 lpTriangle->wFlags = 0;
-	 lpTriangle++;	 
+     lpTriangle->wV2    = GVCnt+4;
+     lpTriangle->wV3    = GVCnt+5;
+     lpTriangle->wFlags = 0;
+     lpTriangle++;
 
-	 *lpwTriCount = (*lpwTriCount) + 2;
+     *lpwTriCount = (*lpwTriCount) + 2;
      lpInstructionG = (LPD3DINSTRUCTION)lpTriangle;
-
-	 GVCnt+=6;
+#endif
+     GVCnt+=6;
 }
 
 
@@ -3514,46 +3844,43 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
    while( f!=-1 ) {       
      TFace *fptr = & mptr->gFace[f];
 	 f = mptr->gFace[f].Next;
-/*
-	 if (minx<0)
-	  if (gScrp[fptr->v1].x <0    && gScrp[fptr->v2].x<0    && gScrp[fptr->v3].x<0) continue;
-	 if (maxx>WinW)
-	  if (gScrp[fptr->v1].x >WinW && gScrp[fptr->v2].x>WinW && gScrp[fptr->v3].x>WinW) continue;
-*/
+	 // SOURCEPORT: skip faces with any vertex behind camera (sentinel = 0xFFFFFF).
+	 // D3D would clip these; in GL pre-transformed mode we must skip them.
+	 if (gScrp[fptr->v1].x == 0xFFFFFFu || gScrp[fptr->v2].x == 0xFFFFFFu || gScrp[fptr->v3].x == 0xFFFFFFu) continue;
 	 if (fptr->Flags & (sfOpacity | sfTransparent)) fproc2++; else fproc1++;
 
-	 int _ml = ml + mptr->VLight[VT][fptr->v1];
+	 int _ml = ml + mptr->VLight[VT][fptr->v1]; if (_ml > 255) _ml = 255;
 	 lpVertex->sx       = (float)gScrp[fptr->v1].x;
      lpVertex->sy       = (float)gScrp[fptr->v1].y;
      lpVertex->sz       = _ZSCALE / rVertex[fptr->v1].z;
      lpVertex->rhw      = 1.f;
-     lpVertex->color    = _ml * 0x00010101 | alphamask;     
+     lpVertex->color    = _ml * 0x00010101 | alphamask;
 	 lpVertex->specular = vFogT[fptr->v1];
      lpVertex->tu       = (float)(fptr->tax);
      lpVertex->tv       = (float)(fptr->tay);
      lpVertex++;
 
-     _ml = ml + mptr->VLight[VT][fptr->v2];
+     _ml = ml + mptr->VLight[VT][fptr->v2]; if (_ml > 255) _ml = 255;
 	 lpVertex->sx       = (float)gScrp[fptr->v2].x;
      lpVertex->sy       = (float)gScrp[fptr->v2].y;
      lpVertex->sz       = _ZSCALE / rVertex[fptr->v2].z;
      lpVertex->rhw      = 1.f;
-     lpVertex->color    = _ml * 0x00010101 | alphamask;;     
+     lpVertex->color    = _ml * 0x00010101 | alphamask;
 	 lpVertex->specular = vFogT[fptr->v2];
      lpVertex->tu       = (float)(fptr->tbx);
      lpVertex->tv       = (float)(fptr->tby);
      lpVertex++;
 
-	 _ml = ml + mptr->VLight[VT][fptr->v3];
+	 _ml = ml + mptr->VLight[VT][fptr->v3]; if (_ml > 255) _ml = 255;
 	 lpVertex->sx       = (float)gScrp[fptr->v3].x;
      lpVertex->sy       = (float)gScrp[fptr->v3].y;
      lpVertex->sz       = _ZSCALE / rVertex[fptr->v3].z;
-     lpVertex->rhw      = 1.f;	 
-     lpVertex->color    = _ml * 0x00010101 | alphamask;;     
+     lpVertex->rhw      = 1.f;
+     lpVertex->color    = _ml * 0x00010101 | alphamask;
 	 lpVertex->specular = vFogT[fptr->v3];
      lpVertex->tu       = (float)(fptr->tcx);
      lpVertex->tv       = (float)(fptr->tcy);
-     lpVertex++;	 
+     lpVertex++;
      	 
           
      //f = mptr->gFace[f].Next;
@@ -3789,9 +4116,9 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
     CMASK|=gScrp[fptr->v3].y;         
 
 	
-    cp[0].ev.v = rVertex[fptr->v1]; cp[0].tx = fptr->tax;  cp[0].ty = fptr->tay; cp[0].ev.Fog = vFogT[fptr->v1]; cp[0].ev.Light = mptr->VLight[VT][fptr->v1];
-    cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = fptr->tbx;  cp[1].ty = fptr->tby; cp[1].ev.Fog = vFogT[fptr->v2]; cp[1].ev.Light = mptr->VLight[VT][fptr->v2];
-    cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = fptr->tcx;  cp[2].ty = fptr->tcy; cp[2].ev.Fog = vFogT[fptr->v3]; cp[2].ev.Light = mptr->VLight[VT][fptr->v3]; 
+    cp[0].ev.v = rVertex[fptr->v1]; cp[0].tx = fptr->tax;  cp[0].ty = fptr->tay; cp[0].ev.Fog = (float)(vFogT[fptr->v1] >> 24); cp[0].ev.Light = mptr->VLight[VT][fptr->v1];
+    cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = fptr->tbx;  cp[1].ty = fptr->tby; cp[1].ev.Fog = (float)(vFogT[fptr->v2] >> 24); cp[1].ev.Light = mptr->VLight[VT][fptr->v2];
+    cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = fptr->tcx;  cp[2].ty = fptr->tcy; cp[2].ev.Fog = (float)(vFogT[fptr->v3] >> 24); cp[2].ev.Light = mptr->VLight[VT][fptr->v3];
    
 	{
      for (u=0; u<vused; u++) cp[u].ev.v.z+= 8.0f;
@@ -3809,8 +4136,8 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
 	if (almask > alphamask) 
 		almask = alphamask;
                      
-    for (u=0; u<vused-2; u++) {        	     
-		 int _flight = flight + cp[0].ev.Light;	
+    for (u=0; u<vused-2; u++) {
+		 int _flight = flight + cp[0].ev.Light;   if (_flight > 255) _flight = 255;
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[0].ev.v.x / cp[0].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[0].ev.v.y / cp[0].ev.v.z * CameraH));
          lpVertex->sz       = _ZSCALE / cp[0].ev.v.z;
@@ -3821,7 +4148,7 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
          lpVertex->tv       = (float)(cp[0].ty);
          lpVertex++;
 
-		 _flight = flight + cp[u+1].ev.Light;	
+		 _flight = flight + cp[u+1].ev.Light;     if (_flight > 255) _flight = 255;
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+1].ev.v.x / cp[u+1].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+1].ev.v.y / cp[u+1].ev.v.z * CameraH));
          lpVertex->sz       = _ZSCALE / cp[u+1].ev.v.z;
@@ -3832,7 +4159,7 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
          lpVertex->tv       = (float)(cp[u+1].ty);
          lpVertex++;
 
-		 _flight = flight + cp[u+2].ev.Light;	
+		 _flight = flight + cp[u+2].ev.Light;     if (_flight > 255) _flight = 255;
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+2].ev.v.x / cp[u+2].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+2].ev.v.y / cp[u+2].ev.v.z * CameraH));
          lpVertex->sz       = _ZSCALE / cp[u+2].ev.v.z;
@@ -3896,9 +4223,13 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
    }   
    
 
-   d3dSetTexture(TFX_ENVMAP.lpImage, TFX_ENVMAP.W, TFX_ENVMAP.W);            
+   d3dSetTexture(TFX_ENVMAP.lpImage, TFX_ENVMAP.W, TFX_ENVMAP.W);
+#ifdef _d3d
    SetRenderStates(FALSE, D3DBLEND_ONE);
-          
+#elif defined(_opengl)
+   if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_ONE);
+#endif
+
    BuildTreeClipNoSort();
       
    d3dStartBuffer();
@@ -3975,8 +4306,18 @@ LNEXT:
      f = mptr->gFace[f].Next;
    }
 
+#ifdef _opengl
+  // SOURCEPORT: disable depth test entirely for env-map overlay — same-depth fragments
+  // z-fight with the already-drawn weapon model under GL_GEQUAL.
+  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(false);
+#endif
   d3dFlushBuffer(fproc1, 0);
+#ifdef _d3d
   SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
+#elif defined(_opengl)
+  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(true);
+  if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
+#endif
 }
 
 
@@ -4023,9 +4364,13 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
 
    }   
    
-   d3dSetTexture(TFX_SPECULAR.lpImage, TFX_SPECULAR.W, TFX_SPECULAR.W);            
+   d3dSetTexture(TFX_SPECULAR.lpImage, TFX_SPECULAR.W, TFX_SPECULAR.W);
+#ifdef _d3d
    SetRenderStates(FALSE, D3DBLEND_ONE);
-          
+#elif defined(_opengl)
+   if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_ONE);
+#endif
+
    BuildTreeClipNoSort();
       
    d3dStartBuffer();
@@ -4099,8 +4444,18 @@ LNEXT:
      f = mptr->gFace[f].Next;
    }
 
+#ifdef _opengl
+  // SOURCEPORT: disable depth test entirely for phong-map overlay — same-depth fragments
+  // z-fight with the already-drawn weapon model under GL_GEQUAL.
+  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(false);
+#endif
   d3dFlushBuffer(fproc1, 0);
+#ifdef _d3d
   SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
+#elif defined(_opengl)
+  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(true);
+  if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
+#endif
 }
 
 void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
@@ -4181,8 +4536,9 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
      lpVertex++;	 
      	           
      f = mptr->gFace[f].Next;
-   }   
+   }
 
+#ifdef _d3d
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 1024*3);
    lpInstruction->bOpcode = D3DOP_STATERENDER;
    lpInstruction->bSize = sizeof(D3DSTATE);
@@ -4192,14 +4548,12 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
 
    lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
    lpState->dwArg[0] = hTexture;
-   lpState++;   
-   
+   lpState++;
+
    lpState->drstRenderStateType = D3DRENDERSTATE_DESTBLEND;
    lpState->dwArg[0] = D3DBLEND_ONE;
    lpState++;
 
-   
-   
    lpInstruction = (LPD3DINSTRUCTION)lpState;
    lpInstruction->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstruction->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -4213,7 +4567,7 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
    lpProcessVertices->dwCount    = fproc1*3;
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
-   
+
    lpInstruction = (LPD3DINSTRUCTION)lpProcessVertices;
    lpInstruction->bOpcode = D3DOP_TRIANGLE;
    lpInstruction->bSize   = sizeof(D3DTRIANGLE);
@@ -4231,7 +4585,7 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
    }
 
     lpInstruction = (LPD3DINSTRUCTION)lpTriangle;
-  
+
     lpInstruction->bOpcode = D3DOP_STATERENDER;
     lpInstruction->bSize = sizeof(D3DSTATE);
     lpInstruction->wCount = 1;
@@ -4242,7 +4596,7 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
     lpState->dwArg[0] = D3DBLEND_INVSRCALPHA;
     lpState++;
 
-	lpInstruction = (LPD3DINSTRUCTION)lpState;	
+	lpInstruction = (LPD3DINSTRUCTION)lpState;
 
 	lpInstruction->bOpcode = D3DOP_STATERENDER;
     lpInstruction->bSize = sizeof(D3DSTATE);
@@ -4262,19 +4616,21 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
     lpState->dwArg[0] = D3DFILTER_LINEAR;
     lpState++;
 	lpInstruction = (LPD3DINSTRUCTION)lpState;
-  
 
-   
    lpInstruction->bOpcode = D3DOP_EXIT;
    lpInstruction->bSize   = 0UL;
    lpInstruction->wCount  = 0U;
 
    lpd3dExecuteBuffer->Unlock( );
-   
-   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
-   //if (FAILED(hRes)) DoHalt("Error execute buffer");   
-   dFacesCount+=fproc1;
 
+   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
+   //if (FAILED(hRes)) DoHalt("Error execute buffer");
+   dFacesCount+=fproc1;
+#elif defined(_opengl)
+   if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_ONE);
+   d3dFlushBuffer(fproc1, 0);
+   if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
+#endif
 }
 
 
@@ -4428,14 +4784,16 @@ void RenderCharacterPost(TCharacter *cptr)
    	if (cptr->AI==0) Al = 0x50;
 
     GlassL = (Al<<24) + 0x00222222;
-   
-   RenderShadowClip(cptr->pinfo->mptr, 
-                cptr->pos.x, cptr->pos.y, cptr->pos.z,
-                cptr->rpos.x, cptr->rpos.y, cptr->rpos.z, 
-                pi/2-cptr->alpha,
-                CameraAlpha, 
-                CameraBeta );   
 
+   RenderShadowClip(cptr->pinfo->mptr,
+                cptr->pos.x, cptr->pos.y, cptr->pos.z,
+                cptr->rpos.x, cptr->rpos.y, cptr->rpos.z,
+                pi/2-cptr->alpha,
+                CameraAlpha,
+                CameraBeta );
+   // SOURCEPORT: reset GlassL after shadow — RenderShadowClip leaves it as packed ARGB,
+   // which corrupts alphamask in subsequent RenderModel/RenderModelClip calls.
+   GlassL = 0;
 }
 
 
@@ -4536,6 +4894,7 @@ void ClearVideoBuf()
 
 
 
+#ifdef _d3d
 int  CircleCX, CircleCY;
 WORD CColor;
 
@@ -4559,15 +4918,16 @@ void DrawCircle(int cx, int cy, int R)
    int d = 3 - (2 * R);
    int x = 0;
    int y = R;
-   CircleCX=cx; 
+   CircleCX=cx;
    CircleCY=cy;
    do {
      Put8pix(x,y); x++;
-     if (d < 0) d = d + (x<<2) + 6;  else 
+     if (d < 0) d = d + (x<<2) + 6;  else
 	 { d = d + (x - y) * 4 + 10; y--; }
    } while (x<y);
    Put8pix(x,y);
 }
+#endif // _d3d
 
 void DrawBox( WORD *lfbPtr, int lsw, int xx, int yy, WORD c)
 {
@@ -4581,23 +4941,22 @@ void DrawBox( WORD *lfbPtr, int lsw, int xx, int yy, WORD c)
 
 
 void DrawHMap()
-{  
-  int c;
-
+{
   DrawPicture(VideoCX-MapPic.W/2, VideoCY - MapPic.H/2-6, MapPic);
-  
+#ifdef _d3d
+  int c;
   ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
   ddsd.dwSize = sizeof(DDSURFACEDESC);
-  if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) return;    
+  if( lpddBack->Lock( NULL, &ddsd, DDLOCK_WAIT, NULL ) != DD_OK ) return;
 
   lsw = ddsd.lPitch / 2;
   int RShift, GShift;
 
   if (VMFORMAT565) {
-	  RShift=11; GShift=6; 
+	  RShift=11; GShift=6;
   } else {
-	  RShift=10; GShift=5; 
-  }  
+	  RShift=10; GShift=5;
+  }
 
   int xx = VideoCX - 128 + (CCX>>2);
   int yy = VideoCY - 128 + (CCY>>2);
@@ -4606,19 +4965,12 @@ void DrawHMap()
   if (xx<0 || xx>=WinW) goto endmap;
   DrawBox((WORD*)ddsd.lpSurface, lsw, xx+1, yy+1, 8<<RShift);
   DrawBox((WORD*)ddsd.lpSurface, lsw, xx, yy, 30<<RShift);
-  /*
-  *((WORD*)ddsd.lpSurface + yy*lsw + xx) = 30<<RShift;
-  *((WORD*)ddsd.lpSurface + yy*lsw + xx + 1) = 30<<RShift;
-  yy++;
-  *((WORD*)ddsd.lpSurface + yy*lsw + xx) = 30<<RShift;
-  *((WORD*)ddsd.lpSurface + yy*lsw + xx + 1) = 30<<RShift;
-  */
 
   CColor =  4<<GShift; DrawCircle(xx+1, yy+1, (ctViewR/4));
   CColor = 18<<GShift; DrawCircle(xx, yy, (ctViewR/4));
 
   if (RadarMode)
-  for (c=0; c<ChCount; c++) {   
+  for (c=0; c<ChCount; c++) {
    if (Characters[c].AI<10) continue;
    if (! (TargetDino & (1<<Characters[c].AI)) ) continue;
    if (!Characters[c].Health) continue;
@@ -4626,11 +4978,12 @@ void DrawHMap()
    yy = VideoCY - 128 + (int)Characters[c].pos.z / 1024;
    if (yy<=0 || yy>=WinH) goto endmap;
    if (xx<=0 || xx>=WinW) goto endmap;
-   DrawBox((WORD*)ddsd.lpSurface, lsw, xx, yy, 30<<GShift);   
+   DrawBox((WORD*)ddsd.lpSurface, lsw, xx, yy, 30<<GShift);
   }
-  
+
 endmap:
   lpddBack->Unlock(ddsd.lpSurface);
+#endif // _d3d
 }
 
 
@@ -4738,9 +5091,11 @@ void RenderSkyPlane()
    RotateVVector(nv);
       
    sh = 4*512*16;
-   vbase.x = -CameraX;
+   // SOURCEPORT: use low-frequency world coords so sky scrolls slowly while walking
+   // but doesn't jump dramatically when rotating. Divide by 128 to damp rotation effect.
+   vbase.x = -CameraX / 128.f;
    vbase.y = sh;
-   vbase.z = +CameraZ;
+   vbase.z = +CameraZ / 128.f;
    RotateVVector(vbase);
 
 //============= calc render params =================//
@@ -4775,25 +5130,74 @@ void RenderSkyPlane()
    float qyy;
 
 
-//   d3dStartBuffer();
+#ifdef _d3d
    ZeroMemory(&d3dExeBufDesc, sizeof(d3dExeBufDesc));
    d3dExeBufDesc.dwSize = sizeof(d3dExeBufDesc);
    hRes = lpd3dExecuteBufferG->Lock( &d3dExeBufDesc );
    if (FAILED(hRes)) DoHalt("Error locking execute buffer");
-   lpVertex = (LPD3DTLVERTEX)d3dExeBufDesc.lpData;   
+   lpVertex = (LPD3DTLVERTEX)d3dExeBufDesc.lpData;
+#elif defined(_opengl)
+   // SOURCEPORT: GL sky — subdivided horizontal strips.
+   // A single 4-corner quad gives poor UV accuracy near the horizon because the
+   // perspective-projected UVs are non-linear: GPU linear interpolation between only
+   // 4 corners produces incorrect UV spacing → aliasing stripes at grazing angles.
+   // Fix: compute correct UVs at each strip edge, giving accurate per-pixel UV mapping.
+   {
+       d3dStartBufferG();
+       float dtt = (float)(SKYDTime) / 512.f;
+       // Helper: compute left and right UVs at a given sky scanline y-offset
+       auto skyUV = [&](float sky, float &tu_l, float &tv_l, float &tu_r, float &tv_r) {
+           float sy2 = VideoCY - sky;
+           float q_l = qx1 + qy * sy2;
+           float q_r = qx2 + qy * sy2;
+           if (fabsf(q_l) > 0.001f) { tu_l = (px*sx1 + py*sy2 + pz)/q_l; tv_l = (rx*sx1 + ry*sy2 + rz)/q_l; }
+           else                      { tu_l = 0.f; tv_l = 0.f; }
+           if (fabsf(q_r) > 0.001f) { tu_r = (px*sx2 + py*sy2 + pz)/q_r; tv_r = (rx*sx2 + ry*sy2 + rz)/q_r; }
+           else                      { tu_r = 0.f; tv_r = 0.f; }
+       };
+       const int N_STRIPS = 32; // enough rows to accurately represent UV curvature
+       float tu0l, tv0l, tu0r, tv0r;
+       skyUV(0.f, tu0l, tv0l, tu0r, tv0r);
+       for (int s = 0; s < N_STRIPS; s++) {
+           float sky0 = (float)scry * s       / N_STRIPS;
+           float sky1 = (float)scry * (s + 1) / N_STRIPS;
+           float tu1l, tv1l, tu1r, tv1r;
+           skyUV(sky1, tu1l, tv1l, tu1r, tv1r);
+           // Two triangles: (TL, TR, BL) and (TR, BR, BL)
+           auto emit = [&](float ssx, float ssy, float tu, float tv) {
+               lpVertexG->sx = ssx; lpVertexG->sy = ssy; lpVertexG->sz = 0.0001f; lpVertexG->rhw = 1.f;
+               lpVertexG->color = 0xFFFFFFFF; lpVertexG->specular = 0xFF000000;
+               lpVertexG->tu = (tu + dtt) / 256.f; lpVertexG->tv = (tv - dtt) / 256.f;
+               lpVertexG++;
+           };
+           emit(0.f,        sky0, tu0l, tv0l);
+           emit((float)WinW, sky0, tu0r, tv0r);
+           emit(0.f,        sky1, tu1l, tv1l);
+           emit((float)WinW, sky0, tu0r, tv0r);
+           emit((float)WinW, sky1, tu1r, tv1r);
+           emit(0.f,        sky1, tu1l, tv1l);
+           GVCnt += 6;
+           tu0l = tu1l; tv0l = tv1l; tu0r = tu1r; tv0r = tv1r;
+       }
+       if (g_glRenderer) g_glRenderer->SetZBufferEnabled(false);
+       d3dEndBufferG(FALSE);
+       if (g_glRenderer) g_glRenderer->SetZBufferEnabled(true);
+       goto sky_done;
+   }
+#endif
 
    float dtt = (float)(SKYDTime) / 512.f;
 
-    float sky=0; 
+    float sky=0;
 	float sy = VideoCY - sky;
 	qyy = qy * sy;
 	q = qx1 + qyy;
 	float fxa = (px * sx1 + py * sy + pz) / q;
 	float fya = (rx * sx1 + ry * sy + rz) / q;
-	q = qx2 + qyy;	
+	q = qx2 + qyy;
 	float fxb = (px * sx2 + py * sy + pz) / q;
-	float fyb = (rx * sx2 + ry * sy + rz) / q;	
-            
+	float fyb = (rx * sx2 + ry * sy + rz) / q;
+
 	lpVertex->sx       = 0.f;
     lpVertex->sy       = (float)sky;
     lpVertex->sz       = 0.0001f;//-8.f / za;
@@ -4818,19 +5222,19 @@ void RenderSkyPlane()
 	 lpVertex->specular = 0xFF000000;              }
     lpVertex->tu       = (fxb + dtt) / 256.f;
     lpVertex->tv       = (fyb - dtt) / 256.f;
-    lpVertex++;           
+    lpVertex++;
 
 
-	sky=scry/2.f; 
+	sky=scry/2.f;
 	sy = VideoCY - sky;
 	qyy = qy * sy;
 	q = qx1 + qyy;
 	fxa = (px * sx1 + py * sy + pz) / q;
-	fya = (rx * sx1 + ry * sy + rz) / q;	
-	q = qx2 + qyy;	
+	fya = (rx * sx1 + ry * sy + rz) / q;
+	q = qx2 + qyy;
 	fxb = (px * sx2 + py * sy + pz) / q;
-	fyb = (rx * sx2 + ry * sy + rz) / q;    	
-        
+	fyb = (rx * sx2 + ry * sy + rz) / q;
+
 	lpVertex->sx       = 0.f;
     lpVertex->sy       = (float)sky;
     lpVertex->sz       = 0.0001f;//-8.f / zb;
@@ -4855,21 +5259,21 @@ void RenderSkyPlane()
 	 lpVertex->specular = 0xFF000000;              }
     lpVertex->tu       = (fxb + dtt) / 256.f;
     lpVertex->tv       = (fyb - dtt) / 256.f;
-    lpVertex++;           
+    lpVertex++;
 
 
 
 
-	sky=(float)scry; 
+	sky=(float)scry;
 	sy = VideoCY - sky;
 	qyy = qy * sy;
 	q = qx1 + qyy;
 	fxa = (px * sx1 + py * sy + pz) / q;
-	fya = (rx * sx1 + ry * sy + rz) / q;	
-	q = qx2 + qyy;	
+	fya = (rx * sx1 + ry * sy + rz) / q;
+	q = qx2 + qyy;
 	fxb = (px * sx2 + py * sy + pz) / q;
-	fyb = (rx * sx2 + ry * sy + rz) / q;    	
-        
+	fyb = (rx * sx2 + ry * sy + rz) / q;
+
 	lpVertex->sx       = 0.f;
     lpVertex->sy       = (float)sky;
     lpVertex->sz       = 0.0001f;//-8.f / zb;
@@ -4898,6 +5302,7 @@ void RenderSkyPlane()
 	
    
 
+#ifdef _d3d
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 400*3);
    lpInstruction->bOpcode = D3DOP_STATERENDER;
    lpInstruction->bSize = sizeof(D3DSTATE);
@@ -4936,35 +5341,33 @@ void RenderSkyPlane()
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
 
-   
    lpInstruction = (LPD3DINSTRUCTION)lpProcessVertices;
    lpInstruction->bOpcode = D3DOP_TRIANGLE;
    lpInstruction->bSize   = sizeof(D3DTRIANGLE);
    lpInstruction->wCount  = 4;
    lpInstruction++;
-   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;   
-      
+   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;
+
    lpTriangle->wV1    = 0;
-   lpTriangle->wV2    = 1;	
+   lpTriangle->wV2    = 1;
    lpTriangle->wV3    = 2;
    lpTriangle->wFlags = 0;
    lpTriangle++;
-   
+
    lpTriangle->wV1    = 1;
-   lpTriangle->wV2    = 2;	
+   lpTriangle->wV2    = 2;
    lpTriangle->wV3    = 3;
    lpTriangle->wFlags = 0;
    lpTriangle++;
 
-
    lpTriangle->wV1    = 2;
-   lpTriangle->wV2    = 3;	
+   lpTriangle->wV2    = 3;
    lpTriangle->wV3    = 4;
    lpTriangle->wFlags = 0;
    lpTriangle++;
-   
+
    lpTriangle->wV1    = 3;
-   lpTriangle->wV2    = 4;	
+   lpTriangle->wV2    = 4;
    lpTriangle->wV3    = 5;
    lpTriangle->wFlags = 0;
    lpTriangle++;
@@ -4975,9 +5378,11 @@ void RenderSkyPlane()
    lpInstruction->wCount  = 0U;
 
    lpd3dExecuteBufferG->Unlock( );
-   
-   hRes = lpd3dDevice->Execute(lpd3dExecuteBufferG, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
 
+   hRes = lpd3dDevice->Execute(lpd3dExecuteBufferG, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
+#endif
+
+sky_done:
    LINEARFILTER = TRUE;
             
    nv = RotateVector(Sun3dPos);
@@ -4989,48 +5394,48 @@ void RenderSkyPlane()
 
 void RenderFSRect(DWORD Color)
 {
+#ifdef _d3d
     d3dStartBuffer();
 
-	lpVertex->sx       = 0.f;
+    lpVertex->sx       = 0.f;
     lpVertex->sy       = 0.f;
     lpVertex->sz       = 0.999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = Color;
-	lpVertex->specular = 0xFF000000;
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
 
-	lpVertex->sx       = (float)WinW;
+    lpVertex->sx       = (float)WinW;
     lpVertex->sy       = 0.f;
     lpVertex->sz       = 0.999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = Color;
-	lpVertex->specular = 0xFF000000;
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
 
-	lpVertex->sx       = 0.f;
+    lpVertex->sx       = 0.f;
     lpVertex->sy       = (float)WinH;
     lpVertex->sz       = 0.999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = Color;
-	lpVertex->specular = 0xFF000000;
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
 
-	lpVertex->sx       = (float)WinW;
+    lpVertex->sx       = (float)WinW;
     lpVertex->sy       = (float)WinH;
-    lpVertex->sz       = (float)0.999f;
+    lpVertex->sz       = 0.999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = Color;
-	lpVertex->specular = 0xFF000000;
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
-
 
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 1024*3);
    lpInstruction->bOpcode = D3DOP_STATERENDER;
@@ -5042,7 +5447,7 @@ void RenderFSRect(DWORD Color)
    lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
    lpState->dwArg[0] = NULL;
    lpState++;
-   
+
    lpInstruction = (LPD3DINSTRUCTION)lpState;
    lpInstruction->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstruction->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -5057,22 +5462,21 @@ void RenderFSRect(DWORD Color)
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
 
-   
    lpInstruction = (LPD3DINSTRUCTION)lpProcessVertices;
    lpInstruction->bOpcode = D3DOP_TRIANGLE;
    lpInstruction->bSize   = sizeof(D3DTRIANGLE);
    lpInstruction->wCount  = 2;
    lpInstruction++;
-   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;   
-      
+   lpTriangle             = (LPD3DTRIANGLE)lpInstruction;
+
    lpTriangle->wV1    = 0;
-   lpTriangle->wV2    = 1;	
+   lpTriangle->wV2    = 1;
    lpTriangle->wV3    = 2;
    lpTriangle->wFlags = 0;
    lpTriangle++;
-   
+
    lpTriangle->wV1    = 1;
-   lpTriangle->wV2    = 2;	
+   lpTriangle->wV2    = 2;
    lpTriangle->wV3    = 3;
    lpTriangle->wFlags = 0;
    lpTriangle++;
@@ -5083,8 +5487,12 @@ void RenderFSRect(DWORD Color)
    lpInstruction->wCount  = 0U;
 
    lpd3dExecuteBuffer->Unlock( );
-   
-   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);	
+
+   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
+#elif defined(_opengl)
+   // SOURCEPORT: draw a solid color fullscreen overlay
+   if (g_glRenderer) g_glRenderer->DrawFullscreenRect((uint32_t)Color);
+#endif
 }
 
 
@@ -5092,68 +5500,64 @@ void RenderFSRect(DWORD Color)
 
 void RenderHealthBar()
 {
-
   if (MyHealth >= 100000) return;
   if (MyHealth == 000000) return;
 
-  
+#ifdef _d3d
   int L = WinW / 4;
   int x0 = WinW - (WinW / 20) - L;
   int y0 = WinH / 40;
   int G = min( (MyHealth * 240 / 100000), 160);
   int R = min( ( (100000 - MyHealth) * 240 / 100000), 160);
-  
-    
+
   int L0 = (L * MyHealth) / 100000;
   int H = WinH / 200;
 
   d3dStartBuffer();
 
-  for (int y=0; y<4; y++) {	  
-	lpVertex->sx       = (float)x0-1;
+  for (int y=0; y<4; y++) {
+    lpVertex->sx       = (float)x0-1;
     lpVertex->sy       = (float)y0+y;
     lpVertex->sz       = 0.9999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = 0xF0000010;
-	lpVertex->specular = 0xFF000000;
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
 
-	lpVertex->sx       = (float)x0+L0+1;
+    lpVertex->sx       = (float)x0+L0+1;
     lpVertex->sy       = (float)y0+y;
     lpVertex->sz       = 0.9999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = 0xF0000010;
-	lpVertex->specular = 0xFF000000;
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
   }
 
-  for (int y2=1; y2<3; y2++) {	  // SOURCEPORT: MSVC6 scoping fix
-	lpVertex->sx       = (float)x0;
+  for (int y2=1; y2<3; y2++) {  // SOURCEPORT: MSVC6 scoping fix
+    lpVertex->sx       = (float)x0;
     lpVertex->sy       = (float)y0+y2;
     lpVertex->sz       = 0.99999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = 0xF0000000 + (G<<8) + (R<<16);
-	lpVertex->specular = 0xFF000000;// + (G<<8) + (R<<16);
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
 
-	lpVertex->sx       = (float)x0+L0;
+    lpVertex->sx       = (float)x0+L0;
     lpVertex->sy       = (float)y0+y2;
     lpVertex->sz       = 0.99999f;
     lpVertex->rhw      = 1.f;
     lpVertex->color    = 0xF0000000 + (G<<8) + (R<<16);
-	lpVertex->specular = 0xFF000000;// + (G<<8) + (R<<16);
+    lpVertex->specular = 0xFF000000;
     lpVertex->tu       = 0;
     lpVertex->tv       = 0;
     lpVertex++;
   }
-
-
 
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 1024*3);
    lpInstruction->bOpcode = D3DOP_STATERENDER;
@@ -5165,7 +5569,7 @@ void RenderHealthBar()
    lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
    lpState->dwArg[0] = NULL;
    lpState++;
-   
+
    lpInstruction = (LPD3DINSTRUCTION)lpState;
    lpInstruction->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstruction->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -5179,81 +5583,80 @@ void RenderHealthBar()
    lpProcessVertices->dwCount    = 12;
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
-   
+
    lpInstruction = (LPD3DINSTRUCTION)lpProcessVertices;
    lpInstruction->bOpcode = D3DOP_LINE;
    lpInstruction->bSize   = sizeof(D3DLINE);
    lpInstruction->wCount  = 6;
    lpInstruction++;
-   lpLine                 = (LPD3DLINE)lpInstruction;   
+   lpLine                 = (LPD3DLINE)lpInstruction;
 
-   for (int y3=0; y3<6; y3++) { // SOURCEPORT: MSVC6 scoping fix
+   for (int y3=0; y3<6; y3++) {  // SOURCEPORT: MSVC6 scoping fix
     lpLine->wV1    = y3*2;
     lpLine->wV2    = y3*2+1;
     lpLine++;
    }
-      
+
    lpInstruction = (LPD3DINSTRUCTION)lpLine;
    lpInstruction->bOpcode = D3DOP_EXIT;
    lpInstruction->bSize   = 0UL;
    lpInstruction->wCount  = 0U;
 
    lpd3dExecuteBuffer->Unlock( );
-   
-   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);	
 
+   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
+#elif defined(_opengl)
+   // SOURCEPORT: TODO — implement health bar using GL line/quad rendering
+#endif
 }
 
 
 
-void Render_Cross(int sx, int sy) 
+void Render_Cross(int sx, int sy)
 {
+#ifdef _d3d
+  float w = (float) WinW / 12.f;
+  d3dStartBuffer();
 
-	float w = (float) WinW / 12.f;
-	d3dStartBuffer();
+  lpVertex->sx       = (float)sx-w;
+  lpVertex->sy       = (float)sy;
+  lpVertex->sz       = 0.99999f;
+  lpVertex->rhw      = 1.f;
+  lpVertex->color    = 0x80000010;
+  lpVertex->specular = 0xFF000000;
+  lpVertex->tu       = 0;
+  lpVertex->tv       = 0;
+  lpVertex++;
 
-	lpVertex->sx       = (float)sx-w;
-    lpVertex->sy       = (float)sy;
-    lpVertex->sz       = 0.99999f;
-    lpVertex->rhw      = 1.f;
-    lpVertex->color    = 0x80000010;
-	lpVertex->specular = 0xFF000000;
-    lpVertex->tu       = 0;
-    lpVertex->tv       = 0;
-    lpVertex++;
+  lpVertex->sx       = (float)sx+w;
+  lpVertex->sy       = (float)sy;
+  lpVertex->sz       = 0.99999f;
+  lpVertex->rhw      = 1.f;
+  lpVertex->color    = 0x80000010;
+  lpVertex->specular = 0xFF000000;
+  lpVertex->tu       = 0;
+  lpVertex->tv       = 0;
+  lpVertex++;
 
-	lpVertex->sx       = (float)sx+w;
-    lpVertex->sy       = (float)sy;
-    lpVertex->sz       = 0.99999f;
-    lpVertex->rhw      = 1.f;
-    lpVertex->color    = 0x80000010;
-	lpVertex->specular = 0xFF000000;
-    lpVertex->tu       = 0;
-    lpVertex->tv       = 0;
-    lpVertex++;
+  lpVertex->sx       = (float)sx;
+  lpVertex->sy       = (float)sy-w;
+  lpVertex->sz       = 0.99999f;
+  lpVertex->rhw      = 1.f;
+  lpVertex->color    = 0x80000010;
+  lpVertex->specular = 0xFF000000;
+  lpVertex->tu       = 0;
+  lpVertex->tv       = 0;
+  lpVertex++;
 
-
-    lpVertex->sx       = (float)sx;
-    lpVertex->sy       = (float)sy-w;
-    lpVertex->sz       = 0.99999f;
-    lpVertex->rhw      = 1.f;
-    lpVertex->color    = 0x80000010;
-	lpVertex->specular = 0xFF000000;
-    lpVertex->tu       = 0;
-    lpVertex->tv       = 0;
-    lpVertex++;
-
-
-	lpVertex->sx       = (float)sx;
-    lpVertex->sy       = (float)sy+w;
-    lpVertex->sz       = 0.99999f;
-    lpVertex->rhw      = 1.f;
-    lpVertex->color    = 0x80000010;
-	lpVertex->specular = 0xFF000000;
-    lpVertex->tu       = 0;
-    lpVertex->tv       = 0;
-    lpVertex++;
-
+  lpVertex->sx       = (float)sx;
+  lpVertex->sy       = (float)sy+w;
+  lpVertex->sz       = 0.99999f;
+  lpVertex->rhw      = 1.f;
+  lpVertex->color    = 0x80000010;
+  lpVertex->specular = 0xFF000000;
+  lpVertex->tu       = 0;
+  lpVertex->tv       = 0;
+  lpVertex++;
 
    lpInstruction = (LPD3DINSTRUCTION) ((LPD3DTLVERTEX)d3dExeBufDesc.lpData + 1024*3);
    lpInstruction->bOpcode = D3DOP_STATERENDER;
@@ -5265,7 +5668,7 @@ void Render_Cross(int sx, int sy)
    lpState->drstRenderStateType = D3DRENDERSTATE_TEXTUREHANDLE;
    lpState->dwArg[0] = NULL;
    lpState++;
-   
+
    lpInstruction = (LPD3DINSTRUCTION)lpState;
    lpInstruction->bOpcode = D3DOP_PROCESSVERTICES;
    lpInstruction->bSize   = sizeof(D3DPROCESSVERTICES);
@@ -5280,32 +5683,32 @@ void Render_Cross(int sx, int sy)
    lpProcessVertices->dwReserved = 0UL;
    lpProcessVertices++;
 
-   
    lpInstruction = (LPD3DINSTRUCTION)lpProcessVertices;
    lpInstruction->bOpcode = D3DOP_LINE;
    lpInstruction->bSize   = sizeof(D3DLINE);
    lpInstruction->wCount  = 2;
    lpInstruction++;
-   lpLine                 = (LPD3DLINE)lpInstruction;   
-      
+   lpLine                 = (LPD3DLINE)lpInstruction;
+
    lpLine->wV1    = 0;
-   lpLine->wV2    = 1;   
+   lpLine->wV2    = 1;
    lpLine++;
 
    lpLine->wV1    = 2;
-   lpLine->wV2    = 3;   
+   lpLine->wV2    = 3;
    lpLine++;
-      
+
    lpInstruction = (LPD3DINSTRUCTION)lpLine;
    lpInstruction->bOpcode = D3DOP_EXIT;
    lpInstruction->bSize   = 0UL;
    lpInstruction->wCount  = 0U;
 
    lpd3dExecuteBuffer->Unlock( );
-   
-   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);	
 
-
+   hRes = lpd3dDevice->Execute(lpd3dExecuteBuffer, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
+#elif defined(_opengl)
+   // SOURCEPORT: TODO — implement crosshair using GL line rendering
+#endif
 }
 
 
