@@ -35,10 +35,14 @@ public:
     void SetLinearFilter(bool enabled) override;
     void SetAlphaTest(bool enabled) override;
     void SetZBufferEnabled(bool enabled) override;
+    void SetDepthMask(bool write);
+    void SetBrightness(float b);   // SOURCEPORT: live brightness uniform (1.0=neutral)
+    void SetHUDMode(bool enabled);
 
-    void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData) override;
+    void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0) override;
     void DrawText(int x, int y, const char* text, uint32_t color) override;
     void DrawFullscreenRect(uint32_t argbColor) override;
+    void FillRect(int x, int y, int w, int h, uint32_t argbColor) override;
 
     void ClearZBuffer() override;
     float GetDepthAt(int x, int y) override;
@@ -53,6 +57,11 @@ public:
 
     // Returns a 1x1 white RGBA texture for untextured (vertex-color-only) rendering
     GLuint GetWhiteTexture();
+
+    // Discard all cached GPU textures so they are re-uploaded on next use.
+    // Call before LoadResources() whenever texture pixel data changes in-place
+    // (e.g. BrightenTexture rewrites night/day mode pixels into the same buffers).
+    void InvalidateTextureCache();
 
 
 private:
@@ -71,7 +80,9 @@ private:
     GLint  m_locTexture = -1;
     GLint  m_locFogEnabled = -1;
     GLint  m_locFogColor = -1;
-    GLint  m_locAlphaTest = -1;
+    GLint  m_locAlphaTest  = -1;
+    GLint  m_locHUDMode    = -1;
+    GLint  m_locBrightness = -1;
 
     // Vertex buffer objects
     GLuint m_vao = 0;
@@ -107,6 +118,7 @@ private:
     bool     m_zWriteEnabled = true;
     int      m_dstBlend = BLEND_INVSRCALPHA;
     bool     m_isRGB565 = true;
+    float    m_brightness = 1.0f;
 
     // Fullscreen quad VAO for overlays
     GLuint m_fsQuadVao = 0;

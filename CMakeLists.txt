@@ -75,6 +75,7 @@ set(SOURCES
     mathematics.cpp
     Audio_DLL.cpp
     renderd3d.cpp
+    Menu.cpp
     ${RENDERER_SOURCES}
     # SOURCEPORT: Loading.cpp excluded — Interface.cpp provides loading UI
     # SOURCEPORT: Audio.cpp excluded — compiled as a_soft.dll, loaded at runtime

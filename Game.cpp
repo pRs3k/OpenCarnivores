@@ -74,7 +74,7 @@ void SetupRes()
     }
 	if (!HARD3D)
 		if (OptRes>5) OptRes=5;
-    if (OptRes==0) { WinW = 320;  WinH = 240;  }
+    if (OptRes==0) { WinW = 800;  WinH = 600;  }  // SOURCEPORT: default 800x600 (original 320x240 is impractical on modern displays)
 	if (OptRes==1) { WinW = 400;  WinH = 300;  }
 	if (OptRes==2) { WinW = 512;  WinH = 384;  }
 	if (OptRes==3) { WinW = 640;  WinH = 480;  }
@@ -737,14 +737,18 @@ void InitEngine()
 {
     DEBUG        = FALSE;
 
-    // SOURCEPORT: Phase 4 display defaults
+    // SOURCEPORT: Phase 4 display defaults (overridden by display.cfg then command-line)
     OptDisplayMode = 0; // windowed
     OptVSync       = 1; // vsync on
     OptResW        = 0; // use SetupRes() preset
     OptResH        = 0;
-    // SOURCEPORT: neutral brightness — formula is SkyR*(OptBrightness+128)/256;
-    // 0 = half-bright (D3D legacy default), 128 = full FadeRGB value (GL neutral)
-    OptBrightness  = 128;
+    // SOURCEPORT: brightness is now a live shader uniform (uBrightness = 1 + OptBrightness/128).
+    // OptBrightness=0 → uBrightness=1.0 (neutral, no change). Matches D3D6 legacy default.
+    OptBrightness  = 0;
+
+    // SOURCEPORT: load persisted display/graphics settings before command-line args so
+    // -fullscreen/-windowed/etc. can still override individual settings at launch.
+    LoadDisplayConfig();
 
 	WATERANI     = TRUE;
 	NODARKBACK   = TRUE;
@@ -837,6 +841,26 @@ void InitEngine()
 	PlayerZ = (ctMapSize / 3) * 256;    
 
     ProcessCommandLine();
+
+    // SOURCEPORT: WASD defaults — used when creating a new player (KeyMap is zero-init).
+    // fkXxx stores Windows Virtual Key codes (same scale as SDL_ScancodeToVK output).
+    KeyMap.fkForward  = 'W';         // W
+    KeyMap.fkBackward = 'S';         // S
+    KeyMap.fkSLeft    = 'A';         // A — dedicated step-left (always strafes)
+    KeyMap.fkSRight   = 'D';         // D — dedicated step-right
+    KeyMap.fkLeft     = VK_LEFT;     // Left arrow — turn left / strafe when strafe held
+    KeyMap.fkRight    = VK_RIGHT;    // Right arrow
+    KeyMap.fkUp       = VK_UP;       // Up arrow — look up
+    KeyMap.fkDown     = VK_DOWN;     // Down arrow — look down
+    KeyMap.fkFire     = VK_LBUTTON;  // Mouse1 — fire
+    KeyMap.fkShow     = VK_RBUTTON;  // Mouse2 — switch weapon
+    KeyMap.fkStrafe   = VK_CONTROL;  // Ctrl — hold to strafe
+    KeyMap.fkJump     = VK_SPACE;    // Space
+    KeyMap.fkRun      = VK_SHIFT;    // Shift
+    KeyMap.fkCrouch   = 'X';         // X
+    KeyMap.fkCall     = VK_MENU;     // Alt — animal call
+    KeyMap.fkCCall    = 'C';         // C — change call
+    KeyMap.fkBinoc    = 'B';         // B — binoculars
 	
 
     switch (OptDayNight) {
@@ -1589,15 +1613,16 @@ void AnimateProcesses()
 
   if (ExitTime) {
 	ExitTime-=TimeDt;
-	if (ExitTime<=0) {		
+	if (ExitTime<=0) {
         TrophyRoom.Total.time   +=TrophyRoom.Last.time;
 	    TrophyRoom.Total.smade  +=TrophyRoom.Last.smade;
 		TrophyRoom.Total.success+=TrophyRoom.Last.success;
-		TrophyRoom.Total.path   +=TrophyRoom.Last.path;		
-				  
+		TrophyRoom.Total.path   +=TrophyRoom.Last.path;
 	    if (MyHealth) SaveTrophy();
-				 else LoadTrophy();				
-        DoHalt("");
+				 else LoadTrophy();
+        // SOURCEPORT: return to menus instead of terminating
+        extern bool g_returnToMenus;
+        g_returnToMenus = true;
 	}
   }
 }
@@ -1731,5 +1756,55 @@ void SaveTrophy()
 	WriteFile(hfile, &OptRender, 4, &l, NULL);
 	CloseHandle(hfile);
 	PrintLog("Trophy Saved.\n");
+}
+
+// SOURCEPORT: persist global display/graphics settings across launches in display.cfg.
+// These are global (not per-player) so they live outside trophy0X.sav.
+// Uses Win32 WriteFile/ReadFile to match the rest of Game.cpp (no stdio dependency).
+// Format: 8 ints written sequentially with a magic header for version safety.
+static const DWORD kDisplayMagic = 0x44495350; // 'DISP'
+static const DWORD kDisplayVer   = 1;
+
+void SaveDisplayConfig()
+{
+    DWORD l;
+    HANDLE h = CreateFileA("display.cfg", GENERIC_WRITE, 0, NULL,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    WriteFile(h, &kDisplayMagic,  4, &l, NULL);
+    WriteFile(h, &kDisplayVer,    4, &l, NULL);
+    WriteFile(h, &OptDisplayMode, 4, &l, NULL);
+    WriteFile(h, &OptVSync,       4, &l, NULL);
+    WriteFile(h, &OptResW,        4, &l, NULL);
+    WriteFile(h, &OptResH,        4, &l, NULL);
+    WriteFile(h, &OptBrightness,  4, &l, NULL);
+    int sh = (int)SHADOWS3D, fg = (int)FOGENABLE;
+    WriteFile(h, &sh, 4, &l, NULL);
+    WriteFile(h, &fg, 4, &l, NULL);
+    CloseHandle(h);
+    PrintLog("Display config saved.\n");
+}
+
+void LoadDisplayConfig()
+{
+    DWORD l;
+    HANDLE h = CreateFileA("display.cfg", GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD magic = 0, ver = 0;
+    ReadFile(h, &magic, 4, &l, NULL);
+    ReadFile(h, &ver,   4, &l, NULL);
+    if (magic != kDisplayMagic || ver != kDisplayVer) { CloseHandle(h); return; }
+    ReadFile(h, &OptDisplayMode, 4, &l, NULL);
+    ReadFile(h, &OptVSync,       4, &l, NULL);
+    ReadFile(h, &OptResW,        4, &l, NULL);
+    ReadFile(h, &OptResH,        4, &l, NULL);
+    ReadFile(h, &OptBrightness,  4, &l, NULL);
+    int sh = 0, fg = 0;
+    ReadFile(h, &sh, 4, &l, NULL);
+    ReadFile(h, &fg, 4, &l, NULL);
+    SHADOWS3D = sh; FOGENABLE = fg;
+    CloseHandle(h);
+    PrintLog("Display config loaded.\n");
 }
 
