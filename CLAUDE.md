@@ -1,6 +1,6 @@
 # Carnivores 2 Source Port — Project Guide
 
-## Constraints
+## Constraints for Claude Code
 Just give me outputs, no explanations.
 Output only changed code blocks.
 Answer in one sentence.
@@ -41,32 +41,16 @@ Key source files and their roles:
 - **GPU**: NVIDIA RTX 2070 Super
 - **CPU**: AMD Ryzen 7 7800X3D
 - **Compiler**: MSVC (Visual Studio 2022) or MinGW-w64
-- **Build system**: CMake (to be created — original uses VS6 .dsp/.dsw)
+- **Build system**: CMake (original uses VS6 .dsp/.dsw)
 - **Target**: Windows 10+ initially, cross-platform later, VR later
 
 ## Phase 1 — Get It Building (COMPLETE)
 
-## Phase 2 — Get It Running
+## Phase 2 — Get It Running (COMPLETE)
 
-1. Validate that the game plays identically to the original retail release
-2. Document any behavioral differences
+## Phase 3 — Abstract the Renderer (COMPLETE)
 
-### Asset Structure
-The game expects assets in the working directory:
-- `HUNTDAT/` — Map files, terrain data
-- `ANIMALS/` — .CAR model files for dinosaurs
-- `WEAPONS/` — Weapon models
-- `MENU/` — Menu graphics and RAW image files
-- `_RES.TXT` — Master resource definition file
-- Various .TGA, .BMP texture files
-
-### Definition of Done
-- Gameplay loop works: select hunt → load map → hunt → return to menu
-- No crashes during normal gameplay
-
-## Phase 3 — Abstract the Renderer ✅ COMPLETE
-
-### Architecture (implemented)
+### Architecture
 ```
 renderer/
   Renderer.h      — Abstract interface with RenderVertex struct
@@ -84,28 +68,17 @@ renderer/
 - `d3dStartBuffer()` / `d3dStartBufferG()` lock into renderer's own staging buffers
 - Execute buffer instruction building all guarded with `#ifdef _d3d`
 
-## Phase 4 — Resolution and Display
+## Phase 4 — Resolution and Display (In Progress)
 
-### Implemented
+### Implemented (but not test/verified)
 - Arbitrary resolution via `-width=N -height=N` command-line args
 - Widescreen Hor+ FOV: `CameraH = CameraW * (WinH/WinW) * (4/3)`
 - Fullscreen (`-fullscreen`), borderless (`-borderless`), windowed (default)
 - Adaptive VSync (`SDL_GL_SetSwapInterval(-1)` with fallback to 1), toggle with `-vsync`/`-novsync`
 - HiDPI: `SDL_WINDOW_ALLOW_HIGHDPI`, drawable size synced back to game globals
 
-## Current Rendering Status ✅ FULLY WORKING
-
-### Working
-- Game launches, loads AREA1, enters hunt scene
-- Terrain tiles with correct RGB555 textures, GL_REPEAT wrapping
-- Sky plane (RenderSkyPlane) with correct sunset colors, slow world-position scroll
-- Trees/vegetation (RenderElements) — billboard circles visible
-- Character models (RenderModel / RenderModelClip) with correct textures, alpha, and fog
-- Water circles (RenderWCircles via RenderModel)
-- Fog system (CalcFogLevel → specular alpha channel → shader mix)
-- Depth test (GL_GEQUAL, clear=0) — correct front-to-back order
-- All HUD/UI elements: compass, wind indicator, sun, bullet indicator, call indicator, exit prompt
-- Run with: `OpenCarnivores.exe "prj=HUNTDAT/AREAS/AREA1" -nosnd`
+## Current Rendering Status - FULLY WORKING
+- Run with: `OpenCarnivores.exe`
   - Note: use forward slashes in bash; the game accepts either
 
 ### Key GL compatibility fixes applied
@@ -122,6 +95,11 @@ renderer/
 | Terrain banding | Sky plane (sz=0.0001) written to depth buffer, fights distant terrain | Disable depth test/write for sky geometry |
 | Wrong model UVs (solid single color) | `fp_conv` in Resources.cpp divided UV coords by 256 only for `_d3d`; `_opengl` used raw integer UVs → GL_REPEAT collapsed all samples to texel (0,0) | `#if defined(_d3d) \|\| defined(_opengl)` so both paths divide by 256 |
 | All models fog-colored (grey) | `RenderModelClip` computed `ev.Fog = (float)(vFogT[v] >> 24)` but `vFogT` is 0–255 (not pre-shifted), so fog factor was always 0 → full fog | Remove `>> 24`: `ev.Fog = (float)vFogT[v]`; then `specular = ev.Fog << 24` gives `0xFF000000` (no fog) correctly |
+| Terrain triangles pop in/out on slopes | Software backface-cull dot-product in `DrawTPlane`/`DrawTPlaneClip` is near zero on sloped terrain; floating-point sign flips as camera moves. In D3D6 masked by fog; visible without fog. | Guard the test with `#ifndef _opengl` — GL uses `glDisable(GL_CULL_FACE)` + depth testing and needs no software backface culling |
+| Compass inner texture missing | Near-model faces (outer ring fproc1, inner disc fproc2/same-z) at similar camera depth; outer ring writes depth, inner disc at slightly larger z fails `GL_GEQUAL` on overlapping pixels. | `Hardware_ZBuffer(FALSE)` now calls `SetZBufferEnabled(false)` — disables depth test for HUD pass; `Hardware_ZBuffer(TRUE)` restores it. HUD models use software backface culling (sfNeedVC) so painter order is correct. |
+| fproc1 black pixels transparent (grip visible through glove) | GL blend always enabled; RGB555 c=0 → texel.a=0 → transparent for fproc1 faces, but D3D6 had blending OFF for fproc1. | Fragment shader: `if (!uAlphaTest) color.a = 1.0` — fproc1 always fully opaque. |
+| Shiny gun visible through player's arm | `RenderModelClipEnvMap`/`RenderModelClipPhongMap` called `SetZBufferEnabled(false)` before their additive pass, so the shine rendered through all geometry. | Added `SetDepthMask(bool)` to RendererGL; overlay passes use depth read-only (`glDepthMask(GL_FALSE)` with test still enabled) so they're occluded by closer geometry but don't corrupt the depth buffer. |
+ Scene too dark in all modes (day/night/HUD) | `BrightenTexture` baked `OptBrightness` into texture data at load time; old D3D6 configs saved `OptBrightness=0` → 50% brightness baked in; HUD elements also darkened. | Moved brightness to a live `uBrightness` shader uniform (`1.0 + OptBrightness/128`); `BrightenTexture` now only applies night-mode green desaturation; default `OptBrightness=0` = neutral (1.0×); slider changes take effect instantly with no texture reload. |
 
 ## Phase 5 — Modern Asset Pipeline (FUTURE)
 
@@ -136,6 +114,7 @@ renderer/
 - Improved AI (behavior trees, NavMesh pathfinding)
 - Physics integration (ragdoll, foliage interaction)
 - Audio modernization (OpenAL or SDL_mixer)
+- Support for Virtual Reality
 
 ## Coding Conventions
 

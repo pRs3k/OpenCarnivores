@@ -615,8 +615,12 @@ void ShutDownEngine();
 void ProcessSyncro();
 void AddShipTask(int);
 void LoadTrophy();
+void ReleaseResources();
+bool RunMenus(bool& appQuit, bool skipToHunt = false);
 //void LoadPlayersInfo();
 void SaveTrophy();
+void SaveDisplayConfig(); // SOURCEPORT: persist display/graphics settings to display.cfg
+void LoadDisplayConfig(); // SOURCEPORT: restore display/graphics settings from display.cfg
 void RemoveCurrentTrophy();
 void MakeCall();
 void MakeShot(float ax, float ay, float az,
@@ -936,6 +940,8 @@ void Render3DHardwarePosts();
 void CopyBackToDIB();
 void CopyHARDToDIB();
 void Hardware_ZBuffer(BOOL zb);
+void d3dSetHUDMode(BOOL enable);
+void d3dSetDepthFunc(BOOL strict);
 
 
 //=========== loading =============

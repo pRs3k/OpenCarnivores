@@ -4,12 +4,19 @@
 // pre-transformed screen-space vertices (like D3DTLVERTEX) and just need to
 // rasterize them with the correct texture, fog, and blending.
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef min
+#undef max
 #include "RendererGL.h"
 #include <cstring>
 #include <cstdio>
 
 // Global renderer instance
 IRenderer* g_Renderer = nullptr;
+
+// Game globals — updated by SetVideoMode whenever window is resized
+extern int WinW, WinH;
 
 // ============================================================
 // Shader source — handles pre-transformed 2D vertices
@@ -49,18 +56,35 @@ uniform sampler2D uTexture;
 uniform bool uFogEnabled;
 uniform vec4 uFogColor;
 uniform bool uAlphaTest;
+// SOURCEPORT: runtime brightness multiplier (1.0 = neutral, 0.0 = black, 2.0 = double-bright)
+uniform float uBrightness;
 
 out vec4 FragColor;
 
 void main() {
     vec4 texel = texture(uTexture, vTexCoord);
 
-    // Alpha test: discard fully transparent pixels (color key)
+    // fproc2 (alpha-test pass): discard color-key pixels (RGB555 c=0 decoded as alpha=0).
     if (uAlphaTest && texel.a < 0.5)
         discard;
 
-    // Modulate texture with vertex color
     vec4 color = texel * vColor;
+
+    // SOURCEPORT: Alpha compositing matches the original D3D6 pipeline:
+    // - fproc1 (uAlphaTest=false): D3D6 renders these with alpha blending DISABLED —
+    //   all pixels are fully opaque. RGB555 c=0 (decoded alpha=0) must still render
+    //   solid (weapon grips, compass body, binocular frame). Force alpha=1.
+    // - fproc2 (uAlphaTest=true): use vertex alpha. sfOpacity faces have vColor.a=1.0
+    //   (opaque after color-key discard). sfTransparent faces have vColor.a≈0.44
+    //   (semi-transparent overlay, e.g. binocular lens vignette).
+    if (!uAlphaTest) {
+        color.a = 1.0;
+    } else {
+        color.a = vColor.a;
+    }
+
+    // Apply brightness (clamped to [0,1] to avoid HDR blow-out on non-HDR displays)
+    color.rgb = clamp(color.rgb * uBrightness, 0.0, 1.0);
 
     // Apply fog
     if (uFogEnabled) {
@@ -140,7 +164,7 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
 
     // Build window flags based on OptDisplayMode:
     //   0 = windowed, 1 = fullscreen (exclusive), 2 = borderless fullscreen
-    Uint32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI;
+    Uint32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE;
     if (OptDisplayMode == 1) {
         windowFlags |= SDL_WINDOW_FULLSCREEN;
     } else if (OptDisplayMode == 2) {
@@ -250,6 +274,10 @@ void RendererGL::CompileShaders() {
     m_locFogEnabled = glGetUniformLocation(m_shaderProgram, "uFogEnabled");
     m_locFogColor   = glGetUniformLocation(m_shaderProgram, "uFogColor");
     m_locAlphaTest  = glGetUniformLocation(m_shaderProgram, "uAlphaTest");
+    m_locBrightness = glGetUniformLocation(m_shaderProgram, "uBrightness");
+    // uHUDMode removed — fproc1/fproc2 alpha handled unconditionally in shader
+
+    glUniform1f(m_locBrightness, 1.0f); // default: neutral (no change)
 
     // Set up orthographic projection matrix for screen-space rendering
     // Maps (0,0)-(WinW,WinH) to clip space in X/Y.
@@ -307,6 +335,13 @@ void RendererGL::CreateBuffers() {
     glBindVertexArray(0);
 }
 
+void RendererGL::InvalidateTextureCache() {
+    for (auto& pair : m_texCache)
+        glDeleteTextures(1, &pair.second.texId);
+    m_texCache.clear();
+    m_currentTexture = 0;
+}
+
 void RendererGL::Shutdown() {
     // Clean up textures
     for (auto& pair : m_texCache) {
@@ -335,6 +370,19 @@ void RendererGL::Shutdown() {
 
 void RendererGL::BeginFrame() {
     glUseProgram(m_shaderProgram);
+
+    // Rebuild projection every frame so it always matches the current WinW×WinH
+    // game coordinate space (updated by SetVideoMode on every resize).
+    float R = (float)WinW, B = (float)WinH;
+    float N = 0.0f,        F = 0.25f;
+    float proj[16] = {
+        2.0f/R,   0.0f,   0.0f,          0.0f,
+        0.0f,    -2.0f/B, 0.0f,          0.0f,
+        0.0f,     0.0f,   2.0f/(F-N),    0.0f,
+       -1.0f,     1.0f,  -(F+N)/(F-N),   1.0f,
+    };
+    glUniformMatrix4fv(m_locProjection, 1, GL_FALSE, proj);
+
     m_frameCounter++;
 }
 
@@ -500,6 +548,10 @@ GLuint RendererGL::GetWhiteTexture() {
     return m_whiteTexture;
 }
 
+void RendererGL::SetHUDMode(bool /*enabled*/) {
+    // SOURCEPORT: no-op — fproc1 alpha is now always 1.0 in the shader (no HUD mode needed)
+}
+
 void RendererGL::SetZBufferEnabled(bool enabled) {
     m_zBufferEnabled = enabled;
     if (enabled) {
@@ -511,27 +563,50 @@ void RendererGL::SetZBufferEnabled(bool enabled) {
     }
 }
 
+void RendererGL::SetDepthMask(bool write) {
+    // SOURCEPORT: set depth write without touching depth test enable state.
+    // Used by additive overlay passes (EnvMap/PhongMap) so they read depth
+    // (occluded by closer geometry like the player's arm) but don't write it.
+    m_zWriteEnabled = write;
+    glDepthMask(write ? GL_TRUE : GL_FALSE);
+}
+
+void RendererGL::SetBrightness(float b) {
+    // SOURCEPORT: runtime brightness applied in shader. b=1.0 = neutral, 0.0=black, 2.0=double.
+    // Replaces the old BrightenTexture(OptBrightness) bake so the slider is live.
+    m_brightness = b;
+    glUniform1f(m_locBrightness, b);
+}
+
 // --- 2D operations ---
 
-void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData) {
+void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey, int srcH) {
     if (!lpData || w <= 0 || h <= 0) return;
 
-    // Convert 16-bit source to RGBA
-    std::vector<uint32_t> rgba(w * h);
+    // Actual source dimensions: srcW × uploadH.
+    // If srcH == 0 the caller hasn't specified a source height; fall back to h
+    // (legacy callers where src and dest are the same size).
+    int uploadH = (srcH > 0) ? srcH : h;
+    int uploadW = srcW;
+
+    // Convert 16-bit source to RGBA (only the actual source pixels)
+    std::vector<uint32_t> rgba(uploadW * uploadH);
     uint16_t* src = (uint16_t*)lpData;
-    for (int row = 0; row < h; row++) {
-        for (int col = 0; col < w; col++) {
+    for (int row = 0; row < uploadH; row++) {
+        for (int col = 0; col < uploadW; col++) {
             uint16_t pixel = src[row * srcW + col];
-            rgba[row * w + col] = m_isRGB565 ? RGB565toRGBA(pixel) : RGB555toRGBA(pixel);
+            rgba[row * uploadW + col] = m_isRGB565 ? RGB565toRGBA(pixel) : RGB555toRGBA(pixel);
         }
     }
 
-    // Upload to texture
+    // Upload source texture at its natural size
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_bitmapTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, uploadW, uploadH, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     // Draw a textured quad at screen position
     float x0 = (float)x, y0 = (float)y;
@@ -552,7 +627,7 @@ void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData) 
 
     bool prevDepth = m_zBufferEnabled;
     glDisable(GL_DEPTH_TEST);
-    glUniform1i(m_locAlphaTest, 1); // Enable alpha test for color-keyed bitmaps
+    glUniform1i(m_locAlphaTest, colorKey ? 1 : 0);
     glUniform1i(m_locFogEnabled, 0);
 
     glBindVertexArray(m_vao);
@@ -565,13 +640,157 @@ void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData) 
     glUniform1i(m_locFogEnabled, m_fogEnabled ? 1 : 0);
 }
 
+// SOURCEPORT: Render text using GDI into a temp DIB, then upload as GL texture.
+// Uses fnt_Small for all menu and HUD text. Performance is acceptable for
+// non-realtime menu use; in-game calls are infrequent.
 void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
-    // Minimal text rendering — for now, this is a no-op.
-    // Full text rendering requires a font atlas, which will be implemented
-    // when SDL_ttf or a bitmap font system is added.
-    // The D3D6 backend used GDI TextOut on the backbuffer DC, which has
-    // no direct equivalent in OpenGL.
-    (void)x; (void)y; (void)text; (void)color;
+    if (!text || !text[0]) return;
+
+    extern HFONT fnt_Small;
+
+    // Create a temporary memory DC to measure and render the text
+    HDC hdc = CreateCompatibleDC(NULL);
+    if (!hdc) return;
+    HFONT hOldFont = (HFONT)SelectObject(hdc, fnt_Small);
+
+    // Measure text extent
+    SIZE sz = {};
+    GetTextExtentPoint32A(hdc, text, (int)strlen(text), &sz);
+    int tw = sz.cx > 0 ? sz.cx : 1;
+    int th = sz.cy > 0 ? sz.cy : 1;
+
+    // Create 24-bit DIB (top-down)
+    BITMAPINFOHEADER bih = {};
+    bih.biSize        = sizeof(bih);
+    bih.biWidth       = tw;
+    bih.biHeight      = -th;  // negative = top-down
+    bih.biPlanes      = 1;
+    bih.biBitCount    = 24;
+    bih.biCompression = BI_RGB;
+    BITMAPINFO bi = {};
+    bi.bmiHeader = bih;
+
+    void* dibBits = nullptr;
+    HBITMAP hbmp = CreateDIBSection(NULL, &bi, DIB_RGB_COLORS, &dibBits, NULL, 0);
+    if (!hbmp) { SelectObject(hdc, hOldFont); DeleteDC(hdc); return; }
+    HBITMAP hOldBmp = (HBITMAP)SelectObject(hdc, hbmp);
+
+    // Clear to black (will be the transparent key)
+    int stride = (tw * 3 + 3) & ~3;
+    memset(dibBits, 0, stride * th);
+
+    // Render text
+    SetBkMode(hdc, TRANSPARENT);
+    uint8_t r = (color >> 16) & 0xFF;
+    uint8_t g = (color >>  8) & 0xFF;
+    uint8_t b = (color      ) & 0xFF;
+    SetTextColor(hdc, RGB(r, g, b));
+    TextOutA(hdc, 0, 0, text, (int)strlen(text));
+
+    // Convert BGR DIB pixels to RGBA (black = transparent)
+    std::vector<uint32_t> rgba(tw * th);
+    uint8_t* src = (uint8_t*)dibBits;
+    for (int py = 0; py < th; py++) {
+        for (int px = 0; px < tw; px++) {
+            uint8_t bv = src[py * stride + px * 3 + 0];
+            uint8_t gv = src[py * stride + px * 3 + 1];
+            uint8_t rv = src[py * stride + px * 3 + 2];
+            uint8_t av = (rv | gv | bv) ? 255 : 0;
+            rgba[py * tw + px] = ((uint32_t)av << 24) | ((uint32_t)rv << 16) |
+                                  ((uint32_t)gv <<  8) | bv;
+        }
+    }
+
+    // Cleanup GDI objects
+    SelectObject(hdc, hOldBmp);
+    SelectObject(hdc, hOldFont);
+    DeleteObject(hbmp);
+    DeleteDC(hdc);
+
+    // Upload to shared bitmap texture and draw quad
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_bitmapTexture);
+    // Data is BGRA in memory (GDI DIB is BGR; rv/gv/bv packed into uint32 little-endian)
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_BGRA, GL_UNSIGNED_BYTE, rgba.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    float x0 = (float)x, y0 = (float)y;
+    float x1 = x0 + tw,  y1 = y0 + th;
+
+    RenderVertex quad[6];
+    auto fill = [&](RenderVertex& v, float px, float py, float u, float tv) {
+        v.sx = px; v.sy = py; v.sz = 0.0f; v.rhw = 1.0f;
+        v.color = 0xFFFFFFFF; v.specular = 0xFF000000;
+        v.tu = u; v.tv = tv;
+    };
+    fill(quad[0], x0, y0, 0.0f, 0.0f);
+    fill(quad[1], x1, y0, 1.0f, 0.0f);
+    fill(quad[2], x1, y1, 1.0f, 1.0f);
+    fill(quad[3], x0, y0, 0.0f, 0.0f);
+    fill(quad[4], x1, y1, 1.0f, 1.0f);
+    fill(quad[5], x0, y1, 0.0f, 1.0f);
+
+    bool prevDepth = m_zBufferEnabled;
+    glDisable(GL_DEPTH_TEST);
+    glUniform1i(m_locAlphaTest, 1);
+    glUniform1i(m_locFogEnabled, 0);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glBindVertexArray(m_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad), quad);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    if (prevDepth) glEnable(GL_DEPTH_TEST);
+    glUniform1i(m_locFogEnabled, m_fogEnabled ? 1 : 0);
+}
+
+// SOURCEPORT: Draw a filled rectangle at screen position (x,y) with size (w,h).
+void RendererGL::FillRect(int x, int y, int w, int h, uint32_t argbColor) {
+    float a = ((argbColor >> 24) & 0xFF) / 255.0f;
+    float r = ((argbColor >> 16) & 0xFF) / 255.0f;
+    float g = ((argbColor >>  8) & 0xFF) / 255.0f;
+    float b = ((argbColor      ) & 0xFF) / 255.0f;
+
+    // Pack as BGRA for vertex color attrib (our shader reads GL_BGRA)
+    uint32_t vc = ((uint32_t)(a*255) << 24) | ((uint32_t)(b*255) << 16) |
+                  ((uint32_t)(g*255) <<  8) |  (uint32_t)(r*255);
+
+    float x0 = (float)x, y0 = (float)y;
+    float x1 = x0 + w,   y1 = y0 + h;
+
+    RenderVertex quad[6];
+    auto fillVert = [&](RenderVertex& v, float px, float py) {
+        v.sx = px; v.sy = py; v.sz = 0.0f; v.rhw = 1.0f;
+        v.color = vc; v.specular = 0xFF000000;
+        v.tu = 0.0f; v.tv = 0.0f;
+    };
+    fillVert(quad[0], x0, y0); fillVert(quad[1], x1, y0); fillVert(quad[2], x1, y1);
+    fillVert(quad[3], x0, y0); fillVert(quad[4], x1, y1); fillVert(quad[5], x0, y1);
+
+    bool prevDepth = m_zBufferEnabled;
+    glDisable(GL_DEPTH_TEST);
+    glUniform1i(m_locAlphaTest, 0);
+    glUniform1i(m_locFogEnabled, 0);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_whiteTexture);
+
+    glBindVertexArray(m_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad), quad);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    if (prevDepth) glEnable(GL_DEPTH_TEST);
+    glUniform1i(m_locFogEnabled, m_fogEnabled ? 1 : 0);
 }
 
 void RendererGL::DrawFullscreenRect(uint32_t argbColor) {

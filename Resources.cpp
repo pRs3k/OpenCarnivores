@@ -1,5 +1,8 @@
 #include "Hunt.h"
 #include "stdio.h"
+#ifdef _opengl
+#include "renderer/RendererGL.h"
+#endif
 HANDLE hfile;
 DWORD  l;
 
@@ -391,20 +394,17 @@ void RotateImage(WORD* src, WORD* dst, int L)
 
 void BrightenTexture(WORD* A, int L)
 {
-	int factor=OptBrightness + 128;
-	//if (factor > 256) factor = (factor-256)*3/2 + 256;
+	// SOURCEPORT: brightness is now a live shader uniform (uBrightness) rather than
+	// baked into texture data — so changing the slider takes effect immediately and
+	// old configs with legacy OptBrightness=0 don't produce dark textures.
+	// This function only applies the night-mode colour desaturation (green-tint).
+	if (OptDayNight != 2) return;  // day/sunset: nothing to bake
 	for (int c=0; c<L; c++) {
-		WORD w = *(A +  c);
-		int B = (w>> 0) & 31; 
-		int G = (w>> 5) & 31; 
-		int R = (w>>10) & 31; 
-        B = (B * factor) >> 8; if (B > 31) B = 31;
-		G = (G * factor) >> 8; if (G > 31) G = 31;
-		R = (R * factor) >> 8; if (R > 31) R = 31;
-
-		if (OptDayNight==2) { B=G>>3; R=G>>3; }
-
-		*(A + c) = (B) + (G<<5) + (R<<10);
+		WORD w = *(A + c);
+		int G = (w >> 5) & 31;
+		int B = G >> 3;   // night vision: desaturate to green tint
+		int R = G >> 3;
+		*(A + c) = (B) + (G << 5) + (R << 10);
 	}
 }
 
@@ -602,11 +602,10 @@ void CorrectModel(TModel *mptr)
      fp_conv(&mptr->gFace[f].tbx);
      fp_conv(&mptr->gFace[f].tby);
      fp_conv(&mptr->gFace[f].tcx);
-     fp_conv(&mptr->gFace[f].tcy);     
+     fp_conv(&mptr->gFace[f].tcy);
 #endif
     }
 
-	
 	int fp = 0;
 	// SOURCEPORT: added int to all three loops (MSVC6 scoping fix)
     for (int f2=0; f2<mptr->FCount; f2++)
@@ -735,7 +734,28 @@ void LoadModelEx(TModel* &mptr, char* FName)
 
 	CorrectModel(mptr);
         
-    DATASHIFT(mptr->lpTexture, mptr->TextureSize);        
+    DATASHIFT(mptr->lpTexture, mptr->TextureSize);
+#ifdef _opengl
+    // SOURCEPORT: DATASHIFT is a no-op in HARD3D/GL mode, but software renderer
+    // doubles every non-zero texture pixel via DATASHIFT before rendering.
+    // Near-model .3DF textures (compass, binoculars, weapon HUD) are designed
+    // to be viewed at that 2x brightness.  Apply the equivalent multiply here so
+    // GL output matches the software-renderer reference.
+    {
+        int n = mptr->TextureSize / 2; // TextureSize is in bytes; /2 = pixel count
+        WORD* t = mptr->lpTexture;
+        // SOURCEPORT: must double per-channel, NOT the raw 16-bit word.
+        // Raw word *2 overflows channel bits into adjacent channels
+        // (e.g. R=20 → raw shift bleeds into G bits → wrong hue).
+        for (int i = 0; i < n; i++) {
+            if (!t[i]) continue;
+            int r = min(31, ((t[i] >> 10) & 31) << 1);
+            int g = min(31, ((t[i] >> 5)  & 31) << 1);
+            int b = min(31, ( t[i]         & 31) << 1);
+            t[i] = (WORD)((r << 10) | (g << 5) | b);
+        }
+    }
+#endif
 	GenerateModelMipMaps(mptr);
 	GenerateAlphaFlags(mptr);
 }
@@ -1145,22 +1165,32 @@ void LoadBMPModel(TObject &obj)
 
 void LoadResources()
 {
-	
+
     int  FadeRGB[3][3];
 	int TransRGB[3][3];
-	
+
     int tc,mc;
     char MapName[128],RscName[128];
 	HeapAllocated=0;
 	if (strstr(ProjectName, "trophy")) {
 		TrophyMode = TRUE;
-		ctViewR = 60; 
-		ctViewR1 = 48; 
+		ctViewR = 60;
+		ctViewR1 = 48;
 	}
     wsprintf(MapName,"%s%s", ProjectName, ".map");
     wsprintf(RscName,"%s%s", ProjectName, ".rsc");
 
     ReleaseResources();
+
+#ifdef _opengl
+    // SOURCEPORT: BrightenTexture rewrites texture pixels in-place for day/night mode.
+    // The GL texture cache keys on CPU pointer, so stale GPU textures would be served
+    // even after the pixel data changes. Discard all cached GPU textures before reloading.
+    {
+        extern RendererGL* g_glRenderer;
+        if (g_glRenderer) g_glRenderer->InvalidateTextureCache();
+    }
+#endif
 
 
 
@@ -1473,7 +1503,9 @@ void ReInitGame()
 		   if (TargetWeapon==-1) TargetWeapon=w;
 		}
 
-	CurrentWeapon = TargetWeapon;	
+	CurrentWeapon = TargetWeapon;
+	// SOURCEPORT: guard against no weapons selected (WeaponPres=0 → CurrentWeapon=-1)
+	if (CurrentWeapon < 0) CurrentWeapon = 0;
 
 	Weapon.state = 0;
 	Weapon.FTime = 0;

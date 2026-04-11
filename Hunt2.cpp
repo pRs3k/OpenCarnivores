@@ -12,6 +12,8 @@
 // GetKeyboardState() is never called — we update KeyboardState[] directly.
 static int  g_sdlMouseDX = 0;  // accumulated relative mouse X since last ProcessPlayerMovement
 static int  g_sdlMouseDY = 0;
+// SOURCEPORT: set by Game.cpp ExitTime expiry to trigger return-to-menus instead of DoHalt
+bool g_returnToMenus = false;
 
 // Translate SDL scancode to Win32 VK code (covers keys actually used by KeyMap)
 static int SDL_ScancodeToVK(SDL_Scancode sc)
@@ -47,6 +49,7 @@ static int SDL_ScancodeToVK(SDL_Scancode sc)
     case SDL_SCANCODE_F10:      return 0x79;
     case SDL_SCANCODE_F11:      return 0x7A;
     case SDL_SCANCODE_F12:      return 0x7B;
+    case SDL_SCANCODE_TAB:      return 0x09; // VK_TAB
     default:                    return 0;
     }
 }
@@ -458,8 +461,8 @@ void ScanLifeForms()
 
 
 void DrawPostObjects()
-{ 
-  float b;  
+{
+  float b;
   TWeapon* wptr = &Weapon;
 
   Hardware_ZBuffer(FALSE);
@@ -468,7 +471,9 @@ void DrawPostObjects()
 
   GlassL = 0;
   if (BINMODE) {
+   d3dSetHUDMode(TRUE);  // SOURCEPORT: HUD mode — binoculars frame needs opaque black pixels
    RenderNearModel(Binocular, 0, 0, 2*(216-72 * BinocularPower), 192,  0,0);
+   d3dSetHUDMode(FALSE);
    ScanLifeForms();
    MapMode = FALSE;
   }
@@ -481,14 +486,16 @@ void DrawPostObjects()
     BOOL lr = LOWRESTX;
     LOWRESTX = TRUE;
     VideoCX = WinW / 5;
-    VideoCY = WinH - (WinH / 3);  
+    VideoCY = WinH - (WinH / 3);
 	VideoCY = WinH - (WinH * 10 / 23);
 	CreateMorphedModel(WindModel.mptr, &WindModel.Animation[0], (int)(Wind.speed*50.f), 1.0);
-    RenderNearModel(WindModel.mptr, -10, -37, -96, 192,  CameraAlpha-Wind.alpha,0);     
+    d3dSetHUDMode(TRUE);  // SOURCEPORT: HUD mode — wind/compass need opaque black pixels
+    RenderNearModel(WindModel.mptr, -10, -37, -96, 192,  CameraAlpha-Wind.alpha,0);
 
-	VideoCX = WinW - (WinW / 5);    
+	VideoCX = WinW - (WinW / 5);
 	VideoCY = WinH - (WinH * 10 / 23);
-    RenderNearModel(CompasModel, +8, -38, -96, 192,  CameraAlpha,0);     
+    RenderNearModel(CompasModel, +8, -38, -96, 192,  CameraAlpha,0);
+    d3dSetHUDMode(FALSE);
 
     VideoCX = WinW / 2;
     VideoCY = WinH / 2;
@@ -599,8 +606,14 @@ SKIPWIND:
    if (HARD3D) wpnlight = 96 + GetLandLt(PlayerX, PlayerZ) / 4;
           else wpnlight = 200;
 
+   // SOURCEPORT: re-enable depth test for weapon render, matching D3D6 which never
+   // disabled depth test — Hardware_ZBuffer(FALSE) only cleared the buffer in D3D6.
+   // The z-buffer is clean here (cleared at line 468, compass/wind didn't write to it).
+   Hardware_ZBuffer(TRUE);
+   d3dSetHUDMode(TRUE);
    RenderNearModel(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, wpnlight,
                    -wpnDAlpha, -wpnDBeta + wpnb);
+   d3dSetHUDMode(FALSE);
 
 
 #ifdef _soft
@@ -1237,12 +1250,12 @@ void ProcessDemoMovement()
 	   ResetMousePos(); 
 	  }
 
-  if (DemoPoint.DemoTime>12*1000) { 
-	//ResetMousePos();
-    //DemoPoint.DemoTime = 0;
-	//LoadTrophy();
-	DoHalt("");
-	return;  }
+  if (DemoPoint.DemoTime>12*1000) {
+    // SOURCEPORT: return to menus instead of terminating
+    extern bool g_returnToMenus;
+    g_returnToMenus = true;
+    return;
+  }
 
   VSpeed = 0.f;
 
@@ -1779,6 +1792,10 @@ int main(int argc, char* argv[])
     // We defer audio init until after Activate3DHardware creates the SDL window.
     // InitAudioSystem is called below after the first Activate3DHardware.
 
+    // SOURCEPORT: Phase 2 — check if launched directly into a hunt via prj= arg.
+    // If ProjectName is set, skip the menu system and load that area directly.
+    bool directLaunch = (ProjectName[0] != '\0');
+
     StartLoading();
     PrintLoad("Loading...");
 
@@ -1819,15 +1836,16 @@ int main(int argc, char* argv[])
 
     PrintLog(" Done.\n");
 
-    PrintLoad("Loading area...");
-    LoadResources();
+    if (directLaunch) {
+        PrintLoad("Loading area...");
+        LoadResources();
+        PrintLog("Loading area: Done.\n");
+    }
 
-    PrintLoad("Starting game...");
-    PrintLog("Loading area: Done.\n");
-
+    PrintLoad("Starting...");
     EndLoading();
 
-    // Run Activate3DHardware once here to create the GL window before the loop
+    // Create the GL window
     Activate3DHardware();
     NeedRVM = FALSE;
 
@@ -1853,73 +1871,126 @@ int main(int argc, char* argv[])
     }
     InitAudioSystem(hwndMain, hlog, OptSound);
 
-    SDL_SetRelativeMouseMode(SDL_TRUE);  // capture mouse, get relative motion
-
     ProcessSyncro();
     blActive = TRUE;
 
-    PrintLog("Entering SDL event loop.\n");
-    bool running = true;
-    while (running) {
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            switch (ev.type) {
-            case SDL_QUIT:
-                running = false;
-                break;
-            case SDL_KEYDOWN: {
-                int vk = SDL_ScancodeToVK(ev.key.keysym.scancode);
-                if (vk > 0 && vk < 256) KeyboardState[vk] |= 128;
-                // Game actions that WndProc handled on WM_KEYDOWN:
-                if (vk == KeyMap.fkBinoc) ToggleBinocular();
-                if (vk == KeyMap.fkCCall)  ChangeCall();
-                if (vk == KeyMap.fkRun)    ToggleRunMode();
-                // 1-6 weapon select
-                if (vk >= '1' && vk <= '6') {
-                    int w = vk - '1';
-                    if (!Weapon.FTime && ShotsLeft[w]) {
-                        TargetWeapon = w;
-                        if (!Weapon.state) CurrentWeapon = TargetWeapon;
-                        HideWeapon();
-                    }
-                }
-                // Escape / Enter / Y / R  (mirror WndProc)
-                if (vk == 0x1B) { // VK_ESCAPE
-                    if (TrophyMode) { SaveTrophy(); ExitTime = 1; }
-                    else { if (PAUSE) PAUSE = FALSE; else EXITMODE = !EXITMODE; }
-                }
-                if (vk == 0x0D || vk == 'Y') { // VK_RETURN or Y
-                    if (EXITMODE) { if (MyHealth) ExitTime = 4000; else ExitTime = 1; EXITMODE = FALSE; }
-                }
-                if (vk == 'R') {
-                    if (TrophyBody != -1) RemoveCurrentTrophy();
-                    if (EXITMODE) { LoadTrophy(); RestartMode = TRUE; _GameState = 0; }
-                }
-                if (vk == 0x78) { // VK_F9
-                    ShutDown3DHardware(); AudioStop(); DoHalt("");
-                }
-                break; }
-            case SDL_KEYUP: {
-                int vk = SDL_ScancodeToVK(ev.key.keysym.scancode);
-                if (vk > 0 && vk < 256) KeyboardState[vk] &= ~128;
-                break; }
-            case SDL_MOUSEMOTION:
-                g_sdlMouseDX += ev.motion.xrel;
-                g_sdlMouseDY += ev.motion.yrel;
-                break;
-            case SDL_MOUSEBUTTONDOWN:
-                if (ev.button.button == SDL_BUTTON_LEFT)
-                    KeyboardState[KeyMap.fkFire] |= 128;
-                break;
-            case SDL_MOUSEBUTTONUP:
-                if (ev.button.button == SDL_BUTTON_LEFT)
-                    KeyboardState[KeyMap.fkFire] &= ~128;
+    // ─── Main application loop ────────────────────────────────────────────────
+    // Each iteration: run menus → load area → run hunt → release area → repeat.
+    // If launched with prj= arg, skip menus (area already loaded above).
+
+    bool appRunning   = true;
+    bool needMenus    = !directLaunch;
+    bool returnToHunt = false;   // true after first hunt — skip straight to MENU2
+    g_returnToMenus   = false;
+
+    PrintLog("Entering main loop.\n");
+
+    while (appRunning) {
+        // ── Menu phase ───────────────────────────────────────────────────────
+        if (needMenus) {
+            // SOURCEPORT: ProcessGame drives ShowCursor counter negative; restore before menus
+            while (ShowCursor(TRUE) < 0) {}
+            PrintLog("Entering RunMenus...\n");
+            bool appQuit = false;
+            bool huntReady = RunMenus(appQuit, returnToHunt);
+            PrintLog(appQuit ? "RunMenus: appQuit\n" : (huntReady ? "RunMenus: huntReady\n" : "RunMenus: cancelled\n"));
+            if (appQuit || !huntReady) {
+                appRunning = false;
                 break;
             }
+            // RunMenus set ProjectName, TargetDino, WeaponPres, etc.
+            PrintLog("Loading area from menus...\n");
+            LoadResources();
+            PrintLog("Area load done.\n");
         }
-        if (!running) break;
-        if (blActive) ProcessGame();
-        else SDL_Delay(100);
+
+        // ── Hunt phase ───────────────────────────────────────────────────────
+        SDL_SetRelativeMouseMode(SDL_TRUE);
+        SDL_ShowCursor(SDL_DISABLE);
+
+        _GameState    = 0;   // force ReInitGame() on first ProcessGame()
+        RestartMode   = FALSE;
+        ExitTime      = 0;   // SOURCEPORT: reset so second hunt doesn't immediately exit
+        bool huntDone = false;
+
+        while (!huntDone) {
+            SDL_Event ev;
+            while (SDL_PollEvent(&ev)) {
+                switch (ev.type) {
+                case SDL_QUIT:
+                    huntDone = true;
+                    appRunning = false;
+                    break;
+                case SDL_KEYDOWN: {
+                    int vk = SDL_ScancodeToVK(ev.key.keysym.scancode);
+                    if (vk > 0 && vk < 256) KeyboardState[vk] |= 128;
+                    if (vk == KeyMap.fkBinoc) ToggleBinocular();
+                    if (vk == KeyMap.fkCCall)  ChangeCall();
+                    if (vk == KeyMap.fkRun)    ToggleRunMode();
+                    if (vk == 0x09 && !TrophyMode) ToggleMapMode(); // VK_TAB — always map
+                    if (vk >= '1' && vk <= '6') {
+                        int w = vk - '1';
+                        if (!Weapon.FTime && ShotsLeft[w]) {
+                            TargetWeapon = w;
+                            if (!Weapon.state) CurrentWeapon = TargetWeapon;
+                            HideWeapon();
+                        }
+                    }
+                    if (vk == 0x1B) { // VK_ESCAPE
+                        if (TrophyMode) { SaveTrophy(); ExitTime = 1; }
+                        else { if (PAUSE) PAUSE = FALSE; else EXITMODE = !EXITMODE; }
+                    }
+                    if (vk == 0x0D || vk == 'Y') {
+                        if (EXITMODE) { if (MyHealth) ExitTime = 4000; else ExitTime = 1; EXITMODE = FALSE; }
+                    }
+                    if (vk == 'R') {
+                        if (TrophyBody != -1) RemoveCurrentTrophy();
+                        if (EXITMODE) {
+                            // Return to menus: save, release area resources, loop back
+                            if (MyHealth) SaveTrophy();
+                            ReleaseResources();
+                            huntDone  = true;
+                            needMenus = true;
+                        }
+                    }
+                    if (vk == 0x78) { // VK_F9
+                        ShutDown3DHardware(); AudioStop(); DoHalt("");
+                    }
+                    break; }
+                case SDL_KEYUP: {
+                    int vk = SDL_ScancodeToVK(ev.key.keysym.scancode);
+                    if (vk > 0 && vk < 256) KeyboardState[vk] &= ~128;
+                    break; }
+                case SDL_MOUSEMOTION:
+                    g_sdlMouseDX += ev.motion.xrel;
+                    g_sdlMouseDY += ev.motion.yrel;
+                    break;
+                case SDL_MOUSEBUTTONDOWN:
+                    if (ev.button.button == SDL_BUTTON_LEFT)
+                        KeyboardState[KeyMap.fkFire] |= 128;
+                    break;
+                case SDL_MOUSEBUTTONUP:
+                    if (ev.button.button == SDL_BUTTON_LEFT)
+                        KeyboardState[KeyMap.fkFire] &= ~128;
+                    break;
+                }
+            }
+            if (!huntDone) {
+                if (blActive) ProcessGame();
+                else SDL_Delay(100);
+                // SOURCEPORT: ExitTime expiry sets this instead of DoHalt
+                if (g_returnToMenus) {
+                    g_returnToMenus = false;
+                    ReleaseResources();
+                    huntDone  = true;
+                    needMenus = true;
+                }
+            }
+        }
+
+        // After hunt ends: return to hunt setup screen directly
+        needMenus    = true;
+        returnToHunt = true;
     }
 
     AudioStop();

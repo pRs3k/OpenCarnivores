@@ -154,6 +154,23 @@ void CalcFogLevel_Gradient(Vector3d v)
 }
 
 
+void d3dSetHUDMode(BOOL enable)
+{
+#ifdef _opengl
+    if (g_glRenderer) g_glRenderer->SetHUDMode(enable != FALSE);
+#endif
+}
+
+void d3dSetDepthFunc(BOOL strict)
+{
+#ifdef _opengl
+    // SOURCEPORT: strict=TRUE uses GL_GREATER so coplanar faces don't overwrite each other.
+    // Used for weapon render: grip faces are submitted before hand faces in the unsorted list;
+    // with GL_GREATER the first face at each depth wins, so grip correctly occludes the hand.
+    glDepthFunc(strict ? GL_GREATER : GL_GEQUAL);
+#endif
+}
+
 void Hardware_ZBuffer(BOOL bl)
 {
 #ifdef _d3d
@@ -165,9 +182,20 @@ void Hardware_ZBuffer(BOOL bl)
         lpddZBuffer->Blt( NULL, NULL, NULL, DDBLT_DEPTHFILL | DDBLT_WAIT, &ddbltfx );
 	}
 #elif defined(_opengl)
-	if (!bl && g_glRenderer) {
-		g_glRenderer->ClearZBuffer();
-	}
+    if (g_glRenderer) {
+        if (!bl) {
+            g_glRenderer->ClearZBuffer();
+            // SOURCEPORT: disable depth test for HUD near-model pass.
+            // Near-model faces (compass inner disc, weapon) are at similar camera-space z
+            // as each other; outer ring faces (fproc1) can write depth values that block
+            // inner disc faces at slightly larger z. With no z-test, faces draw in face
+            // order (software-backface-culled via sfNeedVC) which is correct for convex HUD
+            // models. Hardware_ZBuffer(TRUE) restores z-test for the 3D scene next frame.
+            g_glRenderer->SetZBufferEnabled(false);
+        } else {
+            g_glRenderer->SetZBufferEnabled(true);
+        }
+    }
 #endif
 }
 
@@ -450,6 +478,20 @@ void d3dEndBufferG(BOOL ColorKey)
    LINEARFILTER = TRUE;
 #elif defined(_opengl)
    if (g_glRenderer && GVCnt > 0) {
+       // SOURCEPORT: bind the correct texture before drawing.
+       // hGTexture is set when DrawTPlane's texture-change block fires; for paths that
+       // call d3dStartBufferG() directly (sky, elements) hGTexture is -1 but hTexture
+       // holds the texture set by the most recent d3dSetTexture() call.
+       glActiveTexture(GL_TEXTURE0);
+       GLuint texToBind = 0;
+       if (hGTexture != (D3DTEXTUREHANDLE)-1 && hGTexture != 0)
+           texToBind = (GLuint)hGTexture;
+       else if (hTexture != 0)
+           texToBind = (GLuint)hTexture;
+       if (texToBind)
+           glBindTexture(GL_TEXTURE_2D, texToBind);
+       else if (g_glRenderer)
+           glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture());
        g_glRenderer->UnlockAndDrawGeometry(GVCnt, ColorKey ? true : false);
    }
    dFacesCount += GVCnt / 3;
@@ -613,12 +655,12 @@ void d3dFlushBuffer(int fproc1, int fproc2)
    dFacesCount+=fproc1+fproc2;
 #elif defined(_opengl)
    if (g_glRenderer) {
-       // SOURCEPORT: when no texture is set (hTexture==0, e.g. RenderCircle/RenderElements),
-       // bind a white 1x1 texture so vertex color passes through unchanged.
-       if (!hTexture) {
-           glActiveTexture(GL_TEXTURE0);
+       // SOURCEPORT: bind texture at draw time (d3dSetTexture no longer binds immediately).
+       glActiveTexture(GL_TEXTURE0);
+       if (hTexture)
+           glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+       else
            glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture());
-       }
        g_glRenderer->UnlockAndDrawTriangles(fproc1, fproc2);
    }
    LINEARFILTER = TRUE;
@@ -1415,6 +1457,8 @@ void Activate3DHardware()
     VMFORMAT565 = TRUE;
     OPT_ALPHA_COLORKEY = FALSE;
     g_glRenderer->SetFogEnabled(FOGENABLE ? true : false);
+    // SOURCEPORT: push initial brightness uniform (1.0 + OptBrightness/128); default 0 → 1.0
+    g_glRenderer->SetBrightness(1.0f + OptBrightness / 128.0f);
     // SOURCEPORT: initial clear so first frame doesn't flash black
     d3dClearBuffers();
     g_glRenderer->BeginFrame();
@@ -1686,12 +1730,13 @@ static GLuint gl_UploadTexture16(void* data, int w, int h)
     for (int i = 0; i < w * h; i++) {
         if ((rgba[i] >> 24) == 0) { hasTransparency = true; break; }
     }
-    if (!hasTransparency) {
-        glGenerateMipmap(GL_TEXTURE_2D);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
-    }
+    // SOURCEPORT: do NOT use GL_LINEAR_MIPMAP_LINEAR for terrain.
+    // The game uses explicit per-distance LOD (DataA 128x128 vs DataB 64x64 in ProcessMap).
+    // Per-fragment trilinear mip selection chooses different mip levels for the two
+    // triangles of each terrain quad (different UV gradients across the diagonal split),
+    // producing the alternating bright/dark pinwheel artifact.  GL_LINEAR (bilinear, no
+    // auto-mip) matches the original D3D6 D3DFILTER_LINEAR behaviour.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
     return tex;
 }
@@ -1749,12 +1794,8 @@ void d3dSetTexture(LPVOID tptr, int w, int h)
   d3dMemMap[fxm].lastused = d3dMemUsageCount;
   hTexture = d3dMemMap[fxm].hTexture;
   d3dLastTexture = fxm;
-
-#ifdef _opengl
-  // SOURCEPORT: bind the GL texture immediately
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
-#endif
+  // SOURCEPORT: do NOT bind here — let DrawTPlane/d3dFlushBuffer bind at draw time
+  // to avoid the wrong texture being bound when the geometry buffer is flushed.
 }
 
 
@@ -1920,10 +1961,15 @@ void ShowVideo()
 	  RenderFSRect(CurFogColor+0x70000000);  
 	  
   if (OptDayNight!=2)
-  if (!UNDERWATER && (SunLight>1.0f) ) {   
+  if (!UNDERWATER && (SunLight>1.0f) ) {
    RenderFSRect(0xFFFFC0 + ((int)SunLight<<24));
   }
-  
+
+  // SOURCEPORT: Night vision overlay (original game changes sky/fog to green via SkyR=0/SkyB=0;
+  // this overlay adds a subtle additional green film on top of that effect)
+  if (OptDayNight == 2)
+      RenderFSRect(0x3000C800);  // semi-transparent green night vision film for Night
+
   RenderHealthBar();
 
    
@@ -2011,7 +2057,7 @@ void FXPutBitMap(int x0, int y0, int w, int h, int smw, LPVOID lpData)
 
   lpddBack->Unlock(ddsd.lpSurface);
 #elif defined(_opengl)
-  if (g_glRenderer) g_glRenderer->DrawBitmap(x0, y0, w, h, smw, lpData);
+  if (g_glRenderer) g_glRenderer->DrawBitmap(x0, y0, w, h, smw, lpData, true);
 #endif
 }
 
@@ -2294,8 +2340,11 @@ void ClipVector(CLIPPLANE& C, int vn)
 void DrawTPlaneClip(BOOL SECONT)
 {
    if (!WATERREVERSE) {
-    MulVectorsVect(SubVectors(ev[1].v, ev[0].v), SubVectors(ev[2].v, ev[0].v), nv);   
-    if (nv.x*ev[0].v.x  +  nv.y*ev[0].v.y  +  nv.z*ev[0].v.z<0) return;       
+#ifndef _opengl
+   // SOURCEPORT: same fix as DrawTPlane — skip software backface test in GL path.
+    MulVectorsVect(SubVectors(ev[1].v, ev[0].v), SubVectors(ev[2].v, ev[0].v), nv);
+    if (nv.x*ev[0].v.x  +  nv.y*ev[0].v.y  +  nv.z*ev[0].v.z<0) return;
+#endif
    }
 
    cp[0].ev = ev[0]; cp[1].ev = ev[1]; cp[2].ev = ev[2];
@@ -2425,8 +2474,8 @@ void DrawTPlaneClip(BOOL SECONT)
    }
 
    if (hGTexture!=hTexture) {
-     hGTexture=hTexture;
 #ifdef _d3d
+     hGTexture=hTexture;
      lpInstructionG->bOpcode = D3DOP_STATERENDER;
      lpInstructionG->bSize = sizeof(D3DSTATE);
      lpInstructionG->wCount = 1;
@@ -2443,8 +2492,10 @@ void DrawTPlaneClip(BOOL SECONT)
      lpInstructionG->wCount  = 0;
      lpInstructionG++;
 #elif defined(_opengl)
-     // SOURCEPORT: flush pending geometry and bind the new GL texture
+     // SOURCEPORT: flush pending geometry with old texture, then bind new.
+     // hGTexture is set AFTER StartBufferG to avoid being overwritten by its reset.
      if (GVCnt > 0) { d3dEndBufferG(FALSE); d3dStartBufferG(); }
+     hGTexture=hTexture;
      glActiveTexture(GL_TEXTURE0);
      glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
 #endif
@@ -2513,9 +2564,15 @@ void DrawTPlane(BOOL SECONT)
 {
    int n;   
    
-   //if (!WATERREVERSE) {  
-    MulVectorsVect(SubVectors(ev[1].v, ev[0].v), SubVectors(ev[2].v, ev[0].v), nv);   
-    if (nv.x*ev[0].v.x  +  nv.y*ev[0].v.y  +  nv.z*ev[0].v.z<0) return;       
+   //if (!WATERREVERSE) {
+#ifndef _opengl
+   // SOURCEPORT: skip software backface test in GL path. The dot-product is near zero
+   // on sloped terrain and flips sign as the camera moves, popping individual triangles
+   // in/out. In D3D6 this was masked by fog; without fog it is visible. GL already has
+   // glDisable(GL_CULL_FACE) + depth testing, so the software test is not needed.
+    MulVectorsVect(SubVectors(ev[1].v, ev[0].v), SubVectors(ev[2].v, ev[0].v), nv);
+    if (nv.x*ev[0].v.x  +  nv.y*ev[0].v.y  +  nv.z*ev[0].v.z<0) return;
+#endif
    //}
 
    Mask1=0x007F;   
@@ -2648,39 +2705,11 @@ void DrawTPlane(BOOL SECONT)
 		 d3dStartBufferG();
 	 }
 
-     lpVertexG->sx       = (float)ev[0].scrx / 16;
-     lpVertexG->sy       = (float)ev[0].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[0].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | alpha1<<24;     
-	 lpVertexG->specular = (255-(int)ev[0].Fog)<<24;//0x7F000000;
-     lpVertexG->tu       = (float)(scrp[0].tx) / (128.f*65536.f);
-     lpVertexG->tv       = (float)(scrp[0].ty) / (128.f*65536.f);
-     lpVertexG++;	
-
-	 lpVertexG->sx       = (float)ev[1].scrx / 16;
-     lpVertexG->sy       = (float)ev[1].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[1].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | alpha2<<24;     
-	 lpVertexG->specular = (255-(int)ev[1].Fog)<<24;//0x7F000000;
-     lpVertexG->tu       = (float)(scrp[1].tx) / (128.f*65536.f);
-     lpVertexG->tv       = (float)(scrp[1].ty) / (128.f*65536.f);
-     lpVertexG++;	
-
-	 lpVertexG->sx       = (float)ev[2].scrx / 16;
-     lpVertexG->sy       = (float)ev[2].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[2].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | alpha3<<24;
-     lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
-     lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
-     lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
-     lpVertexG++;
-
+     // SOURCEPORT: texture-change check BEFORE vertex writes so the flush sees the
+     // correct (old) texture still bound — mirrors the correct order in DrawTPlaneClip.
      if (hGTexture!=hTexture) {
-      hGTexture=hTexture;
 #ifdef _d3d
+      hGTexture=hTexture;
       lpInstructionG->bOpcode = D3DOP_STATERENDER;
       lpInstructionG->bSize = sizeof(D3DSTATE);
       lpInstructionG->wCount = 1;
@@ -2697,11 +2726,43 @@ void DrawTPlane(BOOL SECONT)
       lpInstructionG->wCount  = 0;
       lpInstructionG++;
 #elif defined(_opengl)
+      // hGTexture set AFTER StartBufferG so it's not overwritten by its reset.
       if (GVCnt > 0) { d3dEndBufferG(FALSE); d3dStartBufferG(); }
+      hGTexture=hTexture;
       glActiveTexture(GL_TEXTURE0);
       glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
 #endif
      }
+
+     lpVertexG->sx       = (float)ev[0].scrx / 16;
+     lpVertexG->sy       = (float)ev[0].scry / 16;
+     lpVertexG->sz       = _ZSCALE / ev[0].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | alpha1<<24;
+	 lpVertexG->specular = (255-(int)ev[0].Fog)<<24;//0x7F000000;
+     lpVertexG->tu       = (float)(scrp[0].tx) / (128.f*65536.f);
+     lpVertexG->tv       = (float)(scrp[0].ty) / (128.f*65536.f);
+     lpVertexG++;
+
+	 lpVertexG->sx       = (float)ev[1].scrx / 16;
+     lpVertexG->sy       = (float)ev[1].scry / 16;
+     lpVertexG->sz       = _ZSCALE / ev[1].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | alpha2<<24;
+	 lpVertexG->specular = (255-(int)ev[1].Fog)<<24;//0x7F000000;
+     lpVertexG->tu       = (float)(scrp[1].tx) / (128.f*65536.f);
+     lpVertexG->tv       = (float)(scrp[1].ty) / (128.f*65536.f);
+     lpVertexG++;
+
+	 lpVertexG->sx       = (float)ev[2].scrx / 16;
+     lpVertexG->sy       = (float)ev[2].scry / 16;
+     lpVertexG->sz       = _ZSCALE / ev[2].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | alpha3<<24;
+     lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
+     lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
+     lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
+     lpVertexG++;
 
 #ifdef _d3d
      lpTriangle = (LPD3DTRIANGLE)lpInstructionG;
@@ -2856,39 +2917,10 @@ void DrawTPlaneW(BOOL SECONT)
 		 d3dStartBufferG();
 	 }
 
-     lpVertexG->sx       = (float)ev[0].scrx / 16;
-     lpVertexG->sy       = (float)ev[0].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[0].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | ev[0].ALPHA<<24;     
-	 lpVertexG->specular = (255-(int)ev[0].Fog)<<24;
-     lpVertexG->tu       = (float)(scrp[0].tx) / (128.f*65536.f);
-     lpVertexG->tv       = (float)(scrp[0].ty) / (128.f*65536.f);
-     lpVertexG++;	
-
-	 lpVertexG->sx       = (float)ev[1].scrx / 16;
-     lpVertexG->sy       = (float)ev[1].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[1].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | ev[1].ALPHA<<24;     
-	 lpVertexG->specular = (255-(int)ev[1].Fog)<<24;
-     lpVertexG->tu       = (float)(scrp[1].tx) / (128.f*65536.f);
-     lpVertexG->tv       = (float)(scrp[1].ty) / (128.f*65536.f);
-     lpVertexG++;	
-
-	 lpVertexG->sx       = (float)ev[2].scrx / 16;
-     lpVertexG->sy       = (float)ev[2].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[2].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | ev[2].ALPHA<<24;     
-	 lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
-     lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
-     lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
-     lpVertexG++;
-
+     // SOURCEPORT: texture-change check BEFORE vertex writes (same fix as DrawTPlane).
      if (hGTexture!=hTexture) {
-      hGTexture=hTexture;
 #ifdef _d3d
+      hGTexture=hTexture;
       lpInstructionG->bOpcode = D3DOP_STATERENDER;
       lpInstructionG->bSize = sizeof(D3DSTATE);
       lpInstructionG->wCount = 1;
@@ -2906,10 +2938,41 @@ void DrawTPlaneW(BOOL SECONT)
       lpInstructionG++;
 #elif defined(_opengl)
       if (GVCnt > 0) { d3dEndBufferG(FALSE); d3dStartBufferG(); }
+      hGTexture=hTexture;
       glActiveTexture(GL_TEXTURE0);
       glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
 #endif
      }
+
+     lpVertexG->sx       = (float)ev[0].scrx / 16;
+     lpVertexG->sy       = (float)ev[0].scry / 16;
+     lpVertexG->sz       = _ZSCALE / ev[0].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | ev[0].ALPHA<<24;
+	 lpVertexG->specular = (255-(int)ev[0].Fog)<<24;
+     lpVertexG->tu       = (float)(scrp[0].tx) / (128.f*65536.f);
+     lpVertexG->tv       = (float)(scrp[0].ty) / (128.f*65536.f);
+     lpVertexG++;
+
+	 lpVertexG->sx       = (float)ev[1].scrx / 16;
+     lpVertexG->sy       = (float)ev[1].scry / 16;
+     lpVertexG->sz       = _ZSCALE / ev[1].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | ev[1].ALPHA<<24;
+	 lpVertexG->specular = (255-(int)ev[1].Fog)<<24;
+     lpVertexG->tu       = (float)(scrp[1].tx) / (128.f*65536.f);
+     lpVertexG->tv       = (float)(scrp[1].ty) / (128.f*65536.f);
+     lpVertexG++;
+
+	 lpVertexG->sx       = (float)ev[2].scrx / 16;
+     lpVertexG->sy       = (float)ev[2].scry / 16;
+     lpVertexG->sz       = _ZSCALE / ev[2].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | ev[2].ALPHA<<24;
+	 lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
+     lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
+     lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
+     lpVertexG++;
 
 #ifdef _d3d
      lpTriangle = (LPD3DTRIANGLE)lpInstructionG;
@@ -3251,7 +3314,8 @@ void RenderGround()
    r = ctViewR1-1;
    for (int x=r; x>-r; x--) {
 	   ProcessMap(CCX+r, CCY+x, r);
-	   ProcessMap(CCX+x, CCY+r, r);
+	   if (x != r)  // SOURCEPORT: skip duplicate corner tile at (CCX+r, CCY+r)
+	       ProcessMap(CCX+x, CCY+r, r);
    }
 
    for (r=ctViewR1-2; r>0; r--) {
@@ -4307,15 +4371,16 @@ LNEXT:
    }
 
 #ifdef _opengl
-  // SOURCEPORT: disable depth test entirely for env-map overlay — same-depth fragments
-  // z-fight with the already-drawn weapon model under GL_GEQUAL.
-  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(false);
+  // SOURCEPORT: depth read-only for env-map additive overlay — keeps depth test so
+  // the shiny pass is occluded by closer geometry (player arm), but doesn't write
+  // depth so it doesn't corrupt the buffer for subsequent draws.
+  if (g_glRenderer) g_glRenderer->SetDepthMask(false);
 #endif
   d3dFlushBuffer(fproc1, 0);
 #ifdef _d3d
   SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
 #elif defined(_opengl)
-  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(true);
+  if (g_glRenderer) g_glRenderer->SetDepthMask(true);
   if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
 #endif
 }
@@ -4445,15 +4510,16 @@ LNEXT:
    }
 
 #ifdef _opengl
-  // SOURCEPORT: disable depth test entirely for phong-map overlay — same-depth fragments
-  // z-fight with the already-drawn weapon model under GL_GEQUAL.
-  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(false);
+  // SOURCEPORT: depth read-only for phong-map additive overlay — keeps depth test so
+  // the shiny pass is occluded by closer geometry (player arm), but doesn't write
+  // depth so it doesn't corrupt the buffer for subsequent draws.
+  if (g_glRenderer) g_glRenderer->SetDepthMask(false);
 #endif
   d3dFlushBuffer(fproc1, 0);
 #ifdef _d3d
   SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
 #elif defined(_opengl)
-  if (g_glRenderer) g_glRenderer->SetZBufferEnabled(true);
+  if (g_glRenderer) g_glRenderer->SetDepthMask(true);
   if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
 #endif
 }
@@ -5164,9 +5230,11 @@ void RenderSkyPlane()
            float tu1l, tv1l, tu1r, tv1r;
            skyUV(sky1, tu1l, tv1l, tu1r, tv1r);
            // Two triangles: (TL, TR, BL) and (TR, BR, BL)
+           // SOURCEPORT: night sky is nearly black (original game had dark/starless sky at night)
+           DWORD skyVertColor = (OptDayNight == 2) ? 0xFF1C1C1C : 0xFFFFFFFF;
            auto emit = [&](float ssx, float ssy, float tu, float tv) {
                lpVertexG->sx = ssx; lpVertexG->sy = ssy; lpVertexG->sz = 0.0001f; lpVertexG->rhw = 1.f;
-               lpVertexG->color = 0xFFFFFFFF; lpVertexG->specular = 0xFF000000;
+               lpVertexG->color = skyVertColor; lpVertexG->specular = 0xFF000000;
                lpVertexG->tu = (tu + dtt) / 256.f; lpVertexG->tv = (tv - dtt) / 256.f;
                lpVertexG++;
            };

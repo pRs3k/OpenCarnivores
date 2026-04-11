@@ -1,10 +1,5 @@
 build/
 
-# Game assets (copyrighted, must be supplied by user from retail install)
-HUNTDAT/
-*.DLL
-*.dll
-
 # dgVoodoo2 wrapper (downloaded separately)
 dgvoodoo2/
 DDraw.dll
@@ -37,4 +32,3 @@ deps/SDL2-*/lib/**/*.pdb
 .vs/
 out/
 Debug/
-Release/

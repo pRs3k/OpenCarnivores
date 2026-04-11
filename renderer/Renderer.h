@@ -62,9 +62,14 @@ public:
     virtual void SetZBufferEnabled(bool enabled) = 0;
 
     // --- 2D operations ---
-    virtual void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData) = 0;
+    // colorKey=true: pixel value 0 (black) is transparent (for game UI sprites)
+    // colorKey=false: all pixels are opaque (for solid backgrounds)
+    // srcH: actual source image height; 0 = same as h (no stretching).
+    // The quad is drawn at (x,y) with size (w,h); source is uploaded at srcW×srcH then stretched.
+    virtual void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0) = 0;
     virtual void DrawText(int x, int y, const char* text, uint32_t color) = 0;
     virtual void DrawFullscreenRect(uint32_t argbColor) = 0;
+    virtual void FillRect(int x, int y, int w, int h, uint32_t argbColor) = 0;
 
     // --- Z-buffer control ---
     virtual void ClearZBuffer() = 0;
