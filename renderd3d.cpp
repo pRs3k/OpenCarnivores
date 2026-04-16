@@ -119,11 +119,12 @@ typedef struct _d3dmemmap {
 #ifdef _opengl
 // SOURCEPORT: GL texture cache entry
 typedef struct _d3dmemmap {
-  int cpuaddr, size, lastused;
+  uintptr_t cpuaddr;  // SOURCEPORT: 64-bit pointer key — int would truncate on x64
+  int size, lastused;
   GLuint                  glTexId;
   D3DTEXTUREHANDLE        hTexture;
 } Td3dmemmap;
-#endif    
+#endif
 
 
 #define d3dmemmapsize 128
@@ -309,6 +310,14 @@ void d3dStartBufferG()
    lpVertexG = (LPD3DTLVERTEX)(g_glRenderer ? g_glRenderer->LockGeometryBuffer() : g_geomVertices);
    if (g_glRenderer) {
        g_glRenderer->SetLinearFilter(LINEARFILTER ? true : false);
+       // SOURCEPORT: always enable alpha test for the G buffer.
+       // - Terrain: vertex alpha is always 0xFF → nothing is wrongly discarded.
+       // - Water:   vertex alpha < 1.0 → correct semi-transparency via color.a = vColor.a.
+       // - Sprites: color-key (texel.a=0) pixels are discarded.
+       // Without this, d3dEndBufferG() cleanup sets uAlphaTest=false, and any
+       // buffer started with d3dStartBufferG() (rather than d3dStartBufferGBMP) runs
+       // with the wrong state — sprites draw as solid black rectangles.
+       g_glRenderer->SetAlphaTest(true);
        if (FOGENABLE) {
            // SOURCEPORT: use sky color as fog color when not in a fog zone
            uint32_t fc = CurFogColor
@@ -492,6 +501,18 @@ void d3dEndBufferG(BOOL ColorKey)
            glBindTexture(GL_TEXTURE_2D, texToBind);
        else if (g_glRenderer)
            glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture());
+       // SOURCEPORT: re-assert alpha test state before drawing.
+       // d3dFlushBuffer() (called for nearby 3D models rendered in the same
+       // _RenderObject loop as BMP sprites) calls UnlockAndDrawTriangles(fproc1,0)
+       // which sets uAlphaTest=false when fproc2==0.  If the G buffer was started
+       // with d3dStartBufferGBMP() (uAlphaTest=true) but a 3D model rendered in
+       // between, the texture-change block in RenderBMPModel may not fire
+       // (hGTexture==hTexture → same texture), leaving uAlphaTest=false and
+       // causing BMP sprite background pixels to render as opaque black boxes.
+       // Forcing true here is safe: terrain/water texels with alpha=0 are extremely
+       // rare (BrightenTexture/GenerateMipMap avoid them), and water vertex-alpha
+       // transparency relies on uAlphaTest=true (color.a=vColor.a path).
+       g_glRenderer->SetAlphaTest(true);
        g_glRenderer->UnlockAndDrawGeometry(GVCnt, ColorKey ? true : false);
    }
    dFacesCount += GVCnt / 3;
@@ -1730,13 +1751,19 @@ static GLuint gl_UploadTexture16(void* data, int w, int h)
     for (int i = 0; i < w * h; i++) {
         if ((rgba[i] >> 24) == 0) { hasTransparency = true; break; }
     }
-    // SOURCEPORT: do NOT use GL_LINEAR_MIPMAP_LINEAR for terrain.
-    // The game uses explicit per-distance LOD (DataA 128x128 vs DataB 64x64 in ProcessMap).
-    // Per-fragment trilinear mip selection chooses different mip levels for the two
-    // triangles of each terrain quad (different UV gradients across the diagonal split),
-    // producing the alternating bright/dark pinwheel artifact.  GL_LINEAR (bilinear, no
-    // auto-mip) matches the original D3D6 D3DFILTER_LINEAR behaviour.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    // SOURCEPORT: mipmaps for transparent textures (models, foliage, sprites) only.
+    // Terrain (hasTransparency==false) must NOT use mipmaps: the game drives its own
+    // LOD by swapping DataA/DataB (128x128 vs 64x64), and per-fragment mip selection
+    // across the diagonal split of each quad produces a bright/dark pinwheel artifact.
+    // For transparent textures, GL_LINEAR (no mipmaps) leaves the GPU sampling a random
+    // full-res texel from a tiny triangle → alpha flicker on leaves at distance.
+    // glGenerateMipmap pre-averages the binary alpha so distant samples are stable.
+    if (hasTransparency) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+    } else {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
     return tex;
 }
@@ -1747,7 +1774,7 @@ void d3dDownLoadTexture(int i, int w, int h, LPVOID tptr)
     if (d3dMemMap[i].glTexId) glDeleteTextures(1, &d3dMemMap[i].glTexId);
     d3dMemMap[i].glTexId = gl_UploadTexture16(tptr, w, h);
     d3dMemMap[i].hTexture = d3dMemMap[i].glTexId;
-    d3dMemMap[i].cpuaddr = (int)(uintptr_t)tptr;
+    d3dMemMap[i].cpuaddr = (uintptr_t)tptr;
     d3dMemMap[i].size = w * h * 2;
     d3dMemLoaded += w * h * 2;
 }
@@ -1781,11 +1808,17 @@ int DownLoadTexture(LPVOID tptr, int w, int h)
 
 void d3dSetTexture(LPVOID tptr, int w, int h)
 {
-  if (d3dMemMap[d3dLastTexture].cpuaddr == (int)(uintptr_t)tptr) return;
+  if (d3dMemMap[d3dLastTexture].cpuaddr == (uintptr_t)tptr) {
+    // SOURCEPORT: fast path must update lastused — otherwise after 2 frames the slot is
+    // eligible for LRU eviction even while hTexture still holds a reference to its GLuint.
+    d3dMemMap[d3dLastTexture].lastused = d3dMemUsageCount;
+    hTexture = d3dMemMap[d3dLastTexture].hTexture;
+    return;
+  }
 
   int fxm = -1;
   for (int m=0; m<d3dmemmapsize; m++) {
-     if (d3dMemMap[m].cpuaddr == (int)(uintptr_t)tptr) { fxm = m; break; }
+     if (d3dMemMap[m].cpuaddr == (uintptr_t)tptr) { fxm = m; break; }
      if (!d3dMemMap[m].cpuaddr) break;
   }
 
@@ -3051,18 +3084,17 @@ void _RenderObject(int x, int y)
 	  
 
 	  if (MObjects[ob].info.flags & ofNOBMP) zs = 0;
-/*
-	  if (!NeedWater && zs>ctViewRM*256 && zs<(ctViewRM+1)*256) {
-       GlassL = 255-(int)(zs - ctViewRM*256);
-	   RenderBMPModel(&MObjects[ob].bmpmodel, v[0].x, v[0].y, v[0].z, mlight-32);	   	   
-	   GlassL=255-GlassL;
-	   RenderModel(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);	   	   
-	  } else	   */
+#ifdef _opengl
+	  // SOURCEPORT: disable BMP sprite LOD in GL path — the hard switch from 3D model to
+	  // a flat pre-rendered billboard at ctViewRM*256 units causes a jarring visual change
+	  // ("leaf texture changes completely"). Modern GPUs handle 3D objects at any distance.
+	  zs = 0;
+#endif
 	  if (zs>ctViewRM*256)
 		  RenderBMPModel(&MObjects[ob].bmpmodel, v[0].x, v[0].y, v[0].z, mlight-16);
 	  else
       if (v[0].z<-256*8)
-       RenderModel(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);	   
+       RenderModel(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);
       else
        RenderModelClip(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);       
 	   
@@ -3100,7 +3132,7 @@ void ProcessMap(int x, int y, int r)
    if (OMap[y][x]!=255) BackR+=MObjects[OMap[y][x]].info.BoundR;
 
    ev[0] = VMap[y-CCY+128][x-CCX+128];
-   if (ev[0].v.z>BackR) return;        
+   if (ev[0].v.z>BackR) return;
    
    int t1 = TMap1[y][x];   
    ReverseOn = (FMap[y][x] & fmReverse);   
@@ -3287,30 +3319,31 @@ void ProcessMapW2(int x, int y, int r)
 
 void RenderGround()
 {
+#ifndef _opengl
    for (r=ctViewR; r>=ctViewR1; r-=2) {
-     
+
      for (int x=r; x>0; x-=2) {
       ProcessMap2(CCX-x, CCY+r, r);
       ProcessMap2(CCX+x, CCY+r, r);
-	  ProcessMap2(CCX-x, CCY-r, r); 		
-      ProcessMap2(CCX+x, CCY-r, r); 	
-     }    
-    
-     ProcessMap2(CCX, CCY-r, r); 	
-     ProcessMap2(CCX, CCY+r, r); 	
+	  ProcessMap2(CCX-x, CCY-r, r);
+      ProcessMap2(CCX+x, CCY-r, r);
+     }
+
+     ProcessMap2(CCX, CCY-r, r);
+     ProcessMap2(CCX, CCY+r, r);
 
 	 for (int y=r-2; y>0; y-=2) {
       ProcessMap2(CCX+r, CCY-y, r);
       ProcessMap2(CCX+r, CCY+y, r);
-      ProcessMap2(CCX-r, CCY+y, r); 
+      ProcessMap2(CCX-r, CCY+y, r);
       ProcessMap2(CCX-r, CCY-y, r);
      }
      ProcessMap2(CCX-r, CCY, r);
      ProcessMap2(CCX+r, CCY, r);
-     
-   } 
 
-   
+   }
+
+
    r = ctViewR1-1;
    for (int x=r; x>-r; x--) {
 	   ProcessMap(CCX+r, CCY+x, r);
@@ -3319,6 +3352,20 @@ void RenderGround()
    }
 
    for (r=ctViewR1-2; r>0; r--) {
+#else
+   // SOURCEPORT: disable terrain LOD in GL path — always use full-detail ProcessMap
+   // for all rings. ProcessMap2 (2×2 coarse tiles) causes visible height popping when
+   // tiles cross the ctViewR1 boundary as the camera moves. Modern GPUs handle the
+   // extra triangles trivially. Start full-detail loop from ctViewR down to 1.
+   r = ctViewR;
+   for (int x=r; x>-r; x--) {
+	   ProcessMap(CCX+r, CCY+x, r);
+	   if (x != r)
+	       ProcessMap(CCX+x, CCY+r, r);
+   }
+
+   for (r=ctViewR-1; r>0; r--) {
+#endif
      
      for (int x=r; x>0; x--) {
       ProcessMap(CCX-x, CCY+r, r);
@@ -3712,8 +3759,13 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
                glBindTexture(GL_TEXTURE_2D, (GLuint)hGTexture);
            }
            d3dEndBufferG(TRUE);
-           d3dStartBufferGBMP();
        }
+       // SOURCEPORT: always call d3dStartBufferGBMP() on texture switch, even when
+       // GVCnt==0.  If lpVertexG was set by d3dStartBufferG() (terrain batch) with no
+       // vertices yet, uAlphaTest is still false from the last d3dEndBufferG cleanup.
+       // d3dStartBufferGBMP() sets uAlphaTest=true so sprite color-key pixels are
+       // discarded; without this, they render as opaque black (forced color.a=1.0).
+       d3dStartBufferGBMP();
        hGTexture = hTexture;
        glActiveTexture(GL_TEXTURE0);
        glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
@@ -4527,7 +4579,6 @@ LNEXT:
 void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
 {
    int f;
-   int i; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
 
    mptr = _mptr;
 
@@ -4573,7 +4624,7 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
 
 	 lpVertex->sx       = (float)gScrp[fptr->v1].x;
      lpVertex->sy       = (float)gScrp[fptr->v1].y;
-     lpVertex->sz       = 0.0002;//_ZSCALE / rVertex[fptr->v1].z;
+     lpVertex->sz       = 0.0002f;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = alpha;
 	 lpVertex->specular = 0xFF000000;
@@ -4583,7 +4634,7 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
 
 	 lpVertex->sx       = (float)gScrp[fptr->v2].x;
      lpVertex->sy       = (float)gScrp[fptr->v2].y;
-     lpVertex->sz       = 0.0002;//_ZSCALE / rVertex[fptr->v2].z;
+     lpVertex->sz       = 0.0002f;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = alpha;
 	 lpVertex->specular = 0xFF000000;
@@ -4593,7 +4644,7 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
 
 	 lpVertex->sx       = (float)gScrp[fptr->v3].x;
      lpVertex->sy       = (float)gScrp[fptr->v3].y;
-     lpVertex->sz       = 0.0002;//_ZSCALE / rVertex[fptr->v3].z;
+     lpVertex->sz       = 0.0002f;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = alpha;
 	 lpVertex->specular = 0xFF000000;
@@ -5050,6 +5101,65 @@ void DrawHMap()
 endmap:
   lpddBack->Unlock(ddsd.lpSurface);
 #endif // _d3d
+
+#ifdef _opengl
+  // SOURCEPORT: draw player dot (red, 2x2) and view-range circle (green) on top of map image.
+  // Color values match the legacy D3D6 RGB555 entries: R=30/31 ~ 0xF0, G=18/31 ~ 0x90.
+  if (!g_glRenderer) return;
+
+  // Helper: draw one pixel via FillRect
+  auto putPx = [&](int px, int py, uint32_t col) {
+    if (px >= 0 && px < WinW && py >= 0 && py < WinH)
+      g_glRenderer->FillRect(px, py, 1, 1, col);
+  };
+  // Helper: draw 2x2 box (matches DrawBox)
+  auto putBox = [&](int bx, int by, uint32_t col) {
+    if (bx >= 0 && bx+1 < WinW && by >= 0 && by+1 < WinH)
+      g_glRenderer->FillRect(bx, by, 2, 2, col);
+  };
+  // Helper: draw 8 symmetric Bresenham circle points
+  auto put8 = [&](int cx, int cy, int dx, int dy, uint32_t col) {
+    putPx(cx+dx, cy+dy, col); putPx(cx-dx, cy+dy, col);
+    putPx(cx+dx, cy-dy, col); putPx(cx-dx, cy-dy, col);
+    putPx(cx+dy, cy+dx, col); putPx(cx-dy, cy+dx, col);
+    putPx(cx+dy, cy-dx, col); putPx(cx-dy, cy-dx, col);
+  };
+  // Bresenham circle (matches legacy DrawCircle / ctViewR/4 radius)
+  auto drawCircleGL = [&](int cx, int cy, int R, uint32_t col) {
+    int d = 3 - (2 * R), x = 0, y = R;
+    do {
+      put8(cx, cy, x, y, col);
+      x++;
+      if (d < 0) d = d + (x<<2) + 6;
+      else { d = d + (x - y) * 4 + 10; y--; }
+    } while (x < y);
+    put8(cx, cy, x, y, col);
+  };
+
+  int xx = VideoCX - 128 + (CCX>>2);
+  int yy = VideoCY - 128 + (CCY>>2);
+
+  if (xx < 0 || xx >= WinW || yy < 0 || yy >= WinH) return;
+
+  // Shadow dot (dim green) + main dot (bright green) for player position
+  putBox(xx+1, yy+1, 0xFF004800);
+  putBox(xx,   yy,   0xFF00F000);
+
+  // Shadow circle (dim green) + main circle (bright green) — matches 4<<GShift / 18<<GShift
+  drawCircleGL(xx+1, yy+1, ctViewR/4, 0xFF004800);
+  drawCircleGL(xx,   yy,   ctViewR/4, 0xFF009000);
+
+  if (RadarMode)
+  for (int c = 0; c < ChCount; c++) {
+    if (Characters[c].AI < 10) continue;
+    if (!(TargetDino & (1<<Characters[c].AI))) continue;
+    if (!Characters[c].Health) continue;
+    int dx = VideoCX - 128 + (int)Characters[c].pos.x / 1024;
+    int dy = VideoCY - 128 + (int)Characters[c].pos.z / 1024;
+    if (dx <= 0 || dx >= WinW || dy <= 0 || dy >= WinH) continue;
+    putBox(dx, dy, 0xFFD00000);
+  }
+#endif // _opengl
 }
 
 

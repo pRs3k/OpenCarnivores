@@ -520,9 +520,12 @@ void LoadTexture(TEXTURE* &T)
 
 	CalcMidColor(T->DataA, 128*128, T->mR, T->mG, T->mB);
 		
-	GenerateMipMap(T->DataA, T->DataB, 64);    
+	GenerateMipMap(T->DataA, T->DataB, 64);
+	for (int i = 0; i < 64*64; i++) if (!T->DataB[i]) T->DataB[i] = 1;  // SOURCEPORT: prevent alpha=0 discard in GL shader
 	GenerateMipMap(T->DataB, T->DataC, 32);
-	GenerateMipMap(T->DataC, T->DataD, 16);	
+	for (int i = 0; i < 32*32; i++) if (!T->DataC[i]) T->DataC[i] = 1;
+	GenerateMipMap(T->DataC, T->DataD, 16);
+	for (int i = 0; i < 16*16; i++) if (!T->DataD[i]) T->DataD[i] = 1;
 	memcpy(T->SDataC[0], T->DataC, 32*32*2);
 	memcpy(T->SDataC[1], T->DataC, 32*32*2);
 
@@ -918,14 +921,13 @@ void CreateMipMapMT(WORD* dst, WORD* src, int H)
 
         if (!HARD3D) { C1>>=1; C2>>=1; C3>>=1; C4>>=1; }
 
-       /*if (C1 == 0 && C2!=0) C1 = C2;
-         if (C1 == 0 && C3!=0) C1 = C3;
-         if (C1 == 0 && C4!=0) C1 = C4;*/
-
-         if (C1 == 0) { *(dst + x + y*128) = 0; continue; }
-
-         //C4 = C1; 
-
+         // SOURCEPORT: original code exited early when C1==0, zeroing the mipmap texel
+         // even when C2/C3/C4 were opaque leaf pixels — causing leaves to vanish in
+         // lpTexture2 (the distance-LOD texture used at d > 12*256).
+         // Fix: only output transparent when ALL four source pixels are transparent.
+         // Otherwise borrow a non-zero neighbour so the average stays in leaf-colour space.
+         if (!C1 && !C2 && !C3 && !C4) { *(dst + x + y*128) = 0; continue; }
+         if (!C1) C1 = C2 ? C2 : (C3 ? C3 : C4);
          if (!C2) C2=C1;
          if (!C3) C3=C1;
          if (!C4) C4=C1;
@@ -949,12 +951,11 @@ void CreateMipMapMT2(WORD* dst, WORD* src, int H)
         int C3 = *(src + (x*2+0) + (y*2+1)*128);
         int C4 = *(src + (x*2+1) + (y*2+1)*128);
 
-		if (!HARD3D) { C1>>=1; C2>>=1; C3>>=1; C4>>=1; }         
+		if (!HARD3D) { C1>>=1; C2>>=1; C3>>=1; C4>>=1; }
 
-        if (C1 == 0) { *(dst + x + y*64) = 0; continue; }
-
-        //C2 = C1; 
-
+         // SOURCEPORT: same fix as CreateMipMapMT — only zero when all 4 are transparent.
+         if (!C1 && !C2 && !C3 && !C4) { *(dst + x + y*64) = 0; continue; }
+         if (!C1) C1 = C2 ? C2 : (C3 ? C3 : C4);
          if (!C2) C2=C1;
          if (!C3) C3=C1;
          if (!C4) C4=C1;
@@ -1172,10 +1173,11 @@ void LoadResources()
     int tc,mc;
     char MapName[128],RscName[128];
 	HeapAllocated=0;
+	TrophyMode = FALSE;  // SOURCEPORT: reset each load so trophy state never bleeds into regular maps
 	if (strstr(ProjectName, "trophy")) {
 		TrophyMode = TRUE;
-		ctViewR = 60;
-		ctViewR1 = 48;
+		ctViewR  = 60;
+		ctViewR1 = 60;  // SOURCEPORT: match ctViewR so all wall vertices are transformed (no teal gaps)
 	}
     wsprintf(MapName,"%s%s", ProjectName, ".map");
     wsprintf(RscName,"%s%s", ProjectName, ".rsc");
@@ -1183,12 +1185,15 @@ void LoadResources()
     ReleaseResources();
 
 #ifdef _opengl
-    // SOURCEPORT: BrightenTexture rewrites texture pixels in-place for day/night mode.
-    // The GL texture cache keys on CPU pointer, so stale GPU textures would be served
-    // even after the pixel data changes. Discard all cached GPU textures before reloading.
+    // SOURCEPORT: d3dMemMap caches CPU pointer → GLuint. After ReleaseResources the heap
+    // is freed; new textures can land at the same virtual addresses. Without a full reset
+    // d3dSetTexture will find stale cache entries for the new level's texture pointers and
+    // return old GLuints — producing wrong textures (teal, wrong-model-on-ground, etc.)
+    // that get worse with every level transition. ResetTextureMap() deletes all GL textures
+    // and clears every cpuaddr/lastused slot so the next level starts with a clean cache.
     {
-        extern RendererGL* g_glRenderer;
-        if (g_glRenderer) g_glRenderer->InvalidateTextureCache();
+        extern void ResetTextureMap();
+        ResetTextureMap();
     }
 #endif
 
@@ -1485,8 +1490,10 @@ void ReInitGame()
 {
 	PrintLog("ReInitGame();\n");
 	PlaceHunter();
-	if (TrophyMode)	PlaceTrophy();    
-	           else PlaceCharacters();    
+	if (TrophyMode) {
+		ChCount = 0;    // SOURCEPORT: no dinosaurs in trophy room
+		RadarMode = FALSE;
+	} else PlaceCharacters();    
 
     LoadCharacters();
 

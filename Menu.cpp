@@ -1309,15 +1309,29 @@ static void RunOptions(bool& appQuit) {
             static const int kNumPresets = (int)(sizeof(kPresets)/sizeof(kPresets[0]));
             static const char* kModeNames[] = { "Windowed", "Fullscreen", "Borderless" };
 
-            // Build filtered list once (preset indices whose dimensions fit the desktop)
+            // Build filtered list once (preset indices whose dimensions fit the monitor).
+            // SOURCEPORT: use SDL_GetNumDisplayModes/SDL_GetDisplayMode to find the
+            // monitor's true maximum resolution — SDL_GetDesktopDisplayMode returns the
+            // *current* desktop mode which may be an exclusive fullscreen mode lower than
+            // the panel's native resolution, causing the list to be truncated.
             static int filtIdx[12];
             static int nFilt = 0;
             static bool presetsBuilt = false;
             if (!presetsBuilt) {
-                SDL_DisplayMode dm = {};
-                SDL_GetDesktopDisplayMode(0, &dm);
+                int maxW = 640, maxH = 480;
+                int numModes = SDL_GetNumDisplayModes(0);
+                for (int mi = 0; mi < numModes; mi++) {
+                    SDL_DisplayMode mode = {};
+                    if (SDL_GetDisplayMode(0, mi, &mode) == 0)
+                        if (mode.w * mode.h > maxW * maxH) { maxW = mode.w; maxH = mode.h; }
+                }
+                if (maxW == 640) {  // fallback: SDL_GetNumDisplayModes failed
+                    SDL_DisplayMode dm = {};
+                    SDL_GetDesktopDisplayMode(0, &dm);
+                    if (dm.w > maxW) { maxW = dm.w; maxH = dm.h; }
+                }
                 for (int i = 0; i < kNumPresets; i++)
-                    if (kPresets[i].w <= dm.w && kPresets[i].h <= dm.h)
+                    if (kPresets[i].w <= maxW && kPresets[i].h <= maxH)
                         filtIdx[nFilt++] = i;
                 if (nFilt == 0) { filtIdx[0] = 0; nFilt = 1; }
                 presetsBuilt = true;
@@ -1336,25 +1350,37 @@ static void RunOptions(bool& appQuit) {
                 SDL_Window* win = g_glRenderer->GetWindow();
                 int tw = kPresets[filtIdx[ri]].w, th = kPresets[filtIdx[ri]].h;
                 OptDisplayMode = mode; OptResW = tw; OptResH = th;
-                if (mode == 2) {                          // borderless fullscreen
+                extern void SetVideoMode(int, int);
+                if (mode == 2) {                          // borderless fullscreen — always desktop res
                     SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+                    // Actual drawable size is the desktop; query it now
+                    int dw, dh;
+                    SDL_GL_GetDrawableSize(win, &dw, &dh);
+                    if (dw > 0 && dh > 0) { tw = dw; th = dh; }
                 } else if (mode == 1) {                   // exclusive fullscreen
-                    SDL_SetWindowFullscreen(win, 0);
+                    // Explicitly request the desired display mode before entering fullscreen
+                    // so SDL doesn't silently fall back to a different resolution.
+                    SDL_DisplayMode desired = {};
+                    desired.w = tw; desired.h = th;
+                    SDL_SetWindowDisplayMode(win, &desired);
+                    SDL_SetWindowFullscreen(win, 0);      // leave current mode first
                     SDL_SetWindowSize(win, tw, th);
                     SDL_SetWindowFullscreen(win, SDL_WINDOW_FULLSCREEN);
+                    // Pump events to let the OS complete the async mode change, then
+                    // read back the actual drawable so WinW/WinH are always correct.
+                    SDL_PumpEvents();
+                    int dw, dh; SDL_GL_GetDrawableSize(win, &dw, &dh);
+                    if (dw > 0 && dh > 0) { tw = dw; th = dh; }
                 } else {                                  // windowed
                     SDL_SetWindowFullscreen(win, 0);
                     SDL_SetWindowSize(win, tw, th);
                     SDL_SetWindowPosition(win, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+                    // For windowed, drawable may differ on HiDPI
+                    int dw, dh;
+                    SDL_GL_GetDrawableSize(win, &dw, &dh);
+                    if (dw > 0 && dh > 0) { tw = dw; th = dh; }
                 }
-                // Force viewport sync (resize event may not fire for all mode transitions)
-                int dw, dh;
-                SDL_GL_GetDrawableSize(win, &dw, &dh);
-                if (dw > 0 && dh > 0) {
-                    extern void SetVideoMode(int, int);
-                    SetVideoMode(dw, dh);
-                    glViewport(0, 0, dw, dh);
-                }
+                SetVideoMode(tw, th);
             };
 
             int ox  = WinW * 80 / 800;
@@ -1366,16 +1392,21 @@ static void RunOptions(bool& appQuit) {
             MT("Audio Driver", ox, y, 0x00C8A060); MT("SDL2 Audio",  vx, y, 0x00C0C0C0); y += lnH;
             MT("Video Driver", ox, y, 0x00C8A060); MT("OpenGL 3.3",  vx, y, 0x00C0C0C0); y += lnH;
 
-            // Resolution — cycle through presets (disabled in borderless mode)
+            // Resolution — cycle presets for windowed/fullscreen; fixed at desktop for borderless
             {
-                int ri = FindResIdx();
                 char resBuf[32];
-                wsprintf(resBuf, "%dx%d", kPresets[filtIdx[ri]].w, kPresets[filtIdx[ri]].h);
-                bool canChange = (OptDisplayMode != 2);
-                bool hot = canChange && gMI.x >= vx && gMI.x < vx+tvW && gMI.y >= y && gMI.y < y+lnH;
                 MT("Resolution", ox, y, 0x00C8A060);
-                MT(resBuf, vx, y, canChange ? (hot ? 0x00FFFF40 : 0x00C0C0C0) : 0x00606060);
-                if (hot && gMI.lClick) ApplyDisplay((ri + 1) % nFilt, OptDisplayMode);
+                if (OptDisplayMode == 2) {
+                    // Borderless always uses the desktop resolution; not user-selectable
+                    wsprintf(resBuf, "%dx%d", WinW, WinH);
+                    MT(resBuf, vx, y, 0x00606060);
+                } else {
+                    int ri = FindResIdx();
+                    wsprintf(resBuf, "%dx%d", kPresets[filtIdx[ri]].w, kPresets[filtIdx[ri]].h);
+                    bool hot = gMI.x >= vx && gMI.x < vx+tvW && gMI.y >= y && gMI.y < y+lnH;
+                    MT(resBuf, vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
+                    if (hot && gMI.lClick) ApplyDisplay((ri + 1) % nFilt, OptDisplayMode);
+                }
             }
             y += lnH;
 
@@ -1837,7 +1868,7 @@ static void RunCredits(bool& appQuit) {
 
 // ─── Top-level entry point ────────────────────────────────────────────────────
 
-bool RunMenus(bool& appQuit, bool skipToHunt) {
+bool RunMenus(bool& appQuit, bool skipToHunt, bool skipPlayerSelect) {
     SDL_SetRelativeMouseMode(SDL_FALSE);
     SDL_ShowCursor(SDL_ENABLE);
 
@@ -1856,7 +1887,7 @@ bool RunMenus(bool& appQuit, bool skipToHunt) {
         directToMainMenu = true;
     }
 
-    bool havePlayer = directToMainMenu;  // already have a player when returning from hunt
+    bool havePlayer = directToMainMenu || skipPlayerSelect;  // already have a player when returning from hunt or trophy
     while (!appQuit) {
         if (!havePlayer) {
             int slot = RunPlayerSelect(appQuit);
@@ -1887,7 +1918,14 @@ bool RunMenus(bool& appQuit, bool skipToHunt) {
                 }
                 break;
             }
-            case 1: RunTrophyRoom(appQuit); break;   // Trophy
+            case 1: {  // Trophy — launch TROPHY.MAP as a real level
+                // SOURCEPORT: trophy room is a live 3D level, not a static menu screen.
+                // TrophyMode is set by LoadResources when ProjectName contains "trophy".
+                strcpy(ProjectName, "HUNTDAT/AREAS/trophy");
+                SDL_SetRelativeMouseMode(SDL_TRUE);
+                SDL_ShowCursor(SDL_DISABLE);
+                return true;
+            }
             case 2: RunOptions(appQuit);    break;   // Options
             case 3: RunCredits(appQuit);    break;   // Credits
             case 4: {  // Quit

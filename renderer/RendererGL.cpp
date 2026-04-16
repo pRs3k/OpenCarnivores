@@ -37,8 +37,26 @@ out vec2 vTexCoord;
 out float vFog;
 
 void main() {
-    // Convert screen-space to clip-space using orthographic projection
-    gl_Position = uProjection * vec4(aPos, aDepth, 1.0);
+    vec4 pos_ndc = uProjection * vec4(aPos, aDepth, 1.0);
+
+    // SOURCEPORT: perspective-correct attribute interpolation.
+    // D3D6 TL vertices carry rhw = sz/16 (= 1/camera_z) which the rasterizer uses
+    // for perspective-correct UV/color interpolation.  With w_clip=1 (orthographic),
+    // GL interpolates all varyings linearly in screen space — as the camera rotates,
+    // vertex screen positions change while UVs stay fixed at TCMIN/TCMAX per vertex,
+    // causing the interpolated UV at every fragment to drift.  This is the "ground
+    // morphing and swimming" visible when standing still and looking around.
+    // Fix: set w_clip = 1/rhw = 16/sz so GL's rasterizer sees the real camera-space
+    // depth and applies perspective division automatically.  After perspective division
+    // NDC position = pos_ndc.xyz (unchanged), but varyings are now correct.
+    // Guard: HUD/sky/2D geometry uses sz=0 (aDepth=0) — keep w=1 for those.
+    if (aDepth > 0.0) {
+        float w = 16.0 / aDepth;   // = 1/rhw = -camera_z
+        gl_Position = vec4(pos_ndc.xyz * w, w);
+    } else {
+        gl_Position = pos_ndc;
+    }
+
     vColor = aColor;
     vTexCoord = aTexCoord;
     // Fog factor stored in specular alpha (255 = no fog, 0 = full fog)
@@ -65,7 +83,11 @@ void main() {
     vec4 texel = texture(uTexture, vTexCoord);
 
     // fproc2 (alpha-test pass): discard color-key pixels (RGB555 c=0 decoded as alpha=0).
-    if (uAlphaTest && texel.a < 0.5)
+    // SOURCEPORT: threshold 0.1 instead of 0.5 — game textures have binary alpha (0 or 1),
+    // so at full-res this makes no difference. At mip levels, averaging 0/1 pixels yields
+    // intermediate values; 0.5 would discard leaves with <50% coverage (foliage vanishes);
+    // 0.1 keeps them visible down to 10% coverage, eliminating the flicker/pop.
+    if (uAlphaTest && texel.a < 0.1)
         discard;
 
     vec4 color = texel * vColor;
@@ -331,7 +353,6 @@ void RendererGL::CreateBuffers() {
     glEnableVertexAttribArray(4);
     glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(RenderVertex),
                           (void*)offsetof(RenderVertex, tu));
-
     glBindVertexArray(0);
 }
 
@@ -371,6 +392,15 @@ void RendererGL::Shutdown() {
 void RendererGL::BeginFrame() {
     glUseProgram(m_shaderProgram);
 
+    // SOURCEPORT: Sync viewport and internal dims to WinW×WinH every frame.
+    // SetVideoMode() may update WinW/WinH to the actual drawable size after Init()
+    // (HiDPI, SDL scaling), so the viewport and DrawFullscreenRect quad must follow.
+    if (m_width != WinW || m_height != WinH) {
+        m_width  = WinW;
+        m_height = WinH;
+        glViewport(0, 0, WinW, WinH);
+    }
+
     // Rebuild projection every frame so it always matches the current WinW×WinH
     // game coordinate space (updated by SetVideoMode on every resize).
     float R = (float)WinW, B = (float)WinH;
@@ -408,10 +438,11 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glGenerateMipmap(GL_TEXTURE_2D);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
 
     return tex;
@@ -496,7 +527,10 @@ void RendererGL::UnlockAndDrawGeometry(int vertexCount, bool colorKey) {
     // SOURCEPORT: do NOT rebind texture here — d3dSetTexture / glBindTexture in
     // DrawTPlaneClip's texture-change block already set the correct texture.
 
-    glUniform1i(m_locAlphaTest, colorKey ? 1 : 0);
+    // SOURCEPORT: do NOT override uAlphaTest here — d3dStartBufferG()/d3dStartBufferGBMP()
+    // already set the correct alpha-test state via SetAlphaTest(true).  Overriding with
+    // colorKey=false would force uAlphaTest=0 → color.a=1.0 in the shader, making water
+    // (which uses vertex alpha for transparency) fully opaque.
     glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 
     glBindVertexArray(0);
@@ -648,10 +682,25 @@ void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
 
     extern HFONT fnt_Small;
 
+    // SOURCEPORT: Scale font proportionally to screen height so text stays readable at
+    // high resolutions (fnt_Small is 14px, designed for 600px reference height).
+    static HFONT s_scaledFont = NULL;
+    static int   s_scaledWinH = 0;
+    if (s_scaledWinH != WinH) {
+        if (s_scaledFont) { DeleteObject(s_scaledFont); s_scaledFont = NULL; }
+        int fh = std::max(14, 14 * WinH / 600);
+        int fw = std::max(5,   5 * WinH / 600);
+        s_scaledFont = CreateFontA(fh, fw, 0, 0, 100, 0, 0, 0,
+            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
+        s_scaledWinH = WinH;
+    }
+    HFONT useFont = s_scaledFont ? s_scaledFont : fnt_Small;
+
     // Create a temporary memory DC to measure and render the text
     HDC hdc = CreateCompatibleDC(NULL);
     if (!hdc) return;
-    HFONT hOldFont = (HFONT)SelectObject(hdc, fnt_Small);
+    HFONT hOldFont = (HFONT)SelectObject(hdc, useFont);
 
     // Measure text extent
     SIZE sz = {};
@@ -756,9 +805,9 @@ void RendererGL::FillRect(int x, int y, int w, int h, uint32_t argbColor) {
     float g = ((argbColor >>  8) & 0xFF) / 255.0f;
     float b = ((argbColor      ) & 0xFF) / 255.0f;
 
-    // Pack as BGRA for vertex color attrib (our shader reads GL_BGRA)
-    uint32_t vc = ((uint32_t)(a*255) << 24) | ((uint32_t)(b*255) << 16) |
-                  ((uint32_t)(g*255) <<  8) |  (uint32_t)(r*255);
+    // Store as ARGB in uint32; GL_BGRA attrib reads memory bytes [B,G,R,A] (LE) = correct
+    uint32_t vc = ((uint32_t)(a*255) << 24) | ((uint32_t)(r*255) << 16) |
+                  ((uint32_t)(g*255) <<  8) |  (uint32_t)(b*255);
 
     float x0 = (float)x, y0 = (float)y;
     float x1 = x0 + w,   y1 = y0 + h;
@@ -774,7 +823,9 @@ void RendererGL::FillRect(int x, int y, int w, int h, uint32_t argbColor) {
 
     bool prevDepth = m_zBufferEnabled;
     glDisable(GL_DEPTH_TEST);
-    glUniform1i(m_locAlphaTest, 0);
+    // SOURCEPORT: use alpha test = 1 so vColor.a drives blend transparency (white texture
+    // has texel.a=1.0, so the discard never fires — vertex alpha is used directly).
+    glUniform1i(m_locAlphaTest, 1);
     glUniform1i(m_locFogEnabled, 0);
 
     glEnable(GL_BLEND);
@@ -812,16 +863,18 @@ void RendererGL::DrawFullscreenRect(uint32_t argbColor) {
         v.tu = 0.0f; v.tv = 0.0f;
     };
     fillVert(quad[0], 0, 0);
-    fillVert(quad[1], (float)m_width, 0);
-    fillVert(quad[2], (float)m_width, (float)m_height);
+    fillVert(quad[1], (float)WinW, 0);
+    fillVert(quad[2], (float)WinW, (float)WinH);
     fillVert(quad[3], 0, 0);
-    fillVert(quad[4], (float)m_width, (float)m_height);
-    fillVert(quad[5], 0, (float)m_height);
+    fillVert(quad[4], (float)WinW, (float)WinH);
+    fillVert(quad[5], 0, (float)WinH);
 
     // Draw without depth test, with blending, no texture
     bool prevDepth = m_zBufferEnabled;
     glDisable(GL_DEPTH_TEST);
-    glUniform1i(m_locAlphaTest, 0);
+    // SOURCEPORT: uAlphaTest=1 so vColor.a drives blend transparency; white texture
+    // (texel.a=1.0) never triggers the discard, so vertex alpha passes through directly.
+    glUniform1i(m_locAlphaTest, 1);
     glUniform1i(m_locFogEnabled, 0);
 
     // Bind a 1x1 white texture so the shader just uses vertex color

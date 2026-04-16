@@ -156,8 +156,10 @@ void PreCashGroundModel()
 	for (x=-(ctViewR+3); x<(ctViewR+3); x++) {
   					
 	  int r = max((max(y,-y)), (max(x,-x)));
+#ifndef _opengl
 	  if ( r>ctViewR1+4 )
-	    if ( (x & 1) + (y & 1) > 0) continue; 	  
+	    if ( (x & 1) + (y & 1) > 0) continue;
+#endif
 
 	  int xx = (CCX + x) & 1023;
 	  int yy = (CCY + y) & 1023;      
@@ -184,8 +186,8 @@ void PreCashGroundModel()
           rv = RotateVector(rv);
 		  VMap2[128+y][128+x].v = rv;
 	      
-		  if (fabs(rv.x) > -rv.z + 1524) {		      
-		   VMap2[128+y][128+x].DFlags = 128;		  
+		  if (fabs(rv.x * FOVK) > -rv.z + 1524) {
+		   VMap2[128+y][128+x].DFlags = 128;
 		  } else {
 			NeedWater = TRUE;
 			VMap2[128+y][128+x].Light = 168-(int)(wdelta*24);
@@ -214,8 +216,8 @@ void PreCashGroundModel()
 			if (rv.z>-256.0) VMap2[128+y][128+x].DFlags=128; else {
 #ifdef _soft
 	          VMap2[128+y][128+x].scrx = VideoCX - (int)(rv.x / rv.z * CameraW);
-	          VMap2[128+y][128+x].scry = VideoCY + (int)(rv.y / rv.z * CameraH);			  
-			  			  
+	          VMap2[128+y][128+x].scry = VideoCY + (int)(rv.y / rv.z * CameraH);
+
 			  int DF = 0;
               if (VMap2[128+y][128+x].scrx < 0)     DF+=1;
 	          if (VMap2[128+y][128+x].scrx > WinEX) DF+=2;
@@ -223,8 +225,8 @@ void PreCashGroundModel()
 	          if (VMap2[128+y][128+x].scry > WinEY) DF+=8;
 #else
 			  VMap2[128+y][128+x].scrx = VideoCX16 - (int)(rv.x / rv.z * CameraW16);
-	          VMap2[128+y][128+x].scry = VideoCY16 + (int)(rv.y / rv.z * CameraH16);			  
-			  			  
+	          VMap2[128+y][128+x].scry = VideoCY16 + (int)(rv.y / rv.z * CameraH16);
+
 			  int DF = 0;
               if (VMap2[128+y][128+x].scrx < 0)        DF+=1;
 	          if (VMap2[128+y][128+x].scrx > WinEX*16) DF+=2;
@@ -233,14 +235,18 @@ void PreCashGroundModel()
 #endif
 			  VMap2[128+y][128+x].DFlags = DF;
 
-			} 	              
+			}
 		  }			  
 	  }
 
 
 
 #ifdef _soft
-#else	  
+#elif defined(_d3d)
+	  // SOURCEPORT: LOD height morphing kept only for the D3D6 path.
+	  // In D3D6/3DFX, distance fog concealed the ctViewR1 LOD boundary so the
+	  // continuous per-vertex height animation was invisible.
+	  if (!TrophyMode)
 	  if (r>ctViewR1-20 && r<ctViewR1+8)
 		 if ( (x & 1) + (y & 1) > 0)
 	  {
@@ -256,6 +262,9 @@ void PreCashGroundModel()
 
 	   v[0].y = ((v[0].y+2) * (1-k) + (y1+8) * k);
 	  }
+#else
+	  // SOURCEPORT: GL path — LOD is fully disabled (ProcessMap2 never called),
+	  // so no T-junction snapping is needed. Every vertex uses its true HMap height.
 #endif
 
       rv = RotateVector(v[0]);
@@ -270,9 +279,6 @@ void PreCashGroundModel()
 
   	  if (HARD3D)
 #ifndef _opengl
-		// SOURCEPORT: in GL path, VMap[].Fog stays 0 (initialized).
-		// Per-vertex terrain fog is a D3D specular-fog feature; in GL we apply
-		// scene fog globally via SetFogColor/FOGENABLE, not per-vertex here.
 		if (  ((FMap[yy][xx] & fmWater)==0) || UNDERWATER)
 		  VMap[128+y][128+x].Fog = CalcFogLevel(v[0]); else
 		  VMap[128+y][128+x].Fog = 0;
@@ -317,7 +323,7 @@ void PreCashGroundModel()
 
 	  
 
-	  if (v[0].z>-256.0) DF+=128; else { 	   		  	                
+	  if (v[0].z>-256.0) DF+=128; else {
 
 #ifdef _soft
 	   VMap[128+y][128+x].scrx = VideoCX - (int)(v[0].x / v[0].z * CameraW);
@@ -336,7 +342,7 @@ void PreCashGroundModel()
 	   if (VMap[128+y][128+x].scry < 0)        DF+=4;
 	   if (VMap[128+y][128+x].scry > WinEY*16) DF+=8;
 #endif
-       
+
 	  }
 	   
       VMap[128+y][128+x].DFlags = DF;
@@ -1420,8 +1426,8 @@ SKIPYMOVE:
   if (PlayerY<h+64)
     if (d<0 && stepdd >= 0) 
 	if (ONWATER) {
-	   AddWCircle(CameraX, CameraZ, 1.2);	   
-	   AddVoicev(fxStepW[(RealTime % 3)].length, 
+	   AddWCircle(CameraX, CameraZ, 1.2f);
+	   AddVoicev(fxStepW[(RealTime % 3)].length,
 	             fxStepW[(RealTime % 3)].lpData, 64+(int)(VSpeed*30.f));
 	   }
 	 else
@@ -1490,9 +1496,10 @@ SKIPYMOVE:
               else if (UnderWaterT<512) UnderWaterT += TimeDt; else UnderWaterT = 512;
 
   if (UNDERWATER) {
-    CameraW = (float)VideoCX*(1.25f + (1.f+(float)cos(RealTime/180.f)) / 30  + (1.f - (float)sin(UnderWaterT/512.f*pi/2)) / 1.5f  );
-    CameraH = (float)VideoCX*(1.25f + (1.f+(float)sin(RealTime/180.f)) / 30  - (1.f - (float)sin(UnderWaterT/512.f*pi/2)) / 16.f  );
-	CameraH *=(WinH*1.3333f / WinW);
+    // SOURCEPORT: Hor+ — apply aspect factor to both axes so underwater wobble is aspect-correct
+    float _uwAspect = WinH * 1.3333f / WinW;
+    CameraW = (float)VideoCX*(1.25f + (1.f+(float)cos(RealTime/180.f)) / 30  + (1.f - (float)sin(UnderWaterT/512.f*pi/2)) / 1.5f  ) * _uwAspect;
+    CameraH = (float)VideoCX*(1.25f + (1.f+(float)sin(RealTime/180.f)) / 30  - (1.f - (float)sin(UnderWaterT/512.f*pi/2)) / 16.f  ) * _uwAspect;
     
     CameraAlpha+=(float)cos(RealTime/360.f) / 120;
     CameraBeta +=(float)sin(RealTime/360.f) / 100;    
@@ -1501,8 +1508,9 @@ SKIPYMOVE:
 	FogsList[127].YBegin = (float)WaterList[w].wlevel;
 	FogsList[127].fogRGB = WaterList[w].fogRGB;
   } else {
-   CameraW = (float)VideoCX*1.25f;
-   CameraH = CameraW * (WinH*1.3333f / WinW);
+   // SOURCEPORT: Hor+ — horizontal matches vertical zoom factor; both scale with aspect ratio
+   CameraH = (float)VideoCX * 1.25f * (WinH * 1.3333f / WinW);
+   CameraW = CameraH;
   }
   
   
@@ -1775,6 +1783,10 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 // SDL_main.h redirects WinMain → main on Windows.
 int main(int argc, char* argv[])
 {
+    // SOURCEPORT: must be set before SDL_Init so SDL uses physical pixels on DPI-scaled
+    // displays (e.g. 150% scaling: 2560x1440 physical vs 1707x960 logical).
+    SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         MessageBoxA(NULL, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
         return 1;
@@ -1892,7 +1904,7 @@ int main(int argc, char* argv[])
             while (ShowCursor(TRUE) < 0) {}
             PrintLog("Entering RunMenus...\n");
             bool appQuit = false;
-            bool huntReady = RunMenus(appQuit, returnToHunt);
+            bool huntReady = RunMenus(appQuit, returnToHunt, TrophyMode);
             PrintLog(appQuit ? "RunMenus: appQuit\n" : (huntReady ? "RunMenus: huntReady\n" : "RunMenus: cancelled\n"));
             if (appQuit || !huntReady) {
                 appRunning = false;
@@ -1988,9 +2000,10 @@ int main(int argc, char* argv[])
             }
         }
 
-        // After hunt ends: return to hunt setup screen directly
+        // After hunt ends: go back to hunt setup (MENU2), unless this was the trophy
+        // room — in that case return to the main menu (MENUM) directly.
         needMenus    = true;
-        returnToHunt = true;
+        returnToHunt = !TrophyMode;
     }
 
     AudioStop();

@@ -518,7 +518,6 @@ replace1:
 
 void MoveCharacter(TCharacter *cptr, float dx, float dz, BOOL wc, BOOL mc)
 {
-	return;
    Vector3d p = cptr->pos;
 
    if (CheckPlaceCollision2(p, wc)) {
