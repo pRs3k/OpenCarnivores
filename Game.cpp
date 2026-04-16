@@ -1763,7 +1763,7 @@ void SaveTrophy()
 // Uses Win32 WriteFile/ReadFile to match the rest of Game.cpp (no stdio dependency).
 // Format: 8 ints written sequentially with a magic header for version safety.
 static const DWORD kDisplayMagic = 0x44495350; // 'DISP'
-static const DWORD kDisplayVer   = 1;
+static const DWORD kDisplayVer   = 2; // bumped: v1 saved pre-DPI-awareness resolutions
 
 void SaveDisplayConfig()
 {
@@ -1805,6 +1805,11 @@ void LoadDisplayConfig()
     ReadFile(h, &fg, 4, &l, NULL);
     SHADOWS3D = sh; FOGENABLE = fg;
     CloseHandle(h);
+    // SOURCEPORT: validate loaded values — clamp mode to known range, and reject any
+    // saved resolution that is implausibly small (could be a DPI-scaled logical value
+    // or a corrupt write). Reset to 0 (SetupRes preset) so the game picks a safe size.
+    if (OptDisplayMode < 0 || OptDisplayMode > 2) OptDisplayMode = 0;
+    if (OptResW < 640 || OptResH < 480) { OptResW = 0; OptResH = 0; }
     PrintLog("Display config loaded.\n");
 }
 

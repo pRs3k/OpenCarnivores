@@ -180,11 +180,13 @@ void SetVideoMode(int W, int H)
    VideoCX = WinW / 2;
    VideoCY = WinH / 2;
 
-   // SOURCEPORT: Horizontal FOV is fixed; vertical FOV scales with actual aspect ratio.
-   // Original formula used 1.3333 (4/3) which was correct for 4:3 and still works for
-   // widescreen since WinH/WinW naturally yields the correct vertical FOV.
-   CameraW = (float)VideoCX * 1.25f;
-   CameraH = CameraW * ((float)WinH / (float)WinW) * (4.0f / 3.0f);
+   // SOURCEPORT: Hor+ widescreen FOV.
+   // Keep the 4:3 vertical FOV (CameraH/VideoCY = 5/3) and let horizontal expand
+   // with the actual aspect ratio: CameraW = CameraH = VideoCX*1.25*(WinH*4/3/WinW).
+   // At 4:3 this equals the original 400/400; at 16:9 it widens the horizontal FOV
+   // (93.6° vs 77.3°) while holding the vertical FOV constant at 61°.
+   CameraH = (float)VideoCX * 1.25f * ((float)WinH * (4.0f / 3.0f) / (float)WinW);
+   CameraW = CameraH;
 
 #ifdef _d3d
    SetWindowPos(hwndMain, HWND_TOP, 0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), SWP_SHOWWINDOW);

@@ -616,7 +616,7 @@ void ProcessSyncro();
 void AddShipTask(int);
 void LoadTrophy();
 void ReleaseResources();
-bool RunMenus(bool& appQuit, bool skipToHunt = false);
+bool RunMenus(bool& appQuit, bool skipToHunt = false, bool skipPlayerSelect = false);
 //void LoadPlayersInfo();
 void SaveTrophy();
 void SaveDisplayConfig(); // SOURCEPORT: persist display/graphics settings to display.cfg
