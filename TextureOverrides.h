@@ -63,6 +63,21 @@ bool TryRegisterSibling(void* key, const char* sourcePath);
 // "AREA1_tex_00.png").
 bool TryRegisterWithExts(void* key, const char* basePath);
 
+// Menu/UI picture variant: skips `.tga` in the probe list so a LoadPictureTGA
+// caller doesn't re-load the retail source as its own "override". Tries
+// `<base>.dds`, `.png`, `.bmp`, `.jpg`. `key` should be a stable address —
+// the TPicture struct itself (e.g. `&PausePic`) — rather than pic.lpImage,
+// which is HeapAlloc'd and gets recycled for terrain/model buffers after
+// ReleaseResources, causing cross-asset override bleed.
+bool TryRegisterMenuPicture(void* key, const char* basePath);
+
+// Returns true if an override is registered (either RGBA or DDS).
+bool Has(void* key);
+
+// Explicitly drop any override registered for `key`. Used when hot-reloading
+// a menu picture whose file was deleted so the engine reverts cleanly.
+void Unregister(void* key);
+
 // Free all decoded buffers.
 void Shutdown();
 

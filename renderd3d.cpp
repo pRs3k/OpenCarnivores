@@ -2338,14 +2338,22 @@ void FXPutBitMap(int x0, int y0, int w, int h, int smw, LPVOID lpData)
 
 void DrawPicture(int x, int y, TPicture &pic)
 {
+#ifdef _opengl
+  // SOURCEPORT: pass &pic as the override-registry key. pic.lpImage is
+  // HeapAlloc'd and gets recycled for terrain buffers after ReleaseResources,
+  // so keying by lpImage caused menu overrides to bleed onto terrain. &pic
+  // is a stable global address.
+  if (g_glRenderer) g_glRenderer->DrawBitmap(x, y, pic.W, pic.H, pic.W, pic.lpImage, true, 0, &pic);
+#else
   FXPutBitMap(x, y, pic.W, pic.H, pic.W, pic.lpImage);
+#endif
 }
 
 // SOURCEPORT: resolution-scaled picture draw — stretches pic to dw×dh on screen
 void DrawPictureScaled(int x, int y, int dw, int dh, TPicture &pic)
 {
 #ifdef _opengl
-  if (g_glRenderer) g_glRenderer->DrawBitmap(x, y, dw, dh, pic.W, pic.lpImage, true, pic.H);
+  if (g_glRenderer) g_glRenderer->DrawBitmap(x, y, dw, dh, pic.W, pic.lpImage, true, pic.H, &pic);
 #else
   DrawPicture(x, y, pic);
 #endif

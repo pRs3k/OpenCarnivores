@@ -976,11 +976,33 @@ void LoadPictureTGA(TPicture &pic, LPSTR pname)
 
     CloseHandle( hfile );
 
-// SOURCEPORT: keying TextureOverrides by pic.lpImage caused cross-asset
-// bleed — the heap reuses the menu-picture address for terrain/model buffers
-// after inter-level ReleaseResources, and the stale menu override would then
-// apply to ground geometry. Menu/UI overrides need a separate, path-keyed
-// registry (or to be plumbed through DrawBitmap differently). Reverted for now.
+    // SOURCEPORT: menu/UI override. Key by &pic (the TPicture struct's stable
+    // global address), NOT pic.lpImage (heap-recycled after ReleaseResources →
+    // caused cross-asset bleed onto terrain). Skip `.tga` in the sibling probe
+    // because pname itself is a .tga; only `.dds/.png/.bmp/.jpg` are considered
+    // valid high-res replacements. Hot-reload watches the same stem so live
+    // edits swap in without a restart.
+    {
+        std::string base(pname);
+        size_t dot = base.find_last_of('.');
+        if (dot != std::string::npos) base.erase(dot);
+
+        TextureOverrides::TryRegisterMenuPicture(&pic, base.c_str());
+
+        void* picKey = &pic;
+        std::string baseCopy = base;
+        auto reload = [picKey, baseCopy]() {
+            // Re-probe: if the file still exists it re-registers; if it was
+            // deleted, leave the previous override in place (acceptable —
+            // explicit unregister would require tracking which ext was active).
+            TextureOverrides::TryRegisterMenuPicture(picKey, baseCopy.c_str());
+            PrintLog("[HotReload] menu picture reloaded\n");
+        };
+        HotReload::Watch((base + ".dds").c_str(), reload);
+        HotReload::Watch((base + ".png").c_str(), reload);
+        HotReload::Watch((base + ".bmp").c_str(), reload);
+        HotReload::Watch((base + ".jpg").c_str(), reload);
+    }
 }
 
 

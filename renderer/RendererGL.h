@@ -51,7 +51,7 @@ public:
     // engine's fog/alpha/brightness/PBR state is preserved across the swap.
     void BindCustomMaterial(const void* customMaterial);  // CustomMaterials::Material*
 
-    void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0) override;
+    void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0, const void* overrideKey = nullptr) override;
     void DrawText(int x, int y, const char* text, uint32_t color) override;
     int  MeasureText(const char* text);     // SOURCEPORT: width of text as rendered by DrawText
     void DrawTextMed(int x, int y, const char* text, uint32_t color); // SOURCEPORT: fnt_Midd style (weight=550, 16px/7px at 600p)

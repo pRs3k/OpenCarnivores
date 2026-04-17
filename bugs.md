@@ -15,3 +15,5 @@ UI / Text / Menus
     The text shown when leaving the world ("Preparing for evacuation...") is not aligned properly
     Make sure the slider values make sense in the OPT menu (like what is the range of possible numbers for "Density" and what can the player set it to, etc.)
     Look at the improvements to the game that Carnivores 2+ did and make a list of fixes they implemented that could improve the engine, but without adding new functionality to the game. https://www.moddb.com/games/carnivores-2/downloads/carnivores-21
+
+    make the sun larger and more blinding
