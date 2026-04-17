@@ -263,7 +263,11 @@ float CorrectedAlpha(float a, float b)
 
 void ThinkY_Beta_Gamma(TCharacter *cptr, float blook, float glook, float blim, float glim)
 {
-    cptr->pos.y = GetLandH(cptr->pos.x, cptr->pos.z);
+    {
+        float lh = GetLandH(cptr->pos.x, cptr->pos.z);
+        float wh = GetLandUpH(cptr->pos.x, cptr->pos.z);
+        cptr->pos.y = (wh > lh) ? wh : lh;
+    }
 
     //=== beta ===//
     float hlook  = GetLandH(cptr->pos.x + cptr->lookx * blook, cptr->pos.z + cptr->lookz * blook);
@@ -541,10 +545,8 @@ void MoveCharacter(TCharacter *cptr, float dx, float dz, BOOL wc, BOOL mc)
    p = cptr->pos;
 
    p.x+=dx/4;
-   //if (!CheckPlaceCollision2(p)) cptr->pos = p; 	      
    p.z+=dz/4;
-   //if (!CheckPlaceCollision2(p)) cptr->pos = p; 	   
-   cptr->pos = p;      
+   if (!CheckPlaceCollision2(p, wc)) cptr->pos = p;
 }
 
 
@@ -1271,7 +1273,7 @@ TBEGIN:
    
    if (GetLandUpH(cptr->pos.x, cptr->pos.z) - GetLandH(cptr->pos.x, cptr->pos.z) > 180 * cptr->scale)
 	   cptr->StateF |= csONWATER; else
-	   cptr->StateF &= (!csONWATER);
+	   cptr->StateF &= ~csONWATER;
 
    if (cptr->Phase == RAP_EAT) goto NOTHINK;
    
@@ -1528,7 +1530,7 @@ TBEGIN:
    
    if (GetLandUpH(cptr->pos.x, cptr->pos.z) - GetLandH(cptr->pos.x, cptr->pos.z) > 140 * cptr->scale)
 	   cptr->StateF |= csONWATER; else
-	   cptr->StateF &= (!csONWATER);
+	   cptr->StateF &= ~csONWATER;
 
    if (cptr->Phase == VEL_EAT) goto NOTHINK;
    
@@ -1785,7 +1787,7 @@ TBEGIN:
    
    if (GetLandUpH(cptr->pos.x, cptr->pos.z) - GetLandH(cptr->pos.x, cptr->pos.z) > 140 * cptr->scale)
 	   cptr->StateF |= csONWATER; else
-	   cptr->StateF &= (!csONWATER);
+	   cptr->StateF &= ~csONWATER;
 
    if (cptr->Phase == SPN_EAT) goto NOTHINK;
    
@@ -2053,7 +2055,7 @@ TBEGIN:
    
    if (GetLandUpH(cptr->pos.x, cptr->pos.z) - GetLandH(cptr->pos.x, cptr->pos.z) > 140 * cptr->scale)
 	   cptr->StateF |= csONWATER; else
-	   cptr->StateF &= (!csONWATER);
+	   cptr->StateF &= ~csONWATER;
 
    if (cptr->Phase == CER_EAT) goto NOTHINK;
    
@@ -2292,7 +2294,7 @@ TBEGIN:
 
    if (GetLandUpH(cptr->pos.x, cptr->pos.z) - GetLandH(cptr->pos.x, cptr->pos.z) > 560 * cptr->scale)
 	   cptr->StateF |= csONWATER; else
-	   cptr->StateF &= (!csONWATER);
+	   cptr->StateF &= ~csONWATER;
 
    if (cptr->Phase == REX_EAT) goto NOTHINK;
    

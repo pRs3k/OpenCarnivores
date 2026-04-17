@@ -109,10 +109,14 @@ renderer/
 | Fullscreen 2560×1440 rendered in a sub-region (black bars on sides) | After `SDL_SetWindowFullscreen`, the OS display-mode change is async. `PollMenuEvents` processed a stale `SIZE_CHANGED` event with the pre-change drawable size and called `SetVideoMode` with the wrong dimensions before the mode settled. | Added `SDL_PumpEvents()` + `SDL_GL_GetDrawableSize` in `ApplyDisplay` immediately after entering exclusive fullscreen so `SetVideoMode` always receives the settled size. |
 | Game starts in broken borderless resolution on first launch (cursor misaligned, scene crushed) | `display.cfg` saved with `kDisplayVer=1` stored the pre-DPI-fix logical resolution (e.g. 1707×960); on re-launch with DPI awareness active the window was the wrong physical size. | Bumped `kDisplayVer` to 2 to invalidate old configs; added post-load validation that clamps `OptDisplayMode` to 0–2 and resets sub-640 saved resolutions to 0 (triggers safe `SetupRes` preset). |
 | Dinosaurs run in place (ground AI only; flyers unaffected) | `MoveCharacter()` had a stray `return;` as its first statement — a debug stub that was never removed, preventing all position updates. Flying dinosaurs (`AI_DIMOR`/`AI_PTERA`) use a separate movement path that bypasses `MoveCharacter`. | Removed the `return;` stub from `Characters.cpp`. |
-| Texture shimmer / alpha flicker on foliage at distance | No mipmaps — `GL_TEXTURE_MIN_FILTER` was `GL_LINEAR` for all textures, causing GPU to sample a random full-res texel from a tiny triangle → shimmer on opaque surfaces, binary 0/1 flicker on alpha-keyed foliage. Terrain excluded: its manual DataA/DataB LOD swap + diagonal triangulation produce a pinwheel artifact with hardware mipmaps. | `glGenerateMipmap` + `GL_LINEAR_MIPMAP_LINEAR` added for transparent textures in `gl_UploadTexture16` (keyed on `hasTransparency`) and in `RendererGL::UploadTexture16`. Alpha discard threshold lowered `0.5 → 0.1` so mip-averaged leaf coverage (e.g. 30%) still passes instead of being discarded. |
+| Texture shimmer / alpha flicker on foliage at distance | No mipmaps — `GL_TEXTURE_MIN_FILTER` was `GL_LINEAR` for all textures, causing GPU to sample a random full-res texel from a tiny triangle → shimmer on opaque surfaces, binary 0/1 flicker on alpha-keyed foliage. Terrain excluded: its manual DataA/DataB LOD swap + diagonal triangulation produce a pinwheel artifact with hardware mipmaps. | `glGenerateMipmap` + `GL_LINEAR_MIPMAP_LINEAR` added for transparent textures in `gl_UploadTexture16` (keyed on `hasTransparency`) and in `RendererGL::UploadTexture16`. Alpha discard threshold lowered `0.5 → 0.1` so mip-averaged leaf coverage (e.g. 30%) still passes instead of being discarded. "Upload twice" trick for foliage: upload with transparent pixels filled to average opaque colour → `glGenerateMipmap` → re-upload original at level 0. Mip levels 1+ average correctly without darkening; level 0 retains original black transparent pixels for close-up. |
+| Terrain texture pop at ~2560 units (DataA→DataB switch) | Original `ProcessMap`/`ProcessMap2` selected 128×128 `DataA` vs 64×64 `DataB` based on `zs` distance threshold; hard pop visible without fog. | Added `#ifdef _opengl` guard to always use `DataA`; hardware trilinear mipmapping handles LOD smoothly. |
+| Sun too large / white box / white ring / solid white disc | (1) No resolution scaling: sun model sized for `CameraW=400` (640×480); at 2560×1440 `CameraW=1200` makes sun 3× bigger. (2) `fproc1` forced `color.a=1.0` → additive at 100% intensity → rays washed out. (3) Filled transparent pixels in mip levels 1+ bled white in additive mode → white ring at disc edge. | (1) `d *= (CameraW/400.f) * 1.15f` in `RenderSun` normalises angular size across resolutions. (2) Changed `d3dFlushBuffer(fproc1,0)` → `d3dFlushBuffer(0,fproc1)` so vertex alpha (~0.78) governs additive brightness. (3) Disable mip sampling during sun draw: bind texture, set `GL_TEXTURE_MIN_FILTER=GL_LINEAR`, draw, restore `GL_LINEAR_MIPMAP_LINEAR`. |
 | Tree / bush appearance changes completely at certain distances | `_RenderObject` switched from the 3D model to a flat pre-rendered BMP billboard sprite at `ctViewRM*256 = 6144` units — the billboard looks completely different from the 3D geometry. Original masked with fog; without fog the hard switch is jarring. | Added `#ifdef _opengl zs = 0; #endif` in `_RenderObject` to force the 3D-model path for all distances in GL. Modern GPU handles it trivially. |
 | Software mipmap (`lpTexture2`) wiped out most leaf pixels | `CreateMipMapMT`/`CreateMipMapMT2` early-exited with output=0 whenever the top-left pixel of a 2×2 block was transparent — even if the other three pixels were solid leaf. Result: any leaf at the corner of a 2×2 block was zeroed in `lpTexture2`, making the distance-LOD texture look completely bare. | Changed both functions: only output 0 when ALL four source pixels are transparent; otherwise borrow a non-zero neighbour before averaging. |
 | Ground terrain pops height as camera moves (LOD boundary) | `RenderGround` switches between `ProcessMap` (full-detail 1×1 tiles, inner ring) and `ProcessMap2` (coarse 2×2 tiles, outer ring) at `ctViewR1=28`. As the camera moves, tiles cross this boundary and the coarser triangulation interpolates different heights than the fine mesh, causing visible height jumps. T-junction snapping helped edges but couldn't fix the interior difference. | In GL path: `ProcessMap2` outer loop skipped entirely; `ProcessMap` loop extended to start from `ctViewR` so all tiles at all distances use the full-detail mesh. Odd-vertex skip and T-junction snapping also disabled for GL (no longer needed, would corrupt heights). |
+| Player can multi-jump by holding jump button | `kfJump` was set every frame the key was held, so `YSpeed == 0 && !SWIM` could pass again mid-air on the frame of landing while key still held | Gate `kfJump` on rising edge only: `if (!(\_KeyFlags & kfJump))` — same pattern already used for `kfCall` |
+| Binoculars expose raw scene on widescreen sides | `BINOCUL.3DF` model was designed for 4:3; Hor+ widescreen leaves extra horizontal area uncovered | After rendering the binocular model, fill side bars with `FillRect` black: width = `(WinW − WinH×4/3) / 2` each side. TODO: replace black bars with a native widescreen binocular graphic. |
 
 ## Performance Notes
 
@@ -128,20 +132,105 @@ Observed: 30–50fps drops at 2560×1440 fullscreen after Phase 3/4 fixes. Root 
 
 Key constraints: re-enabling `ProcessMap2` consistently causes texture seams. The terrain full-detail pass (`ProcessMap` for all rings) and all-3D objects are the two main regressions in triangle/draw-call count versus the original D3D path.
 
-## Phase 5 — Modern Asset Pipeline (FUTURE)
+## Phase 5 — Audio (COMPLETE)
 
-- Load PNG/TGA/DDS textures with mipmapping
+### Architecture
+```
+Audio_SDL.cpp   — SDL2 software mixer (22050 Hz stereo 16-bit, 16 one-shot channels + 2 ambient slots)
+Audio_DLL.cpp   — Thin wrapper; replaces original runtime DLL dispatch (a_soft.dll / a_ds3d.dll / etc.)
+```
+
+### Key implementation notes
+- `SDL_INIT_AUDIO` added to `SDL_Init` in Hunt2.cpp
+- `InitAudioSystem` ignores the legacy `driver` index (was DLL selector); only `g_noSnd` (set by `-nosnd`) disables audio — old save files with `OptSound=-1` no longer silence the game
+- `ReleaseResources()` calls `AudioStop()` before freeing `Ambient[].sfx.lpData` and `RandSound[].lpData` to prevent use-after-free in the SDL audio callback thread
+- Menu ambients: `fxMenuAmb/Go/Mov` loaded at startup; `MenuStartAmb()` in Menu.cpp starts MENUAMB on MENUM/MENU2/OPT screens; `gMenuAmbActive` guard prevents audible loop restarts on sub-screen transitions; `gMenuAmbActive` reset at `RunMenus()` entry so ambient restarts correctly after returning from a hunt
+- `CompositeMenu()` plays MENUMOV on hover-enter and MENUGO on map-button click
+- Ship hum (`ShipModel.SoundFX[0]`) set as ambient in `RunMenus()` for the MENUR (player select) screen; MENUAMB crossfades in when the player reaches MENUM
+
+### Bugs fixed
+| Bug | Cause | Fix |
+|---|---|---|
+| No audio on launch | `OptSound=-1` saved in trophy file from previous `-nosnd` run; `InitAudioSystem` used it as disable flag | `InitAudioSystem` now ignores `driver` param; only explicit `-nosnd` flag (via `Audio_SetNoSnd()`) disables audio |
+| Crash clicking menus | `ReleaseResources()` freed `Ambient[].sfx.lpData` while SDL audio callback still held pointer | Call `AudioStop()` at start of `ReleaseResources()` |
+| MENUAMB never audible | `AudioCB` ambient loop skipped fade logic when `volume==0` (initial state), so volume never incremented | Move fade step before the mix; early-out only after fade when volume is still 0 |
+
+## Phase 6 — Modern Asset Pipeline
+
+### Implemented and verified
+
+**32-bit texture overrides (PNG/TGA/BMP/JPEG)** — `TextureOverrides.cpp`/`.h`, decoded via stb_image (`deps/stb/stb_image.h`).
+
+Architecture:
+- Registry keyed by the CPU pointer of the original RGB555 buffer → decoded RGBA8 + (w,h).
+- Renderer upload paths (`gl_UploadTexture16` → shared `gl_UploadRGBA` in renderd3d.cpp; `RendererGL::SetTexture` in RendererGL.cpp) check the registry before decoding the 16-bit data. On hit, the 32-bit override is uploaded at any resolution with full 8-bit alpha and hardware-generated mipmaps; on miss, existing 16-bit path runs unchanged.
+- Shared `gl_UploadRGBA` preserves the foliage-mip-fix (fill transparent pixels with avg opaque color for levels 1..N, restore original at level 0).
+- Loaders call `TextureOverrides::TryRegisterSibling(ptr, filePath)` or `TryRegisterWithExts(ptr, basePath)` immediately after loading the 16-bit data. Tries `.png`, `.tga`, `.bmp`, `.jpg` in order.
+
+Override file naming convention:
+
+| Asset type | Override path |
+|---|---|
+| Standalone `.3DF` (sun, moon, compass, binoculars) | `<path>.png` sibling (e.g. `HUNTDAT/BINOCUL.png`) |
+| Character `.CAR` (dinos, weapons, wind, ship) | `<path>.png` sibling (e.g. `HUNTDAT/TREX.png`) |
+| Terrain textures (in `.RSC`) | `<ProjectName>_tex_NN.png` (e.g. `AREA1_tex_00.png`) |
+| Object 3D models (in `.RSC`) | `<ProjectName>_obj_NN.png` |
+| Object BMP billboards (in `.RSC`) | `<ProjectName>_obj_NN_bmp.png` |
+| Sky dome | `<ProjectName>_sky.png` |
+
+NN is zero-padded 2-digit index matching the RSC load order. Zero-impact when no overrides are present — rendering is byte-identical to the 16-bit-only path. Game .CAR/.3DF/.RSC files are never modified.
+
+Key implementation notes:
+- stb_image with `req_comp=4` returns `R0 G0 B0 A0 …` — as little-endian uint32 that's `0xAABBGGRR`, matching `gl_UploadTexture16`'s output exactly, so a straight `memcpy` into the registry buffer works.
+- GL path only uses terrain `DataA` (all-`DataA` fix from Phase 4), so one override per terrain texture is sufficient — `DataB/C/D` never bind in GL.
+- Registry takes ownership of RGBA buffers; `TextureOverrides::Shutdown()` frees all. Re-registration for the same key deletes the previous buffer.
+
+### Remaining for this phase (FUTURE)
+
+- DDS texture loading (BCn compressed formats — important for VRAM footprint with 4K textures)
 - Load standard model formats (glTF, OBJ) alongside .CAR
 - Normal map support
 - PBR material system
+- Shader-based material system (JSON/TOML material definitions) so modders can write custom shaders without touching C++
+- Virtual filesystem: wrap scattered path lookups in a VFS that can mount zips/folders with priority, enabling mod packs without overwriting game files
+- Hot-reload for textures, shaders, and `_RES.txt` on file change
+- Parameterize map size constants (`mapR`/`mapMX`) to allow larger maps
+- Data-driven dinos/weapons: move hardcoded stats out of `Characters.cpp` / `Game.cpp` into editable TOML/JSON
+- Menu/UI picture overrides — `LoadPictureTGA` path is separate from the 16-bit pipeline and doesn't use `TextureOverrides` yet
 
-## Phase 6 — Gameplay and Engine Improvements (FUTURE)
+## Phase 7 — Gameplay and Engine Improvements (FUTURE)
 
 - Modern input handling (raw input, configurable bindings)
 - Improved AI (behavior trees, NavMesh pathfinding)
 - Physics integration (ragdoll, foliage interaction)
-- Audio modernization (OpenAL or SDL_mixer)
+- ~~Audio modernization (OpenAL or SDL_mixer)~~ DONE — migrated to OpenAL Soft (`Audio_OpenAL.cpp`)
 - Support for Virtual Reality
+- Formalize the renderer abstraction: move all `d3d*` functions behind the `Renderer` interface entirely, kill `renderd3d.cpp` glue so Vulkan / Metal / WebGPU backends become drop-in
+- Decouple frame rate from simulation: split into fixed-step sim + interpolated render for smooth 90/120 Hz VR
+- Embed Lua or AngelScript with bindings for `Character` struct + event hooks (OnDamage, OnSpawn, OnFire) to open modding to non-C++ devs
+
+### VR plumbing (requires HMD pipeline in place first)
+
+- Stereo rendering hook: render the scene twice per frame with per-eye view matrices; thread an `Eye` parameter through `RenderHunt` (currently assumes single viewpoint)
+- OpenXR session: open an XR session, get headset pose + per-eye projection matrices + eye swapchain textures, submit rendered eye textures back to the runtime for lens-distortion composite
+- SDL3 or OpenXR input abstraction: replace `_KeyFlags` bitfield with an action-binding layer so VR controllers, gamepads, and rebindable keyboards all route through it
+- Head-tracking as camera source: abstract `CameraAlpha/Beta` behind a `CameraController` interface so OpenXR HMD pose can drive it
+- 6DoF locomotion + snap turn options for VR comfort
+- World-space UI: `Interface.cpp` draws to 2D screen coords — needs a canvas layer that can render to a quad in 3D for VR
+
+### Audio (building on OpenAL Soft)
+
+- EFX reverb zones: wire per-area reverb presets using `alGenEffects` (ready-made presets in `efx-presets.h` e.g. `EFX_REVERB_PRESET_FOREST`)
+- HRTF toggle: `ALC_HRTF_SOFT` enable/disable via options menu; critical for VR immersion
+- Occlusion/obstruction via raycast against terrain mesh (currently `Audio_UploadGeometry` is a no-op stub)
+- Move ambient fade tick out of `SDL_Audio_SetCameraPos` into a dedicated `SDL_Audio_Update()` called every frame regardless of game state (current snap-to-target in menus is a workaround)
+
+### Dev infrastructure
+
+- GitHub Actions CI for Windows + Linux + macOS builds per commit
+- Unit tests for `mathematics.cpp` (pure functions, easy win)
+- SDL3 migration when stable (better HiDPI, gamepad, dialog APIs)
+- clang-tidy / ASan pass over the 1999 code for undefined-behavior issues
 
 ## Coding Conventions
 
@@ -152,6 +241,7 @@ Key constraints: re-enabling `ProcessMap2` consistently causes texture seams. Th
 - Comment any behavioral changes from the original with `// SOURCEPORT: <description>`
 - Use shell variables and relative paths, not hardcoded absolute paths
 - Validate assumptions before implementing — if unsure about original engine behavior, check the original source first
+- **Mod compatibility rule**: every new asset loader is additive; never remove a retail-format parser (.CAR, .3DF, .RSC, .MAP, .TGA, .WAV). Existing mods like Carnivores 2+ must continue to load unchanged. New formats (glTF, PNG, JSON dino defs, etc.) slot in beside the originals, never replace them.
 
 ## Important Context
 - This source port distributes only the engine — users must supply their own game assets from a retail copy.

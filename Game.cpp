@@ -458,7 +458,7 @@ void ProcessCommandLine()
 	 if (strstr(s,"-radar"))   RadarMode = TRUE;
 	 if (strstr(s,"-tranq")) Tranq = TRUE;
 	 if (strstr(s,"-observ")) ObservMode = TRUE;
-	 if (strstr(s,"-nosnd"))  OptSound = -1;  // SOURCEPORT: disable audio
+	 if (strstr(s,"-nosnd"))  { OptSound = -1; extern void Audio_SetNoSnd(); Audio_SetNoSnd(); }  // SOURCEPORT: disable audio
 
      // SOURCEPORT: Phase 4 display options
      if (strstr(s,"width="))      OptResW        = atoi(s + 6);
@@ -1683,7 +1683,7 @@ void LoadTrophy()
 	ReadFile(hfile, &OptViewR, 4, &l, NULL);
 	ReadFile(hfile, &SHADOWS3D, 4, &l, NULL);
 	ReadFile(hfile, &OptMsSens, 4, &l, NULL);
-	ReadFile(hfile, &OptBrightness, 4, &l, NULL);
+	{ int _unused; ReadFile(hfile, &_unused, 4, &l, NULL); } // OptBrightness — now owned by display.cfg
 
 
 	ReadFile(hfile, &KeyMap, sizeof(KeyMap), &l, NULL);
@@ -1800,6 +1800,7 @@ void LoadDisplayConfig()
     ReadFile(h, &OptResW,        4, &l, NULL);
     ReadFile(h, &OptResH,        4, &l, NULL);
     ReadFile(h, &OptBrightness,  4, &l, NULL);
+    if (OptBrightness < -64) OptBrightness = -64;
     int sh = 0, fg = 0;
     ReadFile(h, &sh, 4, &l, NULL);
     ReadFile(h, &fg, 4, &l, NULL);

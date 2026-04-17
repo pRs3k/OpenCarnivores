@@ -448,6 +448,8 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
     return tex;
 }
 
+#include "../TextureOverrides.h"
+
 void RendererGL::SetTexture(void* lpData, int w, int h) {
     uintptr_t key = (uintptr_t)lpData;
 
@@ -472,7 +474,22 @@ void RendererGL::SetTexture(void* lpData, int w, int h) {
             }
         }
 
-        GLuint tex = UploadTexture16(lpData, w, h);
+        // SOURCEPORT: check for 32-bit PNG override before 16-bit decode.
+        int ow = 0, oh = 0;
+        const uint32_t* over = TextureOverrides::Get(lpData, &ow, &oh);
+        GLuint tex;
+        if (over) {
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, ow, oh, 0, GL_RGBA, GL_UNSIGNED_BYTE, over);
+            glGenerateMipmap(GL_TEXTURE_2D);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
+        } else {
+            tex = UploadTexture16(lpData, w, h);
+        }
         m_texCache[key] = { tex, m_frameCounter };
         m_currentTexture = tex;
     }
@@ -677,15 +694,13 @@ void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, 
 // SOURCEPORT: Render text using GDI into a temp DIB, then upload as GL texture.
 // Uses fnt_Small for all menu and HUD text. Performance is acceptable for
 // non-realtime menu use; in-game calls are infrequent.
-void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
-    if (!text || !text[0]) return;
+// SOURCEPORT: shared scaled font — built once per WinH change, used by DrawText and MeasureText.
+// fnt_Small is 14px/5px wide designed for 600px height; scale both dimensions with WinH.
+static HFONT  s_scaledFont  = NULL;
+static int    s_scaledWinH  = 0;
 
+static HFONT GetScaledFont() {
     extern HFONT fnt_Small;
-
-    // SOURCEPORT: Scale font proportionally to screen height so text stays readable at
-    // high resolutions (fnt_Small is 14px, designed for 600px reference height).
-    static HFONT s_scaledFont = NULL;
-    static int   s_scaledWinH = 0;
     if (s_scaledWinH != WinH) {
         if (s_scaledFont) { DeleteObject(s_scaledFont); s_scaledFont = NULL; }
         int fh = std::max(14, 14 * WinH / 600);
@@ -695,8 +710,33 @@ void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
             DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, "Arial");
         s_scaledWinH = WinH;
     }
-    HFONT useFont = s_scaledFont ? s_scaledFont : fnt_Small;
+    return s_scaledFont ? s_scaledFont : fnt_Small;
+}
 
+// SOURCEPORT: menu font — fnt_Midd style: weight=550 (semibold), 16px/7px at 600p, scaled by WinH/600.
+static HFONT  s_menuFont   = NULL;
+static int    s_menuWinH   = 0;
+
+static HFONT GetMenuFont() {
+    if (s_menuWinH != WinH) {
+        if (s_menuFont) { DeleteObject(s_menuFont); s_menuFont = NULL; }
+        int fh = std::max(16, 16 * WinH / 600);
+        int fw = std::max(7,   7 * WinH / 600);
+        // SOURCEPORT: NULL face name → system default sans-serif (matches original fnt_Midd style).
+        // Weight=700 (Bold) to match the medium-bold appearance of the original menu text.
+        s_menuFont = CreateFontA(fh, fw, 0, 0, 700, 0, 0, 0,
+            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, NULL);
+        s_menuWinH = WinH;
+    }
+    return s_menuFont ? s_menuFont : GetScaledFont();
+}
+
+// SOURCEPORT: shared text-rendering core — renders text with a given GDI font as a GL quad.
+static void DrawTextWithFont(int x, int y, const char* text, uint32_t color, HFONT useFont,
+                             GLuint m_bitmapTexture, GLuint m_vao, GLuint m_vbo,
+                             bool m_zBufferEnabled, GLint m_locAlphaTest, GLint m_locFogEnabled,
+                             bool m_fogEnabled) {
     // Create a temporary memory DC to measure and render the text
     HDC hdc = CreateCompatibleDC(NULL);
     if (!hdc) return;
@@ -712,7 +752,7 @@ void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
     BITMAPINFOHEADER bih = {};
     bih.biSize        = sizeof(bih);
     bih.biWidth       = tw;
-    bih.biHeight      = -th;  // negative = top-down
+    bih.biHeight      = -th;
     bih.biPlanes      = 1;
     bih.biBitCount    = 24;
     bih.biCompression = BI_RGB;
@@ -724,42 +764,38 @@ void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
     if (!hbmp) { SelectObject(hdc, hOldFont); DeleteDC(hdc); return; }
     HBITMAP hOldBmp = (HBITMAP)SelectObject(hdc, hbmp);
 
-    // Clear to black (will be the transparent key)
     int stride = (tw * 3 + 3) & ~3;
     memset(dibBits, 0, stride * th);
 
-    // Render text
+    // SOURCEPORT: render white text on black so R channel = glyph coverage (0–255).
+    // Use that as alpha and store the requested color constant — gives proper
+    // anti-aliased edges and makes the black shadow pass actually visible.
     SetBkMode(hdc, TRANSPARENT);
-    uint8_t r = (color >> 16) & 0xFF;
-    uint8_t g = (color >>  8) & 0xFF;
-    uint8_t b = (color      ) & 0xFF;
-    SetTextColor(hdc, RGB(r, g, b));
+    SetTextColor(hdc, RGB(255, 255, 255));
     TextOutA(hdc, 0, 0, text, (int)strlen(text));
 
-    // Convert BGR DIB pixels to RGBA (black = transparent)
+    uint8_t cr = (uint8_t)((color >> 16) & 0xFF);
+    uint8_t cg = (uint8_t)((color >>  8) & 0xFF);
+    uint8_t cb = (uint8_t)((color      ) & 0xFF);
+
     std::vector<uint32_t> rgba(tw * th);
     uint8_t* src = (uint8_t*)dibBits;
     for (int py = 0; py < th; py++) {
-        for (int px = 0; px < tw; px++) {
-            uint8_t bv = src[py * stride + px * 3 + 0];
-            uint8_t gv = src[py * stride + px * 3 + 1];
-            uint8_t rv = src[py * stride + px * 3 + 2];
-            uint8_t av = (rv | gv | bv) ? 255 : 0;
-            rgba[py * tw + px] = ((uint32_t)av << 24) | ((uint32_t)rv << 16) |
-                                  ((uint32_t)gv <<  8) | bv;
+        for (int px2 = 0; px2 < tw; px2++) {
+            uint8_t lum = src[py * stride + px2 * 3 + 2]; // R == G == B for white text
+            // alpha = glyph coverage; RGB = constant requested color → correct blend
+            rgba[py * tw + px2] = ((uint32_t)lum << 24) | ((uint32_t)cr << 16) |
+                                   ((uint32_t)cg  <<  8) | cb;
         }
     }
 
-    // Cleanup GDI objects
     SelectObject(hdc, hOldBmp);
     SelectObject(hdc, hOldFont);
     DeleteObject(hbmp);
     DeleteDC(hdc);
 
-    // Upload to shared bitmap texture and draw quad
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_bitmapTexture);
-    // Data is BGRA in memory (GDI DIB is BGR; rv/gv/bv packed into uint32 little-endian)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, tw, th, 0, GL_BGRA, GL_UNSIGNED_BYTE, rgba.data());
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -768,17 +804,17 @@ void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
     float x1 = x0 + tw,  y1 = y0 + th;
 
     RenderVertex quad[6];
-    auto fill = [&](RenderVertex& v, float px, float py, float u, float tv) {
-        v.sx = px; v.sy = py; v.sz = 0.0f; v.rhw = 1.0f;
+    auto fill2 = [&](RenderVertex& v, float px2, float py, float u, float tv) {
+        v.sx = px2; v.sy = py; v.sz = 0.0f; v.rhw = 1.0f;
         v.color = 0xFFFFFFFF; v.specular = 0xFF000000;
         v.tu = u; v.tv = tv;
     };
-    fill(quad[0], x0, y0, 0.0f, 0.0f);
-    fill(quad[1], x1, y0, 1.0f, 0.0f);
-    fill(quad[2], x1, y1, 1.0f, 1.0f);
-    fill(quad[3], x0, y0, 0.0f, 0.0f);
-    fill(quad[4], x1, y1, 1.0f, 1.0f);
-    fill(quad[5], x0, y1, 0.0f, 1.0f);
+    fill2(quad[0], x0, y0, 0.0f, 0.0f);
+    fill2(quad[1], x1, y0, 1.0f, 0.0f);
+    fill2(quad[2], x1, y1, 1.0f, 1.0f);
+    fill2(quad[3], x0, y0, 0.0f, 0.0f);
+    fill2(quad[4], x1, y1, 1.0f, 1.0f);
+    fill2(quad[5], x0, y1, 0.0f, 1.0f);
 
     bool prevDepth = m_zBufferEnabled;
     glDisable(GL_DEPTH_TEST);
@@ -796,6 +832,46 @@ void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
 
     if (prevDepth) glEnable(GL_DEPTH_TEST);
     glUniform1i(m_locFogEnabled, m_fogEnabled ? 1 : 0);
+}
+
+int RendererGL::MeasureText(const char* text) {
+    if (!text || !text[0]) return 0;
+    HFONT font = GetScaledFont();
+    HDC hdc = CreateCompatibleDC(NULL);
+    if (!hdc) return 0;
+    HFONT old = (HFONT)SelectObject(hdc, font);
+    SIZE sz = {};
+    GetTextExtentPoint32A(hdc, text, (int)strlen(text), &sz);
+    SelectObject(hdc, old);
+    DeleteDC(hdc);
+    return sz.cx;
+}
+
+int RendererGL::MeasureTextMed(const char* text) {
+    if (!text || !text[0]) return 0;
+    HFONT font = GetMenuFont();
+    HDC hdc = CreateCompatibleDC(NULL);
+    if (!hdc) return 0;
+    HFONT old = (HFONT)SelectObject(hdc, font);
+    SIZE sz = {};
+    GetTextExtentPoint32A(hdc, text, (int)strlen(text), &sz);
+    SelectObject(hdc, old);
+    DeleteDC(hdc);
+    return sz.cx;
+}
+
+void RendererGL::DrawText(int x, int y, const char* text, uint32_t color) {
+    if (!text || !text[0]) return;
+    DrawTextWithFont(x, y, text, color, GetScaledFont(),
+        m_bitmapTexture, m_vao, m_vbo,
+        m_zBufferEnabled, m_locAlphaTest, m_locFogEnabled, m_fogEnabled);
+}
+
+void RendererGL::DrawTextMed(int x, int y, const char* text, uint32_t color) {
+    if (!text || !text[0]) return;
+    DrawTextWithFont(x, y, text, color, GetMenuFont(),
+        m_bitmapTexture, m_vao, m_vbo,
+        m_zBufferEnabled, m_locAlphaTest, m_locFogEnabled, m_fogEnabled);
 }
 
 // SOURCEPORT: Draw a filled rectangle at screen position (x,y) with size (w,h).

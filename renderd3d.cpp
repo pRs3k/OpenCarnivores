@@ -1717,62 +1717,103 @@ int DownLoadTexture(LPVOID tptr, int w, int h)
 #endif // _d3d (end D3D6 texture allocation/upload)
 
 #ifdef _opengl
-// SOURCEPORT: OpenGL texture upload — convert 16-bit to RGBA and create GL texture
+#include "TextureOverrides.h"
+
+// SOURCEPORT: shared RGBA8 upload path — used by both the 16-bit decode and
+// the 32-bit override path. Preserves the foliage-mip-fix from the original
+// 16-bit upload.
+static GLuint gl_UploadRGBA(const uint32_t* rgba, int w, int h)
+{
+    bool hasTransparency = false;
+    for (int i = 0; i < w * h; i++) {
+        if ((rgba[i] >> 24) == 0) { hasTransparency = true; break; }
+    }
+
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    if (hasTransparency) {
+        // SOURCEPORT: Fix mip-level brightness strobe on transparent textures (foliage,
+        // bushes, grass clumps).  glGenerateMipmap uses straight per-channel averaging:
+        // transparent pixels (alpha=0, RGB=0) drag mip-level colors dark, making foliage
+        // dimmer at distance.  As the camera moves, the sampled mip level oscillates →
+        // brightness strobes.
+        //
+        // Fix: compute the average opaque-pixel color, upload a version with transparent
+        // pixels filled with that color (alpha still 0) so mip generation averages the
+        // correct brightness.  Then re-upload the ORIGINAL data at mip level 0 so that
+        // close-up rendering (which uses mip 0 or additive fproc1 passes like the sun)
+        // sees the unmodified texture — transparent = black, correct for additive blending
+        // and for alpha-test at full resolution.
+        uint64_t rSum = 0, gSum = 0, bSum = 0;
+        int cnt = 0;
+        for (int i = 0; i < w * h; i++) {
+            if ((rgba[i] >> 24) != 0) {
+                rSum += rgba[i] & 0xFF;
+                gSum += (rgba[i] >> 8) & 0xFF;
+                bSum += (rgba[i] >> 16) & 0xFF;
+                cnt++;
+            }
+        }
+        if (cnt > 0) {
+            // Build filled copy: transparent pixels get avg opaque RGB, alpha stays 0
+            std::vector<uint32_t> filled(rgba, rgba + w * h);
+            uint32_t fill = ((uint32_t)(bSum/cnt) << 16) | ((uint32_t)(gSum/cnt) << 8) | (uint32_t)(rSum/cnt);
+            for (int i = 0; i < w * h; i++)
+                if ((filled[i] >> 24) == 0) filled[i] = fill;
+            // Upload filled version → generate mip levels 1..N from correct averages
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, filled.data());
+            glGenerateMipmap(GL_TEXTURE_2D);
+            // Restore original data at level 0: mip 0 = original alpha cutout (no bleeding)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        } else {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+            glGenerateMipmap(GL_TEXTURE_2D);
+        }
+    } else {
+        // Opaque textures (terrain): trilinear hardware LOD replaces DataA/DataB swap
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    return tex;
+}
+
+// SOURCEPORT: 16-bit decode → shared RGBA uploader.
 static GLuint gl_UploadTexture16(void* data, int w, int h)
 {
     std::vector<uint32_t> rgba(w * h);
     uint16_t* src = (uint16_t*)data;
     for (int i = 0; i < w * h; i++) {
         uint16_t c = src[i];
-        if (c == 0) { rgba[i] = 0x00000000; continue; } // color key
-        uint32_t r, g, b;
-        // SOURCEPORT: all game textures (terrain, sky, models) are stored in RGB555
-        // by BrightenTexture/LoadTexture — always decode as 555 here.
-        // (TPicture UI images go through conv_565 and use DrawBitmap separately.)
-        r = ((c >> 10) & 0x1F) * 255 / 31;
-        g = ((c >> 5)  & 0x1F) * 255 / 31;
-        b = ((c)       & 0x1F) * 255 / 31;
+        if (c == 0) { rgba[i] = 0x00000000; continue; }
+        uint32_t r = ((c >> 10) & 0x1F) * 255 / 31;
+        uint32_t g = ((c >> 5)  & 0x1F) * 255 / 31;
+        uint32_t b = ((c)       & 0x1F) * 255 / 31;
         rgba[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
     }
-    GLuint tex;
-    glGenTextures(1, &tex);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    // SOURCEPORT: D3D6 default is wrap/repeat — terrain UVs tile far beyond 0..1
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    // SOURCEPORT: only generate mipmaps for fully-opaque textures (terrain).
-    // Textures with color-keyed transparent pixels (sprites, foliage, models) must NOT
-    // use mipmaps: lower mip levels blend transparent+opaque pixels, averaging alpha to
-    // < 0.5 for fine details (branches, leaves) → alpha test discards them entirely.
-    // Terrain textures have no transparent pixels, so they safely get trilinear filtering
-    // to eliminate the moiré/banding aliasing at grazing angles.
-    bool hasTransparency = false;
-    for (int i = 0; i < w * h; i++) {
-        if ((rgba[i] >> 24) == 0) { hasTransparency = true; break; }
-    }
-    // SOURCEPORT: mipmaps for transparent textures (models, foliage, sprites) only.
-    // Terrain (hasTransparency==false) must NOT use mipmaps: the game drives its own
-    // LOD by swapping DataA/DataB (128x128 vs 64x64), and per-fragment mip selection
-    // across the diagonal split of each quad produces a bright/dark pinwheel artifact.
-    // For transparent textures, GL_LINEAR (no mipmaps) leaves the GPU sampling a random
-    // full-res texel from a tiny triangle → alpha flicker on leaves at distance.
-    // glGenerateMipmap pre-averages the binary alpha so distant samples are stable.
-    if (hasTransparency) {
-        glGenerateMipmap(GL_TEXTURE_2D);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
-    } else {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
-    }
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
-    return tex;
+    return gl_UploadRGBA(rgba.data(), w, h);
 }
 
 BOOL d3dAllocTexture(int i, int w, int h) { return TRUE; }
 void d3dDownLoadTexture(int i, int w, int h, LPVOID tptr)
 {
     if (d3dMemMap[i].glTexId) glDeleteTextures(1, &d3dMemMap[i].glTexId);
-    d3dMemMap[i].glTexId = gl_UploadTexture16(tptr, w, h);
+
+    // SOURCEPORT: check for a 32-bit PNG/TGA override registered for this buffer.
+    int ow = 0, oh = 0;
+    const uint32_t* over = TextureOverrides::Get(tptr, &ow, &oh);
+    if (over) {
+        d3dMemMap[i].glTexId = gl_UploadRGBA(over, ow, oh);
+    } else {
+        d3dMemMap[i].glTexId = gl_UploadTexture16(tptr, w, h);
+    }
+
     d3dMemMap[i].hTexture = d3dMemMap[i].glTexId;
     d3dMemMap[i].cpuaddr = (uintptr_t)tptr;
     d3dMemMap[i].size = w * h * 2;
@@ -1842,8 +1883,8 @@ float GetTraceK(int x, int y)
   if (x<8 || y<8 || x>WinW-8 || y>WinH-8) return 0.f;
 
 #ifdef _opengl
-  // SOURCEPORT: GL z-buffer readback not implemented; no sun occlusion check
-  DeltaFunc(TraceK, 0.f, TimeDt / 1024.f);
+  // SOURCEPORT: GL z-buffer readback not needed; assume sun visible when in frustum
+  DeltaFunc(TraceK, 1.f, TimeDt / 512.f);
   return TraceK;
 #else // _d3d
   if (!lpddZBuffer) return 0.f;
@@ -2101,7 +2142,27 @@ void DrawPicture(int x, int y, TPicture &pic)
   FXPutBitMap(x, y, pic.W, pic.H, pic.W, pic.lpImage);
 }
 
+// SOURCEPORT: resolution-scaled picture draw — stretches pic to dw×dh on screen
+void DrawPictureScaled(int x, int y, int dw, int dh, TPicture &pic)
+{
+#ifdef _opengl
+  if (g_glRenderer) g_glRenderer->DrawBitmap(x, y, dw, dh, pic.W, pic.lpImage, true, pic.H);
+#else
+  DrawPicture(x, y, pic);
+#endif
+}
 
+
+
+// SOURCEPORT: measure text using the same font DrawText renders with (scaled to WinH).
+// Replaces GetTextW(hdcMain, s) calls so column positions match rendered text widths.
+static int ddTextW(LPSTR t)
+{
+#ifdef _opengl
+    if (g_glRenderer) return g_glRenderer->MeasureText(t);
+#endif
+    return GetTextW(hdcMain, t);
+}
 
 void ddTextOut(int x, int y, LPSTR t, int color)
 {
@@ -2122,7 +2183,11 @@ void ddTextOut(int x, int y, LPSTR t, int color)
 
   lpddBack->ReleaseDC( ddBackDC );
 #elif defined(_opengl)
-  if (g_glRenderer) g_glRenderer->DrawText(x, y, t, (uint32_t)color);
+  if (g_glRenderer) {
+    // SOURCEPORT: callers pass Windows COLORREF (0x00BBGGRR); swap R↔B to get 0x00RRGGBB for GL
+    uint32_t glcol = ((color & 0xFF) << 16) | (color & 0x0000FF00) | ((color >> 16) & 0xFF);
+    g_glRenderer->DrawText(x, y, t, glcol);
+  }
 #endif
 }
 
@@ -2143,55 +2208,58 @@ void DrawTrophyText(int x0, int y0)
 	float range = TrophyRoom.Body[tc].range;
 	char t[32];
 
-	x0+=14; y0+=18;
+	// SOURCEPORT: scale offsets and line spacing proportionally to screen height
+	const int ls = 16 * WinH / 480;
+	x0 += 14 * WinH / 480;
+	y0 += 18 * WinH / 480;
     x = x0;
-	ddTextOut(x, y0   , "Name: ", 0x00BFBFBF);  x+=GetTextW(hdcMain,"Name: ");
-    ddTextOut(x, y0   , DinoInfo[dtype].Name, 0x0000BFBF);    
+	ddTextOut(x, y0      , "Name: ", 0x00BFBFBF);  x+=ddTextW("Name: ");
+    ddTextOut(x, y0      , DinoInfo[dtype].Name, 0x0000BFBF);
 
 	x = x0;
-	ddTextOut(x, y0+16, "Weight: ", 0x00BFBFBF);  x+=GetTextW(hdcMain,"Weight: ");
+	ddTextOut(x, y0+ls  , "Weight: ", 0x00BFBFBF);  x+=ddTextW("Weight: ");
 	if (OptSys)
      sprintf(t,"%3.2ft ", DinoInfo[dtype].Mass * scale * scale / 0.907);
 	else
-     sprintf(t,"%3.2fT ", DinoInfo[dtype].Mass * scale * scale);     
+     sprintf(t,"%3.2fT ", DinoInfo[dtype].Mass * scale * scale);
 
-    ddTextOut(x, y0+16, t, 0x0000BFBF);    x+=GetTextW(hdcMain,t);
-    ddTextOut(x, y0+16, "Length: ", 0x00BFBFBF); x+=GetTextW(hdcMain,"Length: ");
-     
+    ddTextOut(x, y0+ls  , t, 0x0000BFBF);    x+=ddTextW(t);
+    ddTextOut(x, y0+ls  , "Length: ", 0x00BFBFBF); x+=ddTextW("Length: ");
+
 	if (OptSys)
 	 sprintf(t,"%3.2fft", DinoInfo[dtype].Length * scale / 0.3);
 	else
 	 sprintf(t,"%3.2fm", DinoInfo[dtype].Length * scale);
 
-	ddTextOut(x, y0+16, t, 0x0000BFBF); 
-	
+	ddTextOut(x, y0+ls  , t, 0x0000BFBF);
+
 	x = x0;
-	ddTextOut(x, y0+32, "Weapon: ", 0x00BFBFBF);  x+=GetTextW(hdcMain,"Weapon: ");
+	ddTextOut(x, y0+2*ls, "Weapon: ", 0x00BFBFBF);  x+=ddTextW("Weapon: ");
 	 wsprintf(t,"%s    ", WeapInfo[wep].Name);
-    ddTextOut(x, y0+32, t, 0x0000BFBF);   x+=GetTextW(hdcMain,t);
-    ddTextOut(x, y0+32, "Score: ", 0x00BFBFBF);   x+=GetTextW(hdcMain,"Score: ");
+    ddTextOut(x, y0+2*ls, t, 0x0000BFBF);   x+=ddTextW(t);
+    ddTextOut(x, y0+2*ls, "Score: ", 0x00BFBFBF);   x+=ddTextW("Score: ");
 	 wsprintf(t,"%d", score);
-	ddTextOut(x, y0+32, t, 0x0000BFBF); 
+	ddTextOut(x, y0+2*ls, t, 0x0000BFBF);
 
 
 	x = x0;
-	ddTextOut(x, y0+48, "Range of kill: ", 0x00BFBFBF);  x+=GetTextW(hdcMain,"Range of kill: ");
+	ddTextOut(x, y0+3*ls, "Range of kill: ", 0x00BFBFBF);  x+=ddTextW("Range of kill: ");
 	if (OptSys) sprintf(t,"%3.1fft", range / 0.3);
 	else        sprintf(t,"%3.1fm", range);
-    ddTextOut(x, y0+48, t, 0x0000BFBF);  
+    ddTextOut(x, y0+3*ls, t, 0x0000BFBF);
 
 
 	x = x0;
-	ddTextOut(x, y0+64, "Date: ", 0x00BFBFBF);  x+=GetTextW(hdcMain,"Date: ");
+	ddTextOut(x, y0+4*ls, "Date: ", 0x00BFBFBF);  x+=ddTextW("Date: ");
 	if (OptSys)
 	 wsprintf(t,"%d.%d.%d   ", ((date>>10) & 255), (date & 255), date>>20);
 	else
      wsprintf(t,"%d.%d.%d   ", (date & 255), ((date>>10) & 255), date>>20);
 
-    ddTextOut(x, y0+64, t, 0x0000BFBF);   x+=GetTextW(hdcMain,t);
-    ddTextOut(x, y0+64, "Time: ", 0x00BFBFBF);   x+=GetTextW(hdcMain,"Time: ");
+    ddTextOut(x, y0+4*ls, t, 0x0000BFBF);   x+=ddTextW(t);
+    ddTextOut(x, y0+4*ls, "Time: ", 0x00BFBFBF);   x+=ddTextW("Time: ");
 	 wsprintf(t,"%d:%02d", ((time>>10) & 255), (time & 255));
-	ddTextOut(x, y0+64, t, 0x0000BFBF); 
+	ddTextOut(x, y0+4*ls, t, 0x0000BFBF);
 
 	SmallFont = FALSE;
 
@@ -2266,7 +2334,7 @@ void ShowControlElements()
   if (MessageList.timeleft) {
     if (RealTime>MessageList.timeleft) MessageList.timeleft = 0;
     ddTextOut(10, 10, MessageList.mtext, 0x0020A0A0);
-  } 
+  }
 
   if (ExitTime) {	  
 	  int y = WinH / 3;
@@ -3155,8 +3223,15 @@ void ProcessMap(int x, int y, int r)
    zs = (int)sqrt( xx*xx + zz*zz + yy*yy);          
    
    
+#ifdef _opengl
+   // SOURCEPORT: GL uses hardware trilinear mipmaps — always use full-res DataA.
+   // The DataA/DataB software LOD swap is redundant and causes a visible texture pop
+   // at zs=2560 (the switch boundary). Mipmaps handle all LOD transparently.
+   d3dSetTexture(Textures[t1]->DataA, 128, 128);
+#else
    if (MIPMAP && (zs > 256 * 10 && t1 || LOWRESTX)) d3dSetTexture(Textures[t1]->DataB, 64, 64);
                                                else d3dSetTexture(Textures[t1]->DataA, 128, 128);
+#endif
 
    if (r>8) DrawTPlane(FALSE);
        else DrawTPlaneClip(FALSE);    
@@ -3262,8 +3337,12 @@ void ProcessMapW(int x, int y, int r)
    zs = (int)sqrt( xx*xx + zz*zz + yy*yy);  
    if (zs > ctViewR*256) return;
          
+#ifdef _opengl
+   d3dSetTexture(Textures[t1]->DataA, 128, 128);
+#else
    if (MIPMAP && (zs > 256 * 10 && t1 || LOWRESTX)) d3dSetTexture(Textures[t1]->DataB, 64, 64);
-                                               else d3dSetTexture(Textures[t1]->DataA, 128, 128);   
+                                               else d3dSetTexture(Textures[t1]->DataA, 128, 128);
+#endif
 
    if (r>8) DrawTPlaneW(FALSE);
      else DrawTPlaneClip(FALSE);    
@@ -4744,8 +4823,21 @@ void RenderModelSun(TModel* _mptr, float x0, float y0, float z0, int Alpha)
    //if (FAILED(hRes)) DoHalt("Error execute buffer");
    dFacesCount+=fproc1;
 #elif defined(_opengl)
+   // SOURCEPORT: additive blend (BLEND_ONE) matches D3D6 sun rendering.
+   // fproc2 (alpha test): transparent pixels (a=0) are discarded; vertex alpha governs brightness.
+   // Disable mip sampling for this draw: filled transparent pixels in mip levels 1+ produce a
+   // white fringe at the disc edge in additive mode.  Level 0 has original black transparent
+   // pixels so they contribute 0 to the additive sum when GL_LINEAR (no mip) is used.
    if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_ONE);
-   d3dFlushBuffer(fproc1, 0);
+   if (hTexture) {
+       glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+   }
+   d3dFlushBuffer(0, fproc1);
+   if (hTexture) {
+       glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+   }
    if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
 #endif
 }
@@ -5059,7 +5151,23 @@ void DrawBox( WORD *lfbPtr, int lsw, int xx, int yy, WORD c)
 
 void DrawHMap()
 {
+#ifdef _opengl
+  // SOURCEPORT: scale map image by WinH/480 using actual MapPic dimensions (the frame image
+  // may be larger than 256×256 due to the decorative border).  The dot coordinate origin is
+  // always VideoCX/CY ± 128*scale, matching the original hardcoded ±128 reference offset that
+  // was independent of image size.
+  const float mapScaleF = (float)WinH / 480.0f;
+  const int   mapSize   = (int)(256 * mapScaleF);     // world→pixel span on screen
+  const int   imgW      = (int)(MapPic.W * mapScaleF);
+  const int   imgH      = (int)(MapPic.H * mapScaleF);
+  const int   mapImgX0  = VideoCX - imgW / 2;
+  const int   mapImgY0  = VideoCY - imgH / 2 - (int)(6 * mapScaleF);
+  const int   mapDotX0  = VideoCX - mapSize / 2;      // world (0,0) screen X
+  const int   mapDotY0  = VideoCY - mapSize / 2;      // world (0,0) screen Y
+  DrawPictureScaled(mapImgX0, mapImgY0, imgW, imgH, MapPic);
+#else
   DrawPicture(VideoCX-MapPic.W/2, VideoCY - MapPic.H/2-6, MapPic);
+#endif
 #ifdef _d3d
   int c;
   ZeroMemory( &ddsd, sizeof(DDSURFACEDESC) );
@@ -5112,10 +5220,11 @@ endmap:
     if (px >= 0 && px < WinW && py >= 0 && py < WinH)
       g_glRenderer->FillRect(px, py, 1, 1, col);
   };
-  // Helper: draw 2x2 box (matches DrawBox)
+  // Helper: draw scaled box — 2px at 480p, proportionally larger at higher resolutions
+  const int dotSz = max(2, mapSize / 192);
   auto putBox = [&](int bx, int by, uint32_t col) {
-    if (bx >= 0 && bx+1 < WinW && by >= 0 && by+1 < WinH)
-      g_glRenderer->FillRect(bx, by, 2, 2, col);
+    if (bx >= 0 && bx+dotSz <= WinW && by >= 0 && by+dotSz <= WinH)
+      g_glRenderer->FillRect(bx, by, dotSz, dotSz, col);
   };
   // Helper: draw 8 symmetric Bresenham circle points
   auto put8 = [&](int cx, int cy, int dx, int dy, uint32_t col) {
@@ -5136,8 +5245,9 @@ endmap:
     put8(cx, cy, x, y, col);
   };
 
-  int xx = VideoCX - 128 + (CCX>>2);
-  int yy = VideoCY - 128 + (CCY>>2);
+  int xx = mapDotX0 + (int)((CCX>>2) * mapScaleF);
+  int yy = mapDotY0 + (int)((CCY>>2) * mapScaleF);
+  int circR = (int)((float)ctViewR / 4.0f * mapScaleF);
 
   if (xx < 0 || xx >= WinW || yy < 0 || yy >= WinH) return;
 
@@ -5146,16 +5256,16 @@ endmap:
   putBox(xx,   yy,   0xFF00F000);
 
   // Shadow circle (dim green) + main circle (bright green) — matches 4<<GShift / 18<<GShift
-  drawCircleGL(xx+1, yy+1, ctViewR/4, 0xFF004800);
-  drawCircleGL(xx,   yy,   ctViewR/4, 0xFF009000);
+  drawCircleGL(xx+1, yy+1, circR, 0xFF004800);
+  drawCircleGL(xx,   yy,   circR, 0xFF009000);
 
   if (RadarMode)
   for (int c = 0; c < ChCount; c++) {
     if (Characters[c].AI < 10) continue;
     if (!(TargetDino & (1<<Characters[c].AI))) continue;
     if (!Characters[c].Health) continue;
-    int dx = VideoCX - 128 + (int)Characters[c].pos.x / 1024;
-    int dy = VideoCY - 128 + (int)Characters[c].pos.z / 1024;
+    int dx = mapDotX0 + (int)(Characters[c].pos.x / 1024.0f * mapScaleF);
+    int dy = mapDotY0 + (int)(Characters[c].pos.z / 1024.0f * mapScaleF);
     if (dx <= 0 || dx >= WinW || dy <= 0 || dy >= WinH) continue;
     putBox(dx, dy, 0xFFD00000);
   }
@@ -5174,16 +5284,28 @@ void RenderSun(float x, float y, float z)
 	float d = (float)sqrt(x*x + y*y);
 	if (d<2048) {
 		SunLight = (220.f- d*220.f/2048.f);
+#ifdef _opengl
+		// SOURCEPORT: SkyTraceK is always 0.5 in GL and would halve the effect;
+		// skip it and allow a stronger glare that fades over the full 0-2048 range.
+		if (SunLight > 210) SunLight = 210;
+#else
 		if (SunLight>140) SunLight = 140;
 		SunLight*=SkyTraceK;
+#endif
 	}
 	
      
 	if (d>812.f) d = 812.f;
 	d = (2048.f + d) / 3048.f;
 	d+=(1.f-SkyTraceK)/2.f;
-	if (OptDayNight==2)  d=1.5; 
-    RenderModelSun(SunModel,  x*d, y*d, z*d, (int)(200.f* SkyTraceK));	
+	if (OptDayNight==2)  d=1.5;
+#ifdef _opengl
+	// SOURCEPORT: sun model was sized for CameraW=400 (640x480 reference).
+	// Scale distance so the sun subtends the same angle at any resolution.
+	// Extra 1.15 shrinks the disc slightly so centre doesn't overpower the rays.
+	d *= (CameraW / 400.f) * 1.15f;
+#endif
+    RenderModelSun(SunModel,  x*d, y*d, z*d, (int)(200.f* SkyTraceK));
 }
 
 
@@ -5331,16 +5453,21 @@ void RenderSkyPlane()
            if (fabsf(q_r) > 0.001f) { tu_r = (px*sx2 + py*sy2 + pz)/q_r; tv_r = (rx*sx2 + ry*sy2 + rz)/q_r; }
            else                      { tu_r = 0.f; tv_r = 0.f; }
        };
-       const int N_STRIPS = 32; // enough rows to accurately represent UV curvature
+       // SOURCEPORT: subdivided sky strips eliminate UV banding near the horizon.
+       // 128 uniform strips; early-exit before the singularity where q→0.
+       const int N_STRIPS = 128;
        float tu0l, tv0l, tu0r, tv0r;
        skyUV(0.f, tu0l, tv0l, tu0r, tv0r);
        for (int s = 0; s < N_STRIPS; s++) {
            float sky0 = (float)scry * s       / N_STRIPS;
            float sky1 = (float)scry * (s + 1) / N_STRIPS;
+           {
+               float sy2_bot = VideoCY - sky1;
+               if (fabsf(qx1 + qy * sy2_bot) < 1.0f || fabsf(qx2 + qy * sy2_bot) < 1.0f)
+                   break;
+           }
            float tu1l, tv1l, tu1r, tv1r;
            skyUV(sky1, tu1l, tv1l, tu1r, tv1r);
-           // Two triangles: (TL, TR, BL) and (TR, BR, BL)
-           // SOURCEPORT: night sky is nearly black (original game had dark/starless sky at night)
            DWORD skyVertColor = (OptDayNight == 2) ? 0xFF1C1C1C : 0xFFFFFFFF;
            auto emit = [&](float ssx, float ssy, float tu, float tv) {
                lpVertexG->sx = ssx; lpVertexG->sy = ssy; lpVertexG->sz = 0.0001f; lpVertexG->rhw = 1.f;
@@ -5348,12 +5475,12 @@ void RenderSkyPlane()
                lpVertexG->tu = (tu + dtt) / 256.f; lpVertexG->tv = (tv - dtt) / 256.f;
                lpVertexG++;
            };
-           emit(0.f,        sky0, tu0l, tv0l);
+           emit(0.f,         sky0, tu0l, tv0l);
            emit((float)WinW, sky0, tu0r, tv0r);
-           emit(0.f,        sky1, tu1l, tv1l);
+           emit(0.f,         sky1, tu1l, tv1l);
            emit((float)WinW, sky0, tu0r, tv0r);
            emit((float)WinW, sky1, tu1r, tv1r);
-           emit(0.f,        sky1, tu1l, tv1l);
+           emit(0.f,         sky1, tu1l, tv1l);
            GVCnt += 6;
            tu0l = tu1l; tv0l = tv1l; tu0r = tu1r; tv0r = tv1r;
        }
