@@ -861,7 +861,7 @@ void RendererGL::BindCustomMaterial(const void* materialPtr) {
 
 // --- 2D operations ---
 
-void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey, int srcH) {
+void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey, int srcH, const void* overrideKey) {
     if (!lpData || w <= 0 || h <= 0) return;
 
     // Actual source dimensions: srcW × uploadH.
@@ -871,12 +871,15 @@ void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, 
     int uploadW = srcW;
 
     // SOURCEPORT: menu/HUD override path. If TextureOverrides has a 32-bit PNG/
-    // TGA/BMP/JPEG registered for this TPicture's pixel buffer, upload it at
-    // its native resolution instead of decoding the retail 16-bit TGA. UVs are
-    // 0..1 so any size maps correctly onto the destination quad; high-res
-    // menu art drops in with no other code changes.
+    // TGA/BMP/JPEG registered for this picture, upload it at its native
+    // resolution instead of decoding the retail 16-bit TGA. UVs are 0..1 so any
+    // size maps correctly onto the destination quad; high-res menu art drops in
+    // with no other code changes. `overrideKey`, when supplied, wins over
+    // `lpData` — menu pictures pass `&pic` because pic.lpImage is heap-recycled
+    // across ReleaseResources (cross-asset bleed bug otherwise).
     int overW = 0, overH = 0;
-    const uint32_t* over = TextureOverrides::Get(lpData, &overW, &overH);
+    void* lookupKey = overrideKey ? const_cast<void*>(overrideKey) : lpData;
+    const uint32_t* over = TextureOverrides::Get(lookupKey, &overW, &overH);
 
     // Convert 16-bit source to RGBA only when we don't have an override.
     std::vector<uint32_t> rgba;

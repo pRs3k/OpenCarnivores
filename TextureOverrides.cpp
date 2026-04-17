@@ -294,6 +294,37 @@ bool TryRegisterWithExts(void* key, const char* basePath)
     return false;
 }
 
+bool TryRegisterMenuPicture(void* key, const char* basePath)
+{
+    // SOURCEPORT: menu-picture variant — `.tga` intentionally omitted because
+    // LoadPictureTGA's own source is a .tga, and probing it here would cause
+    // the retail asset to be "loaded as its own override" (wasted RGBA decode).
+    if (!basePath) return false;
+    {
+        std::string candidate = std::string(basePath) + ".dds";
+        if (RegisterDDS(key, candidate.c_str())) return true;
+    }
+    const char* exts[] = { ".png", ".bmp", ".jpg" };
+    for (const char* ext : exts) {
+        std::string candidate = std::string(basePath) + ext;
+        if (RegisterFromFile(key, candidate.c_str())) return true;
+    }
+    return false;
+}
+
+bool Has(void* key)
+{
+    return g_reg.find(key) != g_reg.end() || g_regDDS.find(key) != g_regDDS.end();
+}
+
+void Unregister(void* key)
+{
+    auto it = g_reg.find(key);
+    if (it != g_reg.end()) { delete[] it->second.rgba; g_reg.erase(it); }
+    auto dd = g_regDDS.find(key);
+    if (dd != g_regDDS.end()) { std::free(dd->second.data); g_regDDS.erase(dd); }
+}
+
 void Shutdown()
 {
     for (auto& kv : g_reg)    delete[] kv.second.rgba;

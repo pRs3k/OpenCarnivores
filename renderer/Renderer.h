@@ -66,7 +66,13 @@ public:
     // colorKey=false: all pixels are opaque (for solid backgrounds)
     // srcH: actual source image height; 0 = same as h (no stretching).
     // The quad is drawn at (x,y) with size (w,h); source is uploaded at srcW×srcH then stretched.
-    virtual void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0) = 0;
+    // SOURCEPORT: `overrideKey` lets menu/UI callers pass a stable identifier
+    // (e.g. the address of the owning TPicture struct) for the TextureOverrides
+    // lookup. Necessary because pic.lpImage is HeapAlloc'd and gets recycled
+    // for terrain buffers after ReleaseResources, which would cause a menu
+    // override to bleed onto terrain if `lpData` were the key. When nullptr,
+    // lpData itself is the key (retail in-world path).
+    virtual void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0, const void* overrideKey = nullptr) = 0;
     virtual void DrawText(int x, int y, const char* text, uint32_t color) = 0;
     virtual void DrawFullscreenRect(uint32_t argbColor) = 0;
     virtual void FillRect(int x, int y, int w, int h, uint32_t argbColor) = 0;

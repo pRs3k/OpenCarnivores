@@ -4,21 +4,59 @@ A modern source port of **Carnivores 2** (Action Forms, 1999), reborn on SDL2 + 
 
 ---
 
+## Quick start (for players)
+
+**You need a legal copy of Carnivores 2.** The CD, a GOG copy, or an old install folder all work — anything that contains the `HUNTDAT/` folder and the `*.RSC`, `*.CAR`, `*.MAP`, `*.WAV` game files.
+
+### Step 1 — Get the game files
+If you own the CD, copy everything off it into a folder on your PC (for example, `C:\Games\Carnivores2`). Make sure the folder contains a `HUNTDAT` subfolder. If your copy already has a `Carn2.exe`, you can leave it — OpenCarnivores will live next to it.
+
+### Step 2 — Download OpenCarnivores
+Go to the **[Releases page](https://github.com/pRs3k/OpenCarnivores/releases)** on GitHub and download the latest `OpenCarnivores-Windows.zip`. Unzip it.
+
+### Step 3 — Put the files together
+Copy `OpenCarnivores.exe` (and the `.dll` files and `shaders/` folder next to it) into your Carnivores 2 folder — the one with `HUNTDAT` inside it.
+
+### Step 4 — Double-click `OpenCarnivores.exe`
+That's it. The game should launch at your monitor's native resolution.
+
+### Common command-line options (optional)
+Right-click → Create Shortcut on `OpenCarnivores.exe`, then edit the shortcut's **Target** to add options at the end:
+
+| Option | What it does |
+|---|---|
+| `-fullscreen` | Exclusive fullscreen |
+| `-borderless` | Borderless window at desktop resolution |
+| `-width=1920 -height=1080` | Force a specific resolution |
+| `-novsync` | Disable VSync (uncapped framerate) |
+| `-nosnd` | Disable audio |
+
+Example target:
+`C:\Games\Carnivores2\OpenCarnivores.exe -borderless`
+
+### Troubleshooting
+- **"Missing file" or black screen on launch** — you probably don't have the `HUNTDAT` folder next to `OpenCarnivores.exe`. Re-check Step 3.
+- **No sound** — remove `-nosnd` if you added it. Make sure no other program has exclusive audio.
+- **Game is too dark or too bright** — open the in-game Options menu and adjust the Brightness slider; it updates live.
+- **Resolution looks wrong** — open Options → Display and pick a resolution from the list. The choice is saved to `display.cfg`.
+
+---
+
 ## What's new vs. the original engine
 
 - **Runs on modern Windows** without compatibility shims, wrappers, or dgVoodoo2
 - **Any resolution, any aspect ratio** — widescreen Hor+ FOV, 4K, HiDPI-aware
 - **Adaptive VSync** and uncapped framerate
 - **OpenGL 3.3 renderer** with hardware trilinear mipmapping (no more terrain texture pop, no more foliage shimmer)
-- **OpenAL Soft audio** — ready for HRTF, EFX reverb, and true 3D positional audio
+- **OpenAL Soft audio** — 3D positional audio, terrain occlusion, ready for HRTF and EFX reverb
 - **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)
 - **glTF / OBJ model overrides** alongside the retail `.CAR` files
 - **PBR materials** (normal / metallic-roughness / AO maps) per-asset, opt-in
 - **Custom GLSL shaders per asset** via `.material` files — no C++ required
 - **Hot reload** for textures, shaders, `.material` files, and `_RES.txt` — edit & save, no restart
-- Many subtle rendering fixes
+- Many subtle rendering and AI fixes
 
-All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load **unchanged**
+All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load **unchanged**.
 
 ---
 
@@ -26,9 +64,9 @@ All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load *
 
 Previously, every in-world texture in Carnivores 2 was stored inside the binary `.CAR` / `.3DF` / `.RSC` files as **RGB555 (15-bit color + 1-bit transparency key)** — only 32,768 possible colors, fixed resolutions (256×256 for models, 128×128 for terrain), and no partial alpha. Editing anything meant ripping pixels out of binary files with third-party tools.
 
-**You can now drop a PNG (or TGA/BMP/JPEG) next to any game asset and OpenCarnivores will use it instead** — at any resolution, with true 24-bit color and 8-bit alpha, automatically mipmapped by the GPU.
+**You can now drop a PNG (or TGA/BMP/JPEG/DDS) next to any game asset and OpenCarnivores will use it instead** — at any resolution, with true 24-bit color and 8-bit alpha, automatically mipmapped by the GPU.
 
-The original files are never touched. If you delete the PNG, the game reverts to the original textures with zero fuss.
+The original files are never touched. If you delete the override, the game reverts to the original textures with zero fuss.
 
 ### Naming convention
 
@@ -45,7 +83,7 @@ Place override files in the game folder following this pattern:
 
 - `<ProjectName>` is the base name of the map's `.rsc` file, lowercase/uppercase as used by the game.
 - `NN` is a zero-padded 2-digit index matching the load order in the `.RSC` (texture 0 → `_tex_00.png`, texture 1 → `_tex_01.png`, etc.).
-- Extensions `.png`, `.tga`, `.bmp`, `.jpg` are all accepted — first one found wins.
+- Extensions are probed in order: `.dds`, `.png`, `.tga`, `.bmp`, `.jpg` — first one found wins. DDS (BC1/3/5/7) is ~4–6× smaller in VRAM than raw RGBA, ideal for 4K packs.
 
 ### How to port an existing texture mod
 
@@ -54,7 +92,7 @@ Place override files in the game folder following this pattern:
 3. **Name and drop** the file per the table above.
 4. **Launch the game.** That's it.
 
-You don't need to recompile anything, repack the `.RSC`, or modify game files. Remove the PNG to revert. Mix and match with other mods freely — PNG overrides take priority over the binary data, and two texture packs that override different files coexist without conflict.
+You don't need to recompile anything, repack the `.RSC`, or modify game files. Remove the PNG to revert. Mix and match with other mods freely — overrides take priority over the binary data, and two texture packs that override different files coexist without conflict. **Hot reload** means you can edit a PNG in your image editor, hit save, and the game picks up the new version within a second — no restart.
 
 ### Tips
 
@@ -62,6 +100,20 @@ You don't need to recompile anything, repack the `.RSC`, or modify game files. R
 - Model UVs are normalized 0..1, so any resolution works — a 1024×1024 PNG just looks 4× sharper than the original 256×256.
 - The game's alpha-test shader discards pixels under ~10% opacity, so feathered edges near full transparency work as you'd expect.
 - High-res textures increase VRAM use; a modern GPU handles it easily, but a full 4K texture pack will use more memory than the original.
+
+---
+
+## PBR materials (normal / metallic-roughness / AO)
+
+Drop these sibling files next to your base texture and they'll be picked up automatically:
+
+| Map | Filename suffix | Channel convention |
+|---|---|---|
+| Normal | `<stem>_normal.png` | Tangent-space RGB |
+| Metallic-roughness | `<stem>_mr.png` | Metallic in R, roughness in G (glTF) |
+| Ambient occlusion | `<stem>_ao.png` | Greyscale in R |
+
+PBR is strictly opt-in per asset. Assets without these sibling files continue to use the original Lambert shading, pixel-for-pixel. Tangent frames are reconstructed in the fragment shader from screen-space derivatives — you don't need to regenerate UV seams or tangent data.
 
 ---
 
@@ -80,13 +132,19 @@ Editing the `.material` file, the `.vert`, or the `.frag` hot-reloads live. Prec
 
 ---
 
+## glTF / OBJ model overrides
+
+Drop `<stem>.gltf`, `<stem>.glb`, or `<stem>.obj` next to the retail `.CAR` and it replaces the model geometry (textures still come from the PNG sibling or the original `.CAR` data). Retail `.CAR` loading is untouched and remains the fallback.
+
+---
+
 ## Coming next
 
 Planned additions that will further expand what modders can do (see `CLAUDE.md` for the full roadmap):
 
 - JSON/TOML dino and weapon stats (no more recompiling to tweak balance)
 - Virtual filesystem with `mods/` folder priority — clean mod packs, no file overwrites
-- Menu/UI picture overrides (path-keyed registry)
+- Menu/UI picture overrides (path-keyed registry — landed this release)
 - Lua scripting for AI and gameplay events
 - VR support (OpenXR)
 
@@ -99,9 +157,15 @@ cmake -B build
 cmake --build build --config Release
 ```
 
-Requires Visual Studio 2022 (or MSVC toolchain) and CMake 3.20+. All dependencies (SDL2, OpenAL Soft, glad, stb_image) are vendored under `deps/`.
+Requires Visual Studio 2022 (or MSVC toolchain) and CMake 3.20+. All dependencies (SDL2, OpenAL Soft, glad, stb_image, tinygltf, tinyobjloader) are vendored under `deps/`.
 
 Run `build/Release/OpenCarnivores.exe` from the Carnivores 2 game folder, or pass `-width=N -height=N -fullscreen` on the command line.
+
+---
+
+## Contributing
+
+Pull requests welcome! The repo is configured to require a PR + 1 review before merging to `main`, and squash-merges only for a clean history. Fork, branch, and open a PR — bug reports and small fixes are just as appreciated as new features.
 
 ---
 
@@ -110,6 +174,6 @@ Run `build/Release/OpenCarnivores.exe` from the Carnivores 2 game folder, or pas
 - Original game: **Action Forms**, 1999
 - Source code preservation: [videogamepreservation/carnivores2](https://github.com/videogamepreservation/carnivores2)
 - OpenCarnivores port: engine modernization, renderer abstraction, audio/asset pipelines
-- Dependencies: SDL2 (zlib), OpenAL Soft (LGPL), glad (MIT), stb_image (public domain)
+- Dependencies: SDL2 (zlib), OpenAL Soft (LGPL), glad (MIT), stb_image (public domain), tinygltf (MIT), tinyobjloader (MIT)
 
 Not affiliated with Action Forms. You must own a legal copy of Carnivores 2 to use this engine.
