@@ -1906,7 +1906,7 @@ void RenderModelsList()
 void ProcessMap(int x, int y, int r)
 { 
    
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 ||
+   if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
   
    float BackR = BackViewR;
@@ -1986,7 +1986,7 @@ void ProcessMap2(int x, int y, int r)
   
 
    
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 ||
+   if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
 
    ev[0] = VMap[y-CCY+128][x-CCX+128];   

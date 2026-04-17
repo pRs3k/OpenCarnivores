@@ -5,6 +5,8 @@
 
 #ifdef _opengl
 #include "renderer/RendererGL.h"
+#include "Materials.h"
+#include "CustomMaterials.h"
 #include <SDL.h>
 #endif
 
@@ -24,6 +26,15 @@ int ORLCount = 0;
 // Under OpenGL: point into CPU staging arrays.
 LPD3DTLVERTEX           lpVertex, lpVertexG;
 D3DTEXTUREHANDLE        hTexture, hGTexture;
+#ifdef _opengl
+// SOURCEPORT: PBR material tracked in lockstep with hTexture. Null when the
+// currently bound texture has no sibling normal/MR/AO maps registered.
+static const Materials::Material* hMaterial = nullptr;
+// SOURCEPORT: custom-shader material (from a .material file). Takes precedence
+// over the PBR path — if a modder supplied a custom shader for this texture,
+// we use it and skip the built-in Cook-Torrance branch.
+static const CustomMaterials::Material* hCustomMaterial = nullptr;
+#endif
 
 #ifdef _d3d
 LPDIRECTDRAWSURFACE     lpddPrimary               = NULL;
@@ -513,7 +524,12 @@ void d3dEndBufferG(BOOL ColorKey)
        // rare (BrightenTexture/GenerateMipMap avoid them), and water vertex-alpha
        // transparency relies on uAlphaTest=true (color.a=vColor.a path).
        g_glRenderer->SetAlphaTest(true);
+       // SOURCEPORT: custom shader wins over PBR; PBR wins over default Lambert.
+       g_glRenderer->BindCustomMaterial(hCustomMaterial);
+       if (!hCustomMaterial) g_glRenderer->BindMaterial(hMaterial);
        g_glRenderer->UnlockAndDrawGeometry(GVCnt, ColorKey ? true : false);
+       if (!hCustomMaterial) g_glRenderer->BindMaterial(nullptr);
+       g_glRenderer->BindCustomMaterial(nullptr);
    }
    dFacesCount += GVCnt / 3;
    lpVertexG = NULL;
@@ -682,7 +698,12 @@ void d3dFlushBuffer(int fproc1, int fproc2)
            glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
        else
            glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture());
+       // SOURCEPORT: custom shader wins over PBR; PBR wins over default Lambert.
+       g_glRenderer->BindCustomMaterial(hCustomMaterial);
+       if (!hCustomMaterial) g_glRenderer->BindMaterial(hMaterial);
        g_glRenderer->UnlockAndDrawTriangles(fproc1, fproc2);
+       if (!hCustomMaterial) g_glRenderer->BindMaterial(nullptr);
+       g_glRenderer->BindCustomMaterial(nullptr);
    }
    LINEARFILTER = TRUE;
    dFacesCount += fproc1 + fproc2;
@@ -1498,6 +1519,29 @@ void Activate3DHardware()
 }
 
 
+#ifdef _opengl
+// SOURCEPORT: hot-reload helper — drop every GL texture slot so the next
+// d3dSetTexture() for each key re-uploads (picking up any refreshed override
+// pixels). Safe to call any time; does not touch CPU-side texture data.
+void d3dInvalidateAllTextures()
+{
+    d3dLastTexture = d3dmemmapsize+1;
+    for (int m=0; m<d3dmemmapsize+2; m++) {
+        if (d3dMemMap[m].glTexId) {
+            glDeleteTextures(1, &d3dMemMap[m].glTexId);
+            d3dMemMap[m].glTexId = 0;
+        }
+        d3dMemMap[m].cpuaddr  = 0;
+        d3dMemMap[m].lastused = 0;
+        d3dMemMap[m].hTexture = 0;
+    }
+    hTexture  = 0;
+    hGTexture = (D3DTEXTUREHANDLE)-1;
+    hMaterial = nullptr;
+    hCustomMaterial = nullptr;
+}
+#endif
+
 void ResetTextureMap()
 {
   d3dEndBufferG(FALSE);
@@ -1767,7 +1811,13 @@ static GLuint gl_UploadRGBA(const uint32_t* rgba, int w, int h)
             // Upload filled version → generate mip levels 1..N from correct averages
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, filled.data());
             glGenerateMipmap(GL_TEXTURE_2D);
-            // Restore original data at level 0: mip 0 = original alpha cutout (no bleeding)
+            // SOURCEPORT: restore ORIGINAL data at level 0 (transparent pixels RGB=0).
+            // This is required for the sun's additive (BLEND_ONE) pass — any non-zero RGB
+            // in the transparent border bleeds into the frame as a white ring around the
+            // disc when GL_LINEAR-sampled at mip 0. The foliage-edge darkening that this
+            // used to produce (black outline on trees/bushes at close range) is now
+            // compensated in the fragment shader: for alpha-test textures, RGB is divided
+            // by the sampled alpha so bilinear mag filtering recovers the full leaf colour.
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         } else {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -1800,18 +1850,55 @@ static GLuint gl_UploadTexture16(void* data, int w, int h)
     return gl_UploadRGBA(rgba.data(), w, h);
 }
 
+// SOURCEPORT: upload a pre-parsed BCn/DDS override to a fresh GL texture.
+// Mip chain is already laid out by TextureOverrides; we just fan it out via
+// glCompressedTexImage2D per level. No glGenerateMipmap — the author of the
+// .dds is responsible for the chain (BC1/BC3 alpha is baked into the blocks,
+// which is why runtime mip gen would lose the foliage-alpha information).
+static GLuint gl_UploadCompressed(const TextureOverrides::CompressedTex& ct)
+{
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    int lw = ct.w, lh = ct.h;
+    for (int i = 0; i < ct.mipCount; ++i) {
+        glCompressedTexImage2D(GL_TEXTURE_2D, i, (GLenum)ct.glFormat,
+                               lw, lh, 0,
+                               (GLsizei)ct.mipSizes[i],
+                               ct.data + ct.mipOffsets[i]);
+        lw = (lw > 1) ? lw >> 1 : 1;
+        lh = (lh > 1) ? lh >> 1 : 1;
+    }
+    // If the DDS only provided level 0, let the driver complete the chain.
+    if (ct.mipCount <= 1) glGenerateMipmap(GL_TEXTURE_2D);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  ct.mipCount - 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    return tex;
+}
+
 BOOL d3dAllocTexture(int i, int w, int h) { return TRUE; }
 void d3dDownLoadTexture(int i, int w, int h, LPVOID tptr)
 {
     if (d3dMemMap[i].glTexId) glDeleteTextures(1, &d3dMemMap[i].glTexId);
 
-    // SOURCEPORT: check for a 32-bit PNG/TGA override registered for this buffer.
-    int ow = 0, oh = 0;
-    const uint32_t* over = TextureOverrides::Get(tptr, &ow, &oh);
-    if (over) {
-        d3dMemMap[i].glTexId = gl_UploadRGBA(over, ow, oh);
+    // SOURCEPORT: prefer BCn DDS override (smaller VRAM footprint at 4K),
+    // then 8-bit RGBA override (PNG/TGA/BMP/JPG), finally the 16-bit decode.
+    if (const TextureOverrides::CompressedTex* ct = TextureOverrides::GetCompressed(tptr)) {
+        d3dMemMap[i].glTexId = gl_UploadCompressed(*ct);
     } else {
-        d3dMemMap[i].glTexId = gl_UploadTexture16(tptr, w, h);
+        int ow = 0, oh = 0;
+        const uint32_t* over = TextureOverrides::Get(tptr, &ow, &oh);
+        if (over) {
+            d3dMemMap[i].glTexId = gl_UploadRGBA(over, ow, oh);
+        } else {
+            d3dMemMap[i].glTexId = gl_UploadTexture16(tptr, w, h);
+        }
     }
 
     d3dMemMap[i].hTexture = d3dMemMap[i].glTexId;
@@ -1854,6 +1941,8 @@ void d3dSetTexture(LPVOID tptr, int w, int h)
     // eligible for LRU eviction even while hTexture still holds a reference to its GLuint.
     d3dMemMap[d3dLastTexture].lastused = d3dMemUsageCount;
     hTexture = d3dMemMap[d3dLastTexture].hTexture;
+    hMaterial = Materials::Get(tptr);
+    hCustomMaterial = CustomMaterials::Get(tptr);
     return;
   }
 
@@ -1867,6 +1956,8 @@ void d3dSetTexture(LPVOID tptr, int w, int h)
 
   d3dMemMap[fxm].lastused = d3dMemUsageCount;
   hTexture = d3dMemMap[fxm].hTexture;
+  hMaterial = Materials::Get(tptr);
+  hCustomMaterial = CustomMaterials::Get(tptr);
   d3dLastTexture = fxm;
   // SOURCEPORT: do NOT bind here — let DrawTPlane/d3dFlushBuffer bind at draw time
   // to avoid the wrong texture being bound when the geometry buffer is flushed.
@@ -1883,8 +1974,29 @@ float GetTraceK(int x, int y)
   if (x<8 || y<8 || x>WinW-8 || y>WinH-8) return 0.f;
 
 #ifdef _opengl
-  // SOURCEPORT: GL z-buffer readback not needed; assume sun visible when in frustum
-  DeltaFunc(TraceK, 1.f, TimeDt / 512.f);
+  // SOURCEPORT: read GL depth buffer directly. GetTraceK runs at end of
+  // RenderHunt, after all opaque geometry has written depth, so no frame lag.
+  // Depth convention: glClearDepth(0.0) + GL_GEQUAL → untouched sky pixels
+  // read 0.0; any closer geometry reads > 0.0. Patch size 13x13 around sun.
+  {
+    const int R = 6;
+    const int W = 2 * R + 1;
+    if (x - R < 0 || y - R < 0 || x + R >= WinW || y + R >= WinH) return TraceK;
+
+    // GL origin is bottom-left; engine coords are top-left. Flip y.
+    const int glx = x - R;
+    const int gly = WinH - (y + R) - 1;
+
+    float depth[W * W];
+    glReadPixels(glx, gly, W, W, GL_DEPTH_COMPONENT, GL_FLOAT, depth);
+
+    int skyCount = 0;
+    for (int i = 0; i < W * W; ++i)
+      if (depth[i] < 0.001f) ++skyCount;
+
+    float k = (float)skyCount / (float)(W * W);
+    DeltaFunc(TraceK, k, TimeDt / 1024.f);
+  }
   return TraceK;
 #else // _d3d
   if (!lpddZBuffer) return 0.f;
@@ -1936,13 +2048,30 @@ void AddSkySum(WORD C)
 }
 
 
+#ifdef _opengl
+// SOURCEPORT: sun-flare occlusion sampling for the GL path. The original D3D
+// engine lock()'d the backbuffer inside GetSkyK and compared 9 colour samples
+// against the sky colour to decide if the sun was blocked. In GL we defer the
+// readback to end-of-frame (after all opaque geometry has written depth) and
+// drive the same SkyTraceK smoother. See gl_SampleSunOcclusion() in ShowVideo.
+static int  g_sunSampleX     = 0;
+static int  g_sunSampleY     = 0;
+static bool g_sunSampleValid = false;
+#endif
+
+
 float GetSkyK(int x, int y)
 {
   if (x<10 || y<10 || x>WinW-10 || y>WinH-10) return 0.5;
 
 #ifdef _opengl
-  // SOURCEPORT: GL framebuffer readback not implemented; return constant sky brightness
-  DeltaFunc(SkyTraceK, 0.5f, (0.07f + (float)fabs(0.5f - SkyTraceK)) * (TimeDt / 512.f));
+  // SOURCEPORT: record sun screen position for end-of-frame depth readback.
+  // The readback updates SkyTraceK with one frame of latency; DeltaFunc smooths
+  // it naturally, matching the D3D behaviour where Lock() reads the previous
+  // frame's contents anyway.
+  g_sunSampleX     = x;
+  g_sunSampleY     = y;
+  g_sunSampleValid = true;
   return SkyTraceK;
 #else // _d3d
   SkySumR = 0;
@@ -2010,8 +2139,75 @@ void TryHiResTx()
 }
 
 
+#ifdef _opengl
+// SOURCEPORT: end-of-frame sun-flare occlusion test.
+// Reads a small depth patch at the sun's screen position. With
+// glClearDepth(0.0) + GL_GEQUAL, untouched sky pixels read 0.0 and any closer
+// opaque geometry (terrain, trees, dinos) reads > 0.0. The fraction of samples
+// still at far depth is the visible-fraction k; DeltaFunc smooths it into
+// SkyTraceK, which RenderSun reads next frame to scale flare/disc/rays.
+static void gl_SampleSunOcclusion()
+{
+  if (!g_sunSampleValid) return;
+  g_sunSampleValid = false;  // must be re-set by GetSkyK each frame
+
+  const int R = 6;                    // 13x13 patch (169 samples)
+  const int W = 2 * R + 1;
+  const int cx = g_sunSampleX;
+  const int cy = g_sunSampleY;
+
+  // Bail if patch would read outside the framebuffer.
+  if (cx - R < 0 || cy - R < 0 || cx + R >= WinW || cy + R >= WinH) return;
+
+  // GL framebuffer origin is bottom-left; engine uses top-left. Flip y.
+  const int glx = cx - R;
+  const int gly = WinH - (cy + R) - 1;
+
+  float depth[W * W];
+  glReadPixels(glx, gly, W, W, GL_DEPTH_COMPONENT, GL_FLOAT, depth);
+
+  int skyCount = 0;
+  for (int i = 0; i < W * W; ++i)
+    if (depth[i] < 0.001f) ++skyCount;        // still at clear depth → sky
+  float depthK = (float)skyCount / (float)(W * W);
+
+  // SOURCEPORT: the sky-plane cloud layer is drawn with depth writes disabled
+  // (see "Terrain banding" note in CLAUDE.md), so clouds leave depth=0 — the
+  // depth fraction alone reports "pure sky" right through a cumulus deck.
+  // Replicate the original D3D 9-sample colour test to catch that: compare
+  // the framebuffer RGB around the sun against the expected clear-sky colour
+  // (SkyTR/G/B, updated each frame by RenderSkyPlane). A cloud over the sun
+  // reads bright white → high deviation → colourK drops and occludes the
+  // flare. Combine with the depth test via min() so terrain OR clouds can
+  // occlude independently.
+  const int CR = 4;
+  const int CW = 2 * CR + 1;
+  uint8_t rgb[CW * CW * 3];
+  const int cglx = cx - CR;
+  const int cgly = WinH - (cy + CR) - 1;
+  glReadPixels(cglx, cgly, CW, CW, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+  long sumR = 0, sumG = 0, sumB = 0;
+  const int n = CW * CW;
+  for (int i = 0; i < n; ++i) {
+    sumR += rgb[i*3+0] - (int)SkyTR;
+    sumG += rgb[i*3+1] - (int)SkyTG;
+    sumB += rgb[i*3+2] - (int)SkyTB;
+  }
+  float dev = (float)std::sqrt((double)(sumR*sumR + sumG*sumG + sumB*sumB)) / n;
+  if (dev > 80.f) dev = 80.f;
+  float colorK = 1.f - dev / 80.f;
+
+  float k = depthK < colorK ? depthK : colorK;
+  if (k < 0.2f) k = 0.2f;                     // match D3D minimum floor
+  if (OptDayNight == 2) k = 0.3f + k / 2.75f; // night-vision taper
+  DeltaFunc(SkyTraceK, k,
+            (0.07f + (float)fabs(k - SkyTraceK)) * (TimeDt / 512.f));
+}
+#endif
+
+
 void ShowVideo()
-{	
+{
 	/*
   char t[128];
   wsprintf(t, "T-mem loaded: %dK", d3dMemLoaded >> 10);
@@ -2057,6 +2253,9 @@ void ShowVideo()
   d3dClearBuffers();
   hRes = lpd3dDevice->BeginScene( );
 #elif defined(_opengl)
+  // SOURCEPORT: sample sun-flare occlusion from the depth buffer before the
+  // swap — all opaque geometry has written depth by this point.
+  gl_SampleSunOcclusion();
   // SOURCEPORT: present frame via SDL, then clear for next frame
   g_glRenderer->EndFrame();
   d3dClearBuffers();
@@ -3192,7 +3391,7 @@ void RenderModelsList()
 void ProcessMap(int x, int y, int r)
 { 
    //WATERREVERSE = FALSE;
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 ||
+   if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
 
    float BackR = BackViewR;
@@ -3257,7 +3456,7 @@ void ProcessMap(int x, int y, int r)
 void ProcessMap2(int x, int y, int r)
 { 
    //WATERREVERSE = FALSE;
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 ||
+   if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
 
    ev[0] = VMap[y-CCY+128][x-CCX+128];            
@@ -4886,6 +5085,13 @@ void RenderElements()
 {
 	d3dLastTexture = d3dmemmapsize+1;
   	hTexture = NULL;
+	// SOURCEPORT: also clear stale PBR / custom-material state. hMaterial/hCustomMaterial
+	// persist from the last d3dSetTexture call (e.g. RenderWater's material-backed tile).
+	// Without this, RenderElements' particles — which never call d3dSetTexture — would
+	// drive uPBR=1 with garbage normal/MR/AO bindings and render as yellow-green sludge
+	// instead of the intended partGround brown.
+	hMaterial = NULL;
+	hCustomMaterial = NULL;
 	int fproc1 = 0;
     
 	for (int eg = 0; eg<ElCount; eg++) {				
@@ -5285,13 +5491,16 @@ void RenderSun(float x, float y, float z)
 	if (d<2048) {
 		SunLight = (220.f- d*220.f/2048.f);
 #ifdef _opengl
-		// SOURCEPORT: SkyTraceK is always 0.5 in GL and would halve the effect;
-		// skip it and allow a stronger glare that fades over the full 0-2048 range.
+		// SOURCEPORT: cap slightly higher than D3D (210 vs 140) — the GL path's
+		// additive rays are subtler, so the fullscreen tint does more of the work.
 		if (SunLight > 210) SunLight = 210;
 #else
 		if (SunLight>140) SunLight = 140;
-		SunLight*=SkyTraceK;
 #endif
+		// SOURCEPORT: dim the fullscreen glare when the sun is occluded by hills,
+		// trees, or other geometry. SkyTraceK comes from gl_SampleSunOcclusion in
+		// GL, and from lpddBack pixel readback in D3D.
+		SunLight *= SkyTraceK;
 	}
 	
      

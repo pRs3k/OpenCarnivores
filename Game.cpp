@@ -837,8 +837,8 @@ void InitEngine()
    
     TrophyRoom.RegNumber=0;
 	
-    PlayerX = (ctMapSize / 3) * 256;
-	PlayerZ = (ctMapSize / 3) * 256;    
+    PlayerX = (gMapSize / 3) * 256;
+	PlayerZ = (gMapSize / 3) * 256;
 
     ProcessCommandLine();
 
@@ -1063,15 +1063,18 @@ void AddElements(float x, float y, float z, int etype, int cnt)
 
 	case partGround:
 #ifdef _d3d
-	    Elements[ElCount].RGBA = 0xF0F09E55;
-	    Elements[ElCount].RGBA2= 0x10F09E55;
+	    Elements[ElCount].RGBA = 0xF0B4824B;
+	    Elements[ElCount].RGBA2= 0x10B4824B;
 #elif defined(_opengl)
-		// SOURCEPORT: GL uses same ARGB convention as D3D (GL_BGRA vertex attrib)
-	    Elements[ElCount].RGBA = 0xF0F09E55;
-	    Elements[ElCount].RGBA2= 0x10F09E55;
+		// SOURCEPORT: light-brown dirt kick. Original 0xF0F09E55 was an orange
+		// (R=240,G=158,B=85) which blended with foliage/fog to read as
+		// yellowish-green in-scene. 0xB4824B → (R=180,G=130,B=75) = a muted
+		// sandy brown that reads as dirt regardless of surrounding colour.
+	    Elements[ElCount].RGBA = 0xF0B4824B;
+	    Elements[ElCount].RGBA2= 0x10B4824B;
 #else
-	    Elements[ElCount].RGBA = 0xF0559EF0;
-	    Elements[ElCount].RGBA2= 0x10559EF0;
+	    Elements[ElCount].RGBA = 0xF04B82B4;
+	    Elements[ElCount].RGBA2= 0x104B82B4;
 #endif
 		break;
 

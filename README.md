@@ -2,8 +2,6 @@
 
 A modern source port of **Carnivores 2** (Action Forms, 1999), reborn on SDL2 + OpenGL 3.3 + OpenAL Soft. The original DirectX 6 / DirectSound / x86 Glide binaries are gone; the engine now builds and runs natively on 64-bit Windows 10/11 and is being prepared for Linux, macOS, and VR.
 
-> **You still need a legal copy of Carnivores 2.** OpenCarnivores ships only the engine. Drop the `.exe` + DLLs into your existing game folder next to `HUNTDAT/`, `AREA1.rsc`, etc.
-
 ---
 
 ## What's new vs. the original engine
@@ -13,10 +11,14 @@ A modern source port of **Carnivores 2** (Action Forms, 1999), reborn on SDL2 + 
 - **Adaptive VSync** and uncapped framerate
 - **OpenGL 3.3 renderer** with hardware trilinear mipmapping (no more terrain texture pop, no more foliage shimmer)
 - **OpenAL Soft audio** — ready for HRTF, EFX reverb, and true 3D positional audio
-- **PNG / TGA / BMP / JPEG texture overrides** at any resolution with true 8-bit alpha (see below)
-- Many subtle rendering fixes the original had: correct fog, correct alpha on transparent foliage, proper z-buffer on HUD overlays, no more black boxes around distant sprites, etc.
+- **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)
+- **glTF / OBJ model overrides** alongside the retail `.CAR` files
+- **PBR materials** (normal / metallic-roughness / AO maps) per-asset, opt-in
+- **Custom GLSL shaders per asset** via `.material` files — no C++ required
+- **Hot reload** for textures, shaders, `.material` files, and `_RES.txt` — edit & save, no restart
+- Many subtle rendering fixes
 
-All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load **unchanged** — existing mods like Carnivores 2+ drop in and work.
+All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load **unchanged**
 
 ---
 
@@ -63,16 +65,28 @@ You don't need to recompile anything, repack the `.RSC`, or modify game files. R
 
 ---
 
+## Custom shaders per asset (`.material` files)
+
+Drop `<stem>.material` next to any asset to attach a custom GLSL program — e.g. `HUNTDAT/TREX.material` next to `HUNTDAT/TREX.CAR`. Line-based directive syntax:
+
+```
+shader  custom_tint            # loads shaders/custom_tint.vert + .frag
+tex     uDetail  noise.png     # binds to next free sampler unit (unit 0 = albedo)
+float   uMix     0.25
+vec3    uTint    1.05 1.0 0.95
+```
+
+Editing the `.material` file, the `.vert`, or the `.frag` hot-reloads live. Precedence at draw time is **custom material → PBR material → default Lambert**. A reference pair and annotated template ship in `shaders/custom_tint.{vert,frag}` and `shaders/example.material`.
+
+---
+
 ## Coming next
 
 Planned additions that will further expand what modders can do (see `CLAUDE.md` for the full roadmap):
 
-- DDS/BCn compressed texture loading (smaller VRAM footprint for 4K packs)
-- glTF / OBJ model loading alongside `.CAR`
 - JSON/TOML dino and weapon stats (no more recompiling to tweak balance)
 - Virtual filesystem with `mods/` folder priority — clean mod packs, no file overwrites
-- Hot-reload for textures, shaders, and resource definitions
-- Normal maps, PBR materials, custom shaders
+- Menu/UI picture overrides (path-keyed registry)
 - Lua scripting for AI and gameplay events
 - VR support (OpenXR)
 

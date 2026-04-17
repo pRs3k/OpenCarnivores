@@ -81,6 +81,10 @@ set(SOURCES
     Audio_DLL.cpp
     Audio_OpenAL.cpp
     TextureOverrides.cpp
+    ModelOverrides.cpp
+    Materials.cpp
+    CustomMaterials.cpp
+    HotReload.cpp
     renderd3d.cpp
     Menu.cpp
     ${RENDERER_SOURCES}

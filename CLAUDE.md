@@ -118,27 +118,23 @@ renderer/
 | Player can multi-jump by holding jump button | `kfJump` was set every frame the key was held, so `YSpeed == 0 && !SWIM` could pass again mid-air on the frame of landing while key still held | Gate `kfJump` on rising edge only: `if (!(\_KeyFlags & kfJump))` — same pattern already used for `kfCall` |
 | Binoculars expose raw scene on widescreen sides | `BINOCUL.3DF` model was designed for 4:3; Hor+ widescreen leaves extra horizontal area uncovered | After rendering the binocular model, fill side bars with `FillRect` black: width = `(WinW − WinH×4/3) / 2` each side. TODO: replace black bars with a native widescreen binocular graphic. |
 
-## Performance Notes
-
-Observed: 30–50fps drops at 2560×1440 fullscreen after Phase 3/4 fixes. Root cause not yet isolated. Attempts so far and outcomes:
-
-| Change | Outcome |
-|---|---|
-| `d3dmemmapsize` 128 → 512 (texture cache) | No measurable improvement |
-| Restore `ProcessMap2` for outer terrain rings (r ≥ ctViewR1) | Terrain height gaps / texture seams returned |
-| Frustum cull tiles behind camera in `ProcessMap` | Reversed sign convention — culled visible tiles, broke rendering |
-| `GVCnt` flush threshold 380 → 1100 (larger vertex batches) | Caused leaf texture glitches at batch boundaries; no fps gain |
-| BMP sprite fade (`if (GlassL==0) zs=0`) | Leaf texture changes appeared at far range; reverted |
-
-Key constraints: re-enabling `ProcessMap2` consistently causes texture seams. The terrain full-detail pass (`ProcessMap` for all rings) and all-3D objects are the two main regressions in triangle/draw-call count versus the original D3D path.
-
 ## Phase 5 — Audio (COMPLETE)
 
 ### Architecture
 ```
-Audio_SDL.cpp   — SDL2 software mixer (22050 Hz stereo 16-bit, 16 one-shot channels + 2 ambient slots)
-Audio_DLL.cpp   — Thin wrapper; replaces original runtime DLL dispatch (a_soft.dll / a_ds3d.dll / etc.)
+Audio_SDL.cpp     — Legacy SDL2 software mixer (kept for reference / fallback)
+Audio_OpenAL.cpp  — OpenAL Soft backend (current default): native 3D positional audio via alSource3f
+                    + AL_POSITION + AL_LINEAR_DISTANCE_CLAMPED; per-voice EFX AL_LOWPASS filter for
+                    terrain occlusion; 16 one-shot channels + 2 ambient slots with crossfade.
+Audio_DLL.cpp     — Thin wrapper exposing the original engine's audio API over whichever backend.
 ```
+
+### OpenAL Soft specifics
+- `SDL_Audio_AddVoice3dv` picks a free source, sets `AL_POSITION`, applies an AL_LOWPASS filter (`AL_DIRECT_FILTER`) derived from `ComputeTerrainOcclusion` for spatial voices. Listener-relative voices (UI/weapon) play dry.
+- `ComputeTerrainOcclusion` raycasts 12 samples of `GetLandH` between listener and source; returns `[0..1]` weighted by fraction-blocked × penetration-depth, with a long-distance grazing boost. Maps to `AL_LOWPASS_GAIN` (up to −85%) and `AL_LOWPASS_GAINHF` (up to −95%) so blocked roars sound low and distant.
+- Distance attenuation: `MAX_RADIUS=14000`, `MIN_RADIUS=768`, `AL_ROLLOFF_FACTOR=1.0`. World scale is ~256 units/meter; the older 6000-unit radius made sounds drop off within a few seconds of walking.
+- Buffer cache keyed by `(data ptr, length)` — game keeps sfx alive for the session, so pointer identity is stable.
+- Ambient crossfade tick lives in `SDL_Audio_SetCameraPos`; menu `SetAmbient` snaps-to-target to avoid silence on menu transitions where the camera-pos update isn't called.
 
 ### Key implementation notes
 - `SDL_INIT_AUDIO` added to `SDL_Init` in Hunt2.cpp
@@ -154,6 +150,11 @@ Audio_DLL.cpp   — Thin wrapper; replaces original runtime DLL dispatch (a_soft
 | No audio on launch | `OptSound=-1` saved in trophy file from previous `-nosnd` run; `InitAudioSystem` used it as disable flag | `InitAudioSystem` now ignores `driver` param; only explicit `-nosnd` flag (via `Audio_SetNoSnd()`) disables audio |
 | Crash clicking menus | `ReleaseResources()` freed `Ambient[].sfx.lpData` while SDL audio callback still held pointer | Call `AudioStop()` at start of `ReleaseResources()` |
 | MENUAMB never audible | `AudioCB` ambient loop skipped fade logic when `volume==0` (initial state), so volume never incremented | Move fade step before the mix; early-out only after fade when volume is still 0 |
+| Sounds dropped off too quickly while walking away | `MAX_RADIUS=6000` (~23 m at 256 units/m) with linear-clamped attenuation — passed zero inside a few seconds of walking | Bumped `MAX_RADIUS=14000` / `MIN_RADIUS=768` so the gain curve stays near 1.0 for a natural range before rolling off |
+| Flying dino impact thud played twice | `AnimateDimorDead` called `ActivateCharacterFx` on both the `DIM_FALL` transition and the `DIM_DIE` transition; flyer CARs often map both phases to the same thud sample, so they fired back-to-back at ground impact | Compare `Anifx[DIM_FALL]` vs `Anifx[DIM_DIE]` at the impact transition and skip the DIE fx when they match |
+| Periodic stutter every few seconds at steady 144 Hz | `HotReload::Tick` stat()'d every registered file (hundreds of textures) on each 333 ms poll, spiking a frame past the VSync budget while the average FPS counter didn't reflect it | Round-robin 8 files per 100 ms tick (`HotReload.cpp`); full sweep takes a few seconds — still fine for edit-and-save |
+| Ground models displayed wrong textures after an inter-level reload | `LoadPictureTGA` registered `pic.lpImage` as a `TextureOverrides` key; after `ReleaseResources` freed the menu buffer, the heap recycled that address for a terrain/model buffer and the stale menu override bled onto ground geometry | Reverted the `LoadPictureTGA` override hook; menu/UI overrides need a path-keyed registry instead of pointer-keyed |
+| Ground/object impact particles rendered pale yellow instead of sandy brown | Two stacked issues: (1) `RenderElements` cleared `hTexture` but left `hMaterial`/`hCustomMaterial` pointing at whatever `d3dSetTexture` last set during `RenderWater`, so particles drove `uPBR=1` with garbage normal/MR/AO bindings; (2) `basic.frag`'s hard `clamp(rgb*uBrightness, 0, 1)` clipped R and G before B on any saturated warm color, turning `#B4824B × 1.7+` into pale yellow `(1,1,0.6)` | `RenderElements` entry now also clears `hMaterial = hCustomMaterial = NULL`; `basic.frag` replaces the hard clamp with a hue-preserving scale-down: if `max(r,g,b) > 1` divide the whole vector by it, so chroma survives elevated brightness |
 
 ## Phase 6 — Modern Asset Pipeline
 
@@ -185,18 +186,42 @@ Key implementation notes:
 - GL path only uses terrain `DataA` (all-`DataA` fix from Phase 4), so one override per terrain texture is sufficient — `DataB/C/D` never bind in GL.
 - Registry takes ownership of RGBA buffers; `TextureOverrides::Shutdown()` frees all. Re-registration for the same key deletes the previous buffer.
 
-### Remaining for this phase (FUTURE)
+**DDS / BCn compressed texture overrides** — `TextureOverrides.cpp` `RegisterDDS`. Parses the DXT1/DXT3/DXT5/BC5/BC7 subset of DirectDraw Surface files and uploads directly via `glCompressedTexImage2D`, preserving all mip levels from the file. `TryRegisterWithExts` probes `.dds` first, then `.png/.tga/.bmp/.jpg`. BCn is ~4–6× smaller in VRAM than uncompressed RGBA so 4K overrides stay practical.
 
-- DDS texture loading (BCn compressed formats — important for VRAM footprint with 4K textures)
-- Load standard model formats (glTF, OBJ) alongside .CAR
-- Normal map support
-- PBR material system
-- Shader-based material system (JSON/TOML material definitions) so modders can write custom shaders without touching C++
+**glTF / OBJ model overrides** — `ModelOverrides.cpp`/`.h` (via tinygltf + tinyobjloader). `TryLoadSibling(carPath)` probes `<stem>.gltf/.glb/.obj` next to the original `.CAR`; registry keyed by the game's model pointer so `RenderModel` can substitute on a hit. Retail .CAR load path is untouched and remains the fallback.
+
+**PBR material system** — `Materials.cpp`/`.h`. Strictly opt-in per asset: drop `<stem>_normal.png`, `<stem>_mr.png` (metallic in R, roughness in G — glTF convention), `<stem>_ao.png` next to the base texture and `Materials::RegisterFromStem` binds them to the same CPU-pointer key as the albedo override. `basic.frag` gets a Cook-Torrance GGX path (DistributionGGX + GeometrySmith + FresnelSchlick) gated on `uPBR`; tangent frames are reconstructed in the fragment shader from screen-space derivatives (Christian Schüler trick) so no per-vertex tangent attribute is needed. `RendererGL::BindMaterial(key)` flips the uniform on before a draw and back off after; null key = retail Lambert path, byte-identical to pre-PBR.
+
+**Hot reload for textures, shaders, and `_RES.txt`** — `HotReload.cpp`/`.h`. `HotReload::Watch(path, callback)` registers a file; `HotReload::Tick()` is called once per frame from `Hunt2.cpp`'s main loop. Polling is throttled to 100 ms cadence with a round-robin budget of 8 files per tick (see `HotReload::Tick`) so hundreds of registered textures don't hitch the frame — full sweep takes a few seconds, plenty fast for edit-and-save. Texture edits call `g_glRenderer->InvalidateTextureCache()` + `d3dInvalidateAllTextures()` to nuke GL texture caches and force re-upload; shader edits recompile `basic.vert`/`basic.frag` and keep the old program if recompile fails. `TextureOverrides::TryRegister*` call sites and `LoadResourcesScript` all register watches.
+
+**External shader files** — `shaders/basic.vert`/`shaders/basic.frag` loaded preferentially at `CompileShaders` time via `ReadTextFile`, with the embedded string literal kept as a fallback for release builds where shaders aren't shipped as loose files.
+
+**Shader-based custom material system** — `CustomMaterials.cpp`/`.h`. Modders attach a custom GLSL shader to any asset by dropping a `<stem>.material` file next to the asset (e.g. `HUNTDAT/TREX.material` next to `HUNTDAT/TREX.CAR`). The file format is line-based, whitespace-separated, with `#` comments — full JSON/TOML would drag in a dependency for what's essentially a flat key/value list.
+
+Directives:
+
+| Directive | Effect |
+|---|---|
+| `shader <name>` | Loads `shaders/<name>.vert` + `shaders/<name>.frag` as the program |
+| `tex <uniform> <path>` | PNG/TGA/BMP/JPG → next free sampler unit (1..N); unit 0 is the engine's albedo binding |
+| `float <uniform> <x>` | Sets a `uniform float` |
+| `vec2 <uniform> <x> <y>` | Sets a `uniform vec2` |
+| `vec3 <uniform> <x> <y> <z>` | Sets a `uniform vec3` |
+| `vec4 <uniform> <x> <y> <z> <w>` | Sets a `uniform vec4` |
+
+Vertex attribute locations are fixed to match `shaders/basic.vert` (`0 aPos`, `1 aDepth`, `2 aColor`, `3 aSpecular`, `4 aTexCoord`) — modder shaders reuse these so the engine's existing vertex buffers just work. The engine always provides `uProjection` (mat4) and binds the albedo to `uTexture` on unit 0; everything else is the modder's call, including fog/alpha-test/brightness (modders who want those can reuse the math from `basic.frag`).
+
+Precedence at draw time: **custom material → PBR material → default Lambert**. `renderd3d.cpp` tracks `hMaterial` and `hCustomMaterial` in lockstep with `hTexture`; `RendererGL::BindCustomMaterial` switches GL to the custom program and `CustomMaterials::Apply` pushes the material's uniforms + textures. Because GL uniforms are per-program and persist across `glUseProgram` swaps, the default engine program's fog/alpha/brightness/PBR state doesn't need re-pushing after the custom draw ends — just `glUseProgram(m_shaderProgram)` restores it. The projection matrix is cached in `m_projMatrix` every `BeginFrame` so the custom program gets the current screen-space transform.
+
+Registry is pointer-keyed the same as `TextureOverrides` and `Materials`, and `Resources.cpp` calls `CustomMaterials::TryRegisterSibling/WithExts` at every texture-load call site. Hot reload is wired to the `.material` file itself — editing the material (or its referenced `.vert`/`.frag`) triggers `CustomMaterials::Reload`, which drops the shader-program cache entry, re-reads the `.vert`/`.frag` from disk, recompiles, and re-applies the material's uniform state. Brand-new `.material` files dropped in live are also picked up without a restart: the reload callback falls through to `TryRegisterWithExts` when the key isn't yet registered.
+
+Example shader pair and annotated `.material` template ship in `shaders/custom_tint.vert`, `shaders/custom_tint.frag`, and `shaders/example.material`.
+
+### Remaining for this phase
+
 - Virtual filesystem: wrap scattered path lookups in a VFS that can mount zips/folders with priority, enabling mod packs without overwriting game files
-- Hot-reload for textures, shaders, and `_RES.txt` on file change
-- Parameterize map size constants (`mapR`/`mapMX`) to allow larger maps
 - Data-driven dinos/weapons: move hardcoded stats out of `Characters.cpp` / `Game.cpp` into editable TOML/JSON
-- Menu/UI picture overrides — `LoadPictureTGA` path is separate from the 16-bit pipeline and doesn't use `TextureOverrides` yet
+- Menu/UI picture overrides — `LoadPictureTGA` needs a path-keyed registry (not pointer-keyed — the heap recycles menu-picture addresses for terrain/model buffers after inter-level `ReleaseResources`, so pointer keys cause cross-asset bleed)
 
 ## Phase 7 — Gameplay and Engine Improvements (FUTURE)
 
@@ -244,5 +269,4 @@ Key implementation notes:
 - **Mod compatibility rule**: every new asset loader is additive; never remove a retail-format parser (.CAR, .3DF, .RSC, .MAP, .TGA, .WAV). Existing mods like Carnivores 2+ must continue to load unchanged. New formats (glTF, PNG, JSON dino defs, etc.) slot in beside the originals, never replace them.
 
 ## Important Context
-- This source port distributes only the engine — users must supply their own game assets from a retail copy.
 - The .CAR model format is documented by community tools: C3Dit (https://github.com/carnivores-cpe/c3dit) can read/write .CAR files.

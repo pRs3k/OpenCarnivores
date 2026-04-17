@@ -6,6 +6,7 @@
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include "renderer/RendererGL.h"
+#include "HotReload.h"
 
 // SOURCEPORT: SDL2 platform state
 // Under OpenGL, keyboard state is maintained via SDL events;
@@ -161,8 +162,8 @@ void PreCashGroundModel()
 	    if ( (x & 1) + (y & 1) > 0) continue;
 #endif
 
-	  int xx = (CCX + x) & 1023;
-	  int yy = (CCY + y) & 1023;      
+	  int xx = (CCX + x) & gMapMask;
+	  int yy = (CCY + y) & gMapMask;
 
 	  v[0].x = xx*256 - CameraX;
       v[0].z = yy*256 - CameraZ;	  
@@ -1813,7 +1814,8 @@ int main(int argc, char* argv[])
     // displays (e.g. 150% scaling: 2560x1440 physical vs 1707x960 logical).
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO) != 0) {
+    // SOURCEPORT: audio is OpenAL Soft; SDL audio subsystem not used.
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         MessageBoxA(NULL, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
         return 1;
     }
@@ -1826,9 +1828,8 @@ int main(int argc, char* argv[])
     // the wrong bit-shift path. Setting it here before LoadModelEx/LoadResources matches
     // the exact same code paths the D3D path exercises.
     HARD3D = TRUE;
-    // SOURCEPORT: Audio uses DirectSound which needs an HWND.
-    // We defer audio init until after Activate3DHardware creates the SDL window.
-    // InitAudioSystem is called below after the first Activate3DHardware.
+    // SOURCEPORT: audio init (OpenAL Soft) is deferred until after Activate3DHardware
+    // so the SDL window exists for hwndMain (used by Win32 MessageBox paths, not audio).
 
     // SOURCEPORT: Phase 2 — check if launched directly into a hunt via prj= arg.
     // If ProjectName is set, skip the menu system and load that area directly.
@@ -1902,7 +1903,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    // SOURCEPORT: Now that the SDL window exists, get its HWND for DirectSound
+    // SOURCEPORT: get the SDL window's HWND for Win32 MessageBox paths.
     {
         extern RendererGL* g_glRenderer;  // defined in renderd3d.cpp
         SDL_SysWMinfo wmInfo;
@@ -2022,6 +2023,9 @@ int main(int argc, char* argv[])
                 }
             }
             if (!huntDone) {
+                // SOURCEPORT: dev hot reload — polls registered files (shaders,
+                // _res.txt, texture overrides) ~3×/sec, fires callbacks on change.
+                HotReload::Tick();
                 if (blActive) ProcessGame();
                 else SDL_Delay(100);
                 // SOURCEPORT: ExitTime expiry sets this instead of DoHalt
