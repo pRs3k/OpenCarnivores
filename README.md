@@ -20,23 +20,8 @@ Copy `OpenCarnivores.exe` (and the `.dll` files and `shaders/` folder next to it
 ### Step 4 — Double-click `OpenCarnivores.exe`
 That's it. The game should launch at your monitor's native resolution.
 
-### Common command-line options (optional)
-Right-click → Create Shortcut on `OpenCarnivores.exe`, then edit the shortcut's **Target** to add options at the end:
-
-| Option | What it does |
-|---|---|
-| `-fullscreen` | Exclusive fullscreen |
-| `-borderless` | Borderless window at desktop resolution |
-| `-width=1920 -height=1080` | Force a specific resolution |
-| `-novsync` | Disable VSync (uncapped framerate) |
-| `-nosnd` | Disable audio |
-
-Example target:
-`C:\Games\Carnivores2\OpenCarnivores.exe -borderless`
-
 ### Troubleshooting
 - **"Missing file" or black screen on launch** — you probably don't have the `HUNTDAT` folder next to `OpenCarnivores.exe`. Re-check Step 3.
-- **No sound** — remove `-nosnd` if you added it. Make sure no other program has exclusive audio.
 - **Game is too dark or too bright** — open the in-game Options menu and adjust the Brightness slider; it updates live.
 - **Resolution looks wrong** — open Options → Display and pick a resolution from the list. The choice is saved to `display.cfg`.
 
