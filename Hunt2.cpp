@@ -479,6 +479,18 @@ void DrawPostObjects()
   if (BINMODE) {
    d3dSetHUDMode(TRUE);  // SOURCEPORT: HUD mode — binoculars frame needs opaque black pixels
    RenderNearModel(Binocular, 0, 0, 2*(216-72 * BinocularPower), 192,  0,0);
+#ifdef _opengl
+   // SOURCEPORT: the binocular model was designed for 4:3.  In widescreen the
+   // Hor+ FOV leaves the extra horizontal area uncovered — fill sides with black.
+   {
+     extern RendererGL* g_glRenderer;
+     int sideW = (WinW - WinH * 4 / 3) / 2;
+     if (sideW > 0 && g_glRenderer) {
+       g_glRenderer->FillRect(0,          0, sideW, WinH, 0xFF000000u);
+       g_glRenderer->FillRect(WinW-sideW, 0, sideW, WinH, 0xFF000000u);
+     }
+   }
+#endif
    d3dSetHUDMode(FALSE);
    ScanLifeForms();
    MapMode = FALSE;
@@ -667,24 +679,33 @@ SKIPWEAPON:
   }
   
   
-  if (TrophyMode)
-	DrawPicture( VideoCX - TrophyExit.W / 2, 2, TrophyExit);
+  if (TrophyMode) {
+    int dw = TrophyExit.W * WinH / 480;
+    int dh = TrophyExit.H * WinH / 480;
+    DrawPictureScaled(VideoCX - dw / 2, 2, dw, dh, TrophyExit);
+  }
 
-  if (EXITMODE)
-	DrawPicture( (WinW - ExitPic.W) / 2, (WinH - ExitPic.H) / 2, ExitPic);
+  if (EXITMODE) {
+    // SOURCEPORT: scale to screen height so the image stays the same relative size at any resolution
+    int dw = ExitPic.W * WinH / 480;
+    int dh = ExitPic.H * WinH / 480;
+    DrawPictureScaled((WinW - dw) / 2, (WinH - dh) / 2, dw, dh, ExitPic);
+  }
 
   if (PAUSE)   
 	DrawPicture( (WinW - PausePic.W) / 2, (WinH - PausePic.H) / 2, PausePic);
 
   if (TrophyMode || TrophyTime)
 	  if (TrophyBody!=-1) {
-		int x0 = WinW - TrophyPic.W - 16;
-		int y0 = WinH - TrophyPic.H - 12;
-		if (!TrophyMode) 
-			x0 = VideoCX - TrophyPic.W / 2;
-		    
-        DrawPicture( x0, y0, TrophyPic);		
-        DrawTrophyText(x0, y0);		
+		int dw = TrophyPic.W * WinH / 480;
+		int dh = TrophyPic.H * WinH / 480;
+		int x0 = WinW - dw - 16;
+		int y0 = WinH - dh - 12;
+		if (!TrophyMode)
+			x0 = VideoCX - dw / 2;
+
+        DrawPictureScaled(x0, y0, dw, dh, TrophyPic);
+        DrawTrophyText(x0, y0);
 
 		if (TrophyTime) {
 			TrophyTime-=TimeDt;
@@ -1341,7 +1362,9 @@ void ProcessControls()
    if (KeyboardState [KeyMap.fkSRight] & 128) KeyFlags+=kfSRight;   
    
 
-   if (KeyboardState [KeyMap.fkJump] & 128) KeyFlags+=kfJump;   
+   // SOURCEPORT: rising-edge only — prevents multi-jump when button is held
+   if (KeyboardState [KeyMap.fkJump] & 128)
+	   if (!(_KeyFlags & kfJump)) KeyFlags+=kfJump;
    
    if (KeyboardState [KeyMap.fkCall] & 128) 
 	 if (!(_KeyFlags & kfCall)) KeyFlags+=kfCall;
@@ -1734,6 +1757,9 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	LoadWav("HUNTDAT\\SOUNDFX\\hum_die2.wav",  fxScream[1]);
 	LoadWav("HUNTDAT\\SOUNDFX\\hum_die3.wav",  fxScream[2]);
 	LoadWav("HUNTDAT\\SOUNDFX\\hum_die4.wav",  fxScream[3]);
+	LoadWav("HUNTDAT\\SOUNDFX\\MENUAMB.WAV",   fxMenuAmb);
+	LoadWav("HUNTDAT\\SOUNDFX\\MENUGO.WAV",    fxMenuGo);
+	LoadWav("HUNTDAT\\SOUNDFX\\MENUMOV.WAV",   fxMenuMov);
 
 	LoadPictureTGA(PausePic,   "HUNTDAT\\MENU\\pause.tga");       conv_pic(PausePic);
 	LoadPictureTGA(ExitPic,    "HUNTDAT\\MENU\\exit.tga");        conv_pic(ExitPic);
@@ -1787,7 +1813,7 @@ int main(int argc, char* argv[])
     // displays (e.g. 150% scaling: 2560x1440 physical vs 1707x960 logical).
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO) != 0) {
         MessageBoxA(NULL, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
         return 1;
     }
@@ -1837,6 +1863,9 @@ int main(int argc, char* argv[])
     LoadWav("HUNTDAT\\SOUNDFX\\hum_die2.wav",  fxScream[1]);
     LoadWav("HUNTDAT\\SOUNDFX\\hum_die3.wav",  fxScream[2]);
     LoadWav("HUNTDAT\\SOUNDFX\\hum_die4.wav",  fxScream[3]);
+    LoadWav("HUNTDAT\\SOUNDFX\\MENUAMB.WAV",   fxMenuAmb);
+    LoadWav("HUNTDAT\\SOUNDFX\\MENUGO.WAV",    fxMenuGo);
+    LoadWav("HUNTDAT\\SOUNDFX\\MENUMOV.WAV",   fxMenuMov);
 
     LoadPictureTGA(PausePic,   "HUNTDAT\\MENU\\pause.tga");       conv_pic(PausePic);
     LoadPictureTGA(ExitPic,    "HUNTDAT\\MENU\\exit.tga");        conv_pic(ExitPic);
@@ -1942,10 +1971,14 @@ int main(int argc, char* argv[])
                     if (vk == 0x09 && !TrophyMode) ToggleMapMode(); // VK_TAB — always map
                     if (vk >= '1' && vk <= '6') {
                         int w = vk - '1';
-                        if (!Weapon.FTime && ShotsLeft[w]) {
-                            TargetWeapon = w;
-                            if (!Weapon.state) CurrentWeapon = TargetWeapon;
-                            HideWeapon();
+                        if (!Weapon.FTime) {
+                            if (ShotsLeft[w]) {
+                                TargetWeapon = w;
+                                if (!Weapon.state) CurrentWeapon = TargetWeapon;
+                                HideWeapon();
+                            } else {
+                                AddMessage("No weapon");
+                            }
                         }
                     }
                     if (vk == 0x1B) { // VK_ESCAPE
@@ -1958,11 +1991,12 @@ int main(int argc, char* argv[])
                     if (vk == 'R') {
                         if (TrophyBody != -1) RemoveCurrentTrophy();
                         if (EXITMODE) {
-                            // Return to menus: save, release area resources, loop back
-                            if (MyHealth) SaveTrophy();
-                            ReleaseResources();
-                            huntDone  = true;
-                            needMenus = true;
+                            // SOURCEPORT: restart the current hunt immediately —
+                            // reload the same map/settings without returning to menus.
+                            EXITMODE  = FALSE;
+                            ExitTime  = 0;
+                            LoadResources();   // calls ReleaseResources() then reloads map
+                            _GameState = 0;    // triggers ReInitGame() on next ProcessGame()
                         }
                     }
                     if (vk == 0x78) { // VK_F9

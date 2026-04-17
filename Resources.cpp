@@ -2,6 +2,7 @@
 #include "stdio.h"
 #ifdef _opengl
 #include "renderer/RendererGL.h"
+#include "TextureOverrides.h"
 #endif
 HANDLE hfile;
 DWORD  l;
@@ -761,6 +762,13 @@ void LoadModelEx(TModel* &mptr, char* FName)
 #endif
 	GenerateModelMipMaps(mptr);
 	GenerateAlphaFlags(mptr);
+
+#ifdef _opengl
+	// SOURCEPORT: try to load a PNG/TGA override sibling (e.g. BINOCUL.png
+	// next to BINOCUL.3DF).  If present, the GL renderer will upload the
+	// 32-bit image instead of the 16-bit RGB555 data.
+	TextureOverrides::TryRegisterSibling(mptr->lpTexture, FName);
+#endif
 }
 
 
@@ -1068,8 +1076,14 @@ void GenerateMapImage()
 
 void ReleaseResources()
 {
+	// SOURCEPORT: stop audio before freeing sample buffers — the SDL audio callback
+	// runs on a separate thread and may still hold pointers into Ambient[].sfx.lpData
+	// or RandSound[].lpData. AudioStop() acquires the audio lock and zeroes all
+	// channel/ambient lpData pointers before we free the underlying memory.
+	AudioStop();
+
 	HeapReleased=0;
-    for (int t=0; t<1024; t++) 
+    for (int t=0; t<1024; t++)
 	 if (Textures[t]) {
       _HeapFree(Heap, 0, (void*)Textures[t]);
 	  Textures[t] = NULL;
@@ -1244,8 +1258,17 @@ void LoadResources()
 
 
     PrintLog("Loading textures:");
-    for (int tt=0; tt<tc; tt++) 
-        LoadTexture(Textures[tt]);	
+    for (int tt=0; tt<tc; tt++) {
+        LoadTexture(Textures[tt]);
+#ifdef _opengl
+        // SOURCEPORT: look for <ProjectName>_tex_NN.{png,tga,bmp,jpg} override.
+        // GL path always binds DataA (never DataB/C/D — see renderd3d DataA-always fix),
+        // so one override per terrain texture is enough.
+        char base[256];
+        wsprintf(base, "%s_tex_%02d", ProjectName, tt);
+        TextureOverrides::TryRegisterWithExts(Textures[tt]->DataA, base);
+#endif
+    }
 	PrintLog(" Done.\n");
 
 
@@ -1260,6 +1283,17 @@ void LoadResources()
 		MObjects[mm].info.linelenght = (MObjects[mm].info.linelenght / 128) * 128;
         LoadModel(MObjects[mm].model);
         LoadBMPModel(MObjects[mm]);
+#ifdef _opengl
+        // SOURCEPORT: per-object overrides — <ProjectName>_obj_NN.{png…} for the
+        // 3D model texture, <ProjectName>_obj_NN_bmp.{png…} for the distance billboard.
+        {
+            char base[256];
+            wsprintf(base, "%s_obj_%02d", ProjectName, mm);
+            TextureOverrides::TryRegisterWithExts(MObjects[mm].model->lpTexture, base);
+            wsprintf(base, "%s_obj_%02d_bmp", ProjectName, mm);
+            TextureOverrides::TryRegisterWithExts(MObjects[mm].bmpmodel.lpTexture, base);
+        }
+#endif
 
 		if (MObjects[mm].info.flags & ofNOLIGHT)
 			FillMemory(MObjects[mm].model->VLight, 4*1024*4, 0);
@@ -1290,6 +1324,14 @@ void LoadResources()
 	PrintLog("Finishing with .res:");
     LoadSky();
     LoadSkyMap();
+#ifdef _opengl
+    {
+        // SOURCEPORT: <ProjectName>_sky.{png,tga,bmp,jpg} overrides the sky dome.
+        char base[256];
+        wsprintf(base, "%s_sky", ProjectName);
+        TextureOverrides::TryRegisterWithExts(SkyPic, base);
+    }
+#endif
 	
 	int FgCount;
 	ReadFile(hfile, &FgCount, 4, &l, NULL); 
@@ -1491,9 +1533,9 @@ void ReInitGame()
 	PrintLog("ReInitGame();\n");
 	PlaceHunter();
 	if (TrophyMode) {
-		ChCount = 0;    // SOURCEPORT: no dinosaurs in trophy room
+		PlaceTrophy();
 		RadarMode = FALSE;
-	} else PlaceCharacters();    
+	} else PlaceCharacters();
 
     LoadCharacters();
 
@@ -1621,6 +1663,11 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
     DATASHIFT(chinfo.mptr->lpTexture, chinfo.mptr->TextureSize);
     GenerateModelMipMaps(chinfo.mptr);
 	GenerateAlphaFlags(chinfo.mptr);
+
+#ifdef _opengl
+	// SOURCEPORT: optional 32-bit PNG/TGA override sibling next to the .CAR file.
+	TextureOverrides::TryRegisterSibling(chinfo.mptr->lpTexture, FName);
+#endif
 	//CalcLights(chinfo.mptr);
 	
 	//ApplyAlphaFlags(chinfo.mptr->lpTexture, 256*256);

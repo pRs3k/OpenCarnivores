@@ -509,6 +509,7 @@ void RenderModelClipWater(TModel*, float, float, float, int, int, float, float);
 void RenderModelClip     (TModel*, float, float, float, int, int, float, float);
 void RenderNearModel     (TModel*, float, float, float, int, float, float);
 void DrawPicture         (int x, int y, TPicture &pic);
+void DrawPictureScaled   (int x, int y, int dw, int dh, TPicture &pic);
 
 void InitClips();
 void InitDirectDraw();
@@ -657,6 +658,7 @@ _EXTORNOT   char    ProjectName[128];
 _EXTORNOT   int     _GameState;
 _EXTORNOT   TSFX    fxCall[10][3], fxScream[4];
 _EXTORNOT   TSFX    fxUnderwater, fxWaterIn, fxWaterOut, fxJump, fxStep[3], fxStepW[3];
+_EXTORNOT   TSFX    fxMenuAmb, fxMenuGo, fxMenuMov;
 //========== map =====================//
 _EXTORNOT   byte HMap[ctMapSize][ctMapSize];
 _EXTORNOT   byte WMap[ctMapSize][ctMapSize];

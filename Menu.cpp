@@ -28,6 +28,21 @@ struct MenuScreen {
     bool loaded = false;
 };
 
+// ─── Menu audio helpers ───────────────────────────────────────────────────────
+// gLastHov: track hover ID so MENUMOV plays only on enter, not every frame.
+// gMenuAmbActive: only call SetAmbient when ambient actually changes, to avoid
+//   audible loop restarts when navigating between screens that share the same track.
+static int    gLastHov      = -1;
+static short* gMenuAmbActive = nullptr;
+
+// Start MENUAMB looping if it isn't already the current ambient.
+static void MenuStartAmb() {
+    if (fxMenuAmb.lpData && fxMenuAmb.lpData != gMenuAmbActive) {
+        gMenuAmbActive = fxMenuAmb.lpData;
+        SetAmbient(fxMenuAmb.length, fxMenuAmb.lpData, 192);
+    }
+}
+
 // ─── Mouse state (updated by PollMenuEvents) ─────────────────────────────────
 // x/y are in GL drawable coordinates (= WinW × WinH space), not raw window pixels.
 
@@ -35,6 +50,7 @@ static struct {
     int x = 0, y = 0;   // scaled to WinW × WinH drawable space
     bool lClick  = false;
     bool rClick  = false;
+    bool lHeld   = false;  // true while left button is held down (for drag)
     int  scancode = 0;
 } gMI;
 
@@ -63,8 +79,11 @@ static bool PollMenuEvents(bool& appQuit) {
             ScaleMouse(ev.motion.x, ev.motion.y); break;
         case SDL_MOUSEBUTTONDOWN:
             ScaleMouse(ev.button.x, ev.button.y);
-            if (ev.button.button == SDL_BUTTON_LEFT)  gMI.lClick = true;
+            if (ev.button.button == SDL_BUTTON_LEFT)  { gMI.lClick = true; gMI.lHeld = true; }
             if (ev.button.button == SDL_BUTTON_RIGHT) gMI.rClick = true;
+            break;
+        case SDL_MOUSEBUTTONUP:
+            if (ev.button.button == SDL_BUTTON_LEFT) gMI.lHeld = false;
             break;
         case SDL_KEYDOWN:
             gMI.scancode = ev.key.keysym.scancode; break;
@@ -191,6 +210,15 @@ static int CompositeMenu(MenuScreen& ms, const std::vector<int>& alwaysOn = {}) 
         memcpy(ms.comp.lpImage, ms.off.lpImage, ms.comp.W * ms.comp.H * 2);
     }
 
+    // ── Menu sounds ──
+    if (hoverId != gLastHov) {
+        if (hoverId > 0 && fxMenuMov.lpData)
+            AddVoicev(fxMenuMov.length, fxMenuMov.lpData, 160);
+        gLastHov = hoverId;
+    }
+    if (gMI.lClick && hoverId > 0 && fxMenuGo.lpData)
+        AddVoicev(fxMenuGo.length, fxMenuGo.lpData, 220);
+
     return hoverId;
 }
 
@@ -213,6 +241,15 @@ static void MT(const char* s, int x, int y, uint32_t col = 0x00FFFFFF) {
     if (s && s[0]) {
         g_glRenderer->DrawText(x+1, y+1, s, 0x00000000);
         g_glRenderer->DrawText(x,   y,   s, col);
+    }
+}
+
+// Draw medium-weight text (fnt_Midd style: semibold, 16px at 600p) — used for NAME/SCORE bars.
+static void MTMed(const char* s, int x, int y, uint32_t col = 0x00FFFFFF) {
+    if (s && s[0]) {
+        int sh = std::max(1, WinH / 720);  // 1px at ≤720p, 2px at 1440p, 3px at 2160p
+        g_glRenderer->DrawTextMed(x+sh, y+sh, s, 0x00000000);
+        g_glRenderer->DrawTextMed(x,    y,    s, col);
     }
 }
 
@@ -287,7 +324,9 @@ static PlayerSlot ReadSlot(int n) {
 
 static void AppendChar(char* buf, int maxLen, int sc) {
     char ch = 0;
-    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)      ch = 'A' + (sc - SDL_SCANCODE_A);
+    bool shift = (SDL_GetModState() & KMOD_SHIFT) != 0;
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z)
+        ch = (shift ? 'A' : 'a') + (sc - SDL_SCANCODE_A);
     else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) ch = '1' + (sc - SDL_SCANCODE_1);
     else if (sc == SDL_SCANCODE_0)     ch = '0';
     else if (sc == SDL_SCANCODE_SPACE) ch = ' ';
@@ -306,9 +345,9 @@ static int RunPlayerSelect(bool& appQuit) {
     // Positions scaled from 800×600 originals
     // REGLISTX=320, REGLISTY=370 (from Interface.cpp)
     // Input box just above the list:
-    int lx  = WinW * 320 / 800;   // list left x
-    int iy  = WinH * 335 / 600;   // input box y
-    int ly  = WinH * 370 / 600;   // list top y (REGLISTY)
+    int lx  = WinW * 307 / 800;   // list left x
+    int iy  = WinH * 328 / 600;   // input box y
+    int ly  = WinH * 368 / 600;   // list top y (REGLISTY)
     int slH = WinH * 32  / 600;   // slot height
 
     char typedName[32] = "";       // text being typed
@@ -342,15 +381,15 @@ static int RunPlayerSelect(bool& appQuit) {
         for (int i = 0; i < 5; i++) {
             PlayerSlot ps = ReadSlot(i);
             int sy = ly + i * slH;
-            bool hot = gMI.x >= lx && gMI.x < lx + WinW*200/800 &&
+            bool hot = gMI.x >= lx && gMI.x < lx + WinW*180/800 &&
                        gMI.y >= sy  && gMI.y < sy + slH;
             bool sel = (i == highlightSlot);
 
             if (ps.exists) {
                 char line[160];
                 wsprintf(line, "%s  %d", ps.name, ps.score);
-                MT(line, lx, sy,
-                   sel ? 0x00FFD040 : (hot ? 0x00FFFF80 : 0x00A0B0A0));
+                MTMed(line, lx, sy,
+                      sel ? 0x00FFD040 : (hot ? 0x00FFFF80 : 0x00A0B0A0));
                 if (hot && gMI.lClick) {
                     highlightSlot = i;
                     // SOURCEPORT: populate input field with clicked player's name
@@ -492,6 +531,7 @@ static bool RunWaiver(bool& appQuit) {
 // Return values: 0=Hunt 1=Trophy 2=Options 3=Credits 4=Quit 5=ChangePlayer
 
 static int RunMainMenu(bool& appQuit) {
+    MenuStartAmb();   // MENUM → MENUAMB
     MenuScreen ms = {};
     LoadMenuScreen(ms,
         "HUNTDAT\\MENU\\MENUM.TGA",
@@ -508,13 +548,13 @@ static int RunMainMenu(bool& appQuit) {
         MenuBegin();
         DrawMenuScreen(ms);
 
-        // Overlay player name and score into the NAME/ACCOUNT/STATISTICS bar
-        // baked into MENUM.TGA.  Positions are in 800×600 design space, scaled.
-        // NAME section spans roughly x=140-380; ACCOUNT section x=445-650 (score after label).
-        MT(TrophyRoom.PlayerName, WinW*155/800, WinH*30/600, 0x00C8A860);
+        // Overlay player name and score into the NAME/ACCOUNT bar baked into MENUM.TGA.
+        // Positions are in 800×600 design space, scaled.
+        // NAME bar spans ~x=0-100; ACCOUNT bar spans ~x=310-510.  Bars are ~26px tall.
+        MTMed(TrophyRoom.PlayerName, WinW*98/800, WinH*12/600, 0x00AC6D24);
         {
             char scoreBuf[32]; wsprintf(scoreBuf, "%d", TrophyRoom.Score);
-            MT(scoreBuf, WinW*580/800, WinH*30/600, 0x00C8A860);
+            MTMed(scoreBuf, WinW*478/800, WinH*12/600, 0x00AC6D24);
         }
 
         if (gMI.lClick) {
@@ -637,7 +677,7 @@ static int RunAreaSelect(bool& appQuit) {
         // Approximate placement: center at (WinW*0.5, WinH*0.4), 357x208 scaled to 50% screen.
         if (areaPic.lpImage) {
             // Scale the preview to fit a reasonable area, roughly half the screen width
-            int pw = (WinW * 40) / 100;
+            int pw = (WinW * 60) / 100;
             int ph = (pw * areaPic.H) / areaPic.W;
             int px = (WinW - pw) / 2;
             int py = (WinH * 15) / 100;
@@ -836,7 +876,7 @@ static int RunDinoSelect(bool& appQuit) {
 
         // Dino preview
         if (dinoPic.lpImage && curDino < TotalC) {
-            int pw = (WinW * 40) / 100;
+            int pw = (WinW * 60) / 100;
             int ph = (pw * dinoPic.H) / dinoPic.W;
             int px = (WinW - pw) / 2;
             int py = (WinH * 14) / 100;
@@ -1018,7 +1058,7 @@ static bool RunWeaponEquipSelect(bool& appQuit) {
         if (activeTab == 0) {
             // Weapons: show current weapon image + info, toggle on/off
             if (curWep < TotalW && curWep < 6 && wepPics[curWep].lpImage) {
-                int pw = (WinW * 35) / 100;
+                int pw = (WinW * 45) / 100;
                 int ph = (pw * wepPics[curWep].H) / wepPics[curWep].W;
                 int px = WinW/2 - pw/2;
                 OverlayPic(wepPics[curWep], px, contentY, pw, ph);
@@ -1048,7 +1088,7 @@ static bool RunWeaponEquipSelect(bool& appQuit) {
         } else {
             // Equipment: show current equip image + info, toggle on/off
             if (curEquip < 4 && equipPics[curEquip].lpImage) {
-                int pw = (WinW * 35) / 100;
+                int pw = (WinW * 45) / 100;
                 int ph = (pw * equipPics[curEquip].H) / equipPics[curEquip].W;
                 int px = WinW/2 - pw/2;
                 OverlayPic(equipPics[curEquip], px, contentY, pw, ph);
@@ -1115,6 +1155,7 @@ static bool RunWeaponEquipSelect(bool& appQuit) {
 // OPT_MAP ids: 1=GAME icon, 2=CONTROLS icon, 3=VIDEO icon, 4=BACK
 
 static void RunOptions(bool& appQuit) {
+    MenuStartAmb();   // OPT → MENUAMB
     MenuScreen ms = {};
     LoadMenuScreen(ms,
         "HUNTDAT\\MENU\\OPT_OFF.TGA",
@@ -1146,20 +1187,38 @@ static void RunOptions(bool& appQuit) {
         if (!GetKeyNameTextA(lp, buf, sz)) strncpy(buf, "?", sz);
     };
 
-    // Draw horizontal slider; returns updated value on click
+    TPicture slBar = {}, slBut = {};
+    SafeLoadTGA(slBar, "HUNTDAT\\MENU\\SL_BAR.TGA");
+    SafeLoadTGA(slBut, "HUNTDAT\\MENU\\SL_BUT.TGA");
+
+    // Draw horizontal slider using SL_BAR.TGA / SL_BUT.TGA; returns updated value on click.
     auto DrawSlider = [&](int tx, int ty, int tw, int th,
                           int val, int minVal, int maxVal) -> int {
         int range = maxVal - minVal;
-        g_glRenderer->FillRect(tx, ty, tw, th, 0xFF302820);
+        // Bar background
+        if (slBar.lpImage && slBar.W > 0)
+            g_glRenderer->DrawBitmap(tx, ty, tw, th, slBar.W, slBar.lpImage, false, slBar.H);
+        else
+            g_glRenderer->FillRect(tx, ty, tw, th, 0xFF302820);
+
         if (range > 0) {
-            int filled = tw * (val - minVal) / range;
-            g_glRenderer->FillRect(tx, ty, filled, th, 0xFF705040);
-            int thumbX = std::max(tx, std::min(tx + filled - 3, tx + tw - 6));
-            g_glRenderer->FillRect(thumbX, ty - 2, 6, th + 4, 0xFFC09060);
+            // Thumb: scale SL_BUT to bar height, constrain to stay fully inside bar
+            int butH   = (slBut.H > 0) ? slBut.H * th / std::max(1, slBar.H) : th + 4;
+            int butW   = (slBut.W > 0) ? slBut.W * butH / std::max(1, slBut.H) : 8;
+            int travel = tw - butW;
+            int thumbX = tx + (travel > 0 ? (val - minVal) * travel / range : 0);
+            int thumbY = ty + th / 2 - butH / 2;
+            if (slBut.lpImage && slBut.W > 0)
+                g_glRenderer->DrawBitmap(thumbX, thumbY, butW, butH, slBut.W, (void*)slBut.lpImage, true, slBut.H);
+            else
+                g_glRenderer->FillRect(thumbX, thumbY, butW, butH + 4, 0xFFC09060);
         }
-        if (gMI.lClick && gMI.x >= tx && gMI.x < tx+tw &&
-                          gMI.y >= ty-4 && gMI.y < ty+th+4) {
-            int v = minVal + (gMI.x - tx) * range / tw;
+        if (gMI.lHeld && gMI.x >= tx && gMI.x < tx+tw &&
+                         gMI.y >= ty-4 && gMI.y < ty+th+4) {
+            int butH   = (slBut.H > 0) ? slBut.H * th / std::max(1, slBar.H) : th + 4;
+            int butW   = (slBut.W > 0) ? slBut.W * butH / std::max(1, slBut.H) : 8;
+            int travel = tw - butW;
+            int v = (travel > 0) ? minVal + (gMI.x - tx) * range / travel : minVal;
             return std::max(minVal, std::min(v, maxVal));
         }
         return val;
@@ -1216,14 +1275,17 @@ static void RunOptions(bool& appQuit) {
             case SDL_MOUSEMOTION:   ScaleMouse(ev.motion.x, ev.motion.y); break;
             case SDL_MOUSEBUTTONDOWN:
                 ScaleMouse(ev.button.x, ev.button.y);
-                if (ev.button.button == SDL_BUTTON_LEFT)  gMI.lClick = true;
+                if (ev.button.button == SDL_BUTTON_LEFT)  { gMI.lClick = true; gMI.lHeld = true; }
                 if (ev.button.button == SDL_BUTTON_RIGHT) gMI.rClick = true;
                 // While waiting for a key: mouse buttons are also valid bindings
                 if (waitIdx >= 0) {
                     int vk = (ev.button.button == SDL_BUTTON_LEFT)  ? VK_LBUTTON :
                              (ev.button.button == SDL_BUTTON_RIGHT) ? VK_RBUTTON : 0;
-                    if (vk) { *bindings[waitIdx].vk = vk; waitIdx = -1; gMI.lClick = false; }
+                    if (vk) { *bindings[waitIdx].vk = vk; waitIdx = -1; gMI.lClick = false; gMI.lHeld = false; }
                 }
+                break;
+            case SDL_MOUSEBUTTONUP:
+                if (ev.button.button == SDL_BUTTON_LEFT) gMI.lHeld = false;
                 break;
             case SDL_KEYDOWN:
                 if (waitIdx >= 0) {
@@ -1270,19 +1332,19 @@ static void RunOptions(bool& appQuit) {
             int y  = WinH * 115 / 600;
 
             // Ensure sensible defaults (globals start at 0 if never saved)
-            if (OptAgres < 10) OptAgres = 128;   // 128 = baseline dino health (x1.0)
-            if (OptDens  < 10) OptDens  = 100;   // mid-range spawn density
-            if (OptSens  < 10) OptSens  = 128;   // 128 = neutral detection cone
-            if (OptViewR < 10) OptViewR = 160;   // comfortable fog distance
+            if (OptAgres <= 0) OptAgres = 128;   // 128 = baseline dino health (x1.0)
+            if (OptDens  <= 0) OptDens  = 100;   // mid-range spawn density
+            if (OptSens  <= 0) OptSens  = 128;   // 128 = neutral detection cone
+            if (OptViewR <= 0) OptViewR = 160;   // comfortable fog distance
 
             struct { const char* lbl; int* var; int mn; int mx; } sliders[] = {
-                { "Agressivity", &OptAgres, 0, 255 },   // health multiplier: val/128 × base
-                { "Density",     &OptDens,  0, 255 },   // spawn count: ~5+val/80 dinos
-                { "Sensitivity", &OptSens,  0, 255 },   // detection cone: wider = easier detect
-                { "View range",  &OptViewR, 0, 255 },   // fog range: ctViewR = 42+(val/8)*2
+                { "Agressivity", &OptAgres, 1, 255 },   // health multiplier: val/128 × base
+                { "Density",     &OptDens,  1, 255 },   // spawn count: ~5+val/80 dinos
+                { "Sensitivity", &OptSens,  1, 255 },   // detection cone: wider = easier detect
+                { "View range",  &OptViewR, 1, 255 },   // fog range: ctViewR = 42+(val/8)*2
             };
             for (auto& s : sliders) {
-                MT(s.lbl, ox, y, 0x00C8A060);
+                MTMed(s.lbl, ox, y, 0x00AC6D24);
                 *s.var = DrawSlider(ox + lblW, y + 2, slW, lnH - 6, *s.var, s.mn, s.mx);
                 y += lnH;
             }
@@ -1290,8 +1352,8 @@ static void RunOptions(bool& appQuit) {
             {
                 int vx = ox + lblW;
                 bool hot = gMI.x >= vx && gMI.x < vx+WinW*80/800 && gMI.y >= y && gMI.y < y+lnH;
-                MT("Measurement", ox, y, 0x00C8A060);
-                MT(OptSys==0 ? "Metric" : "Imperial", vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
+                MTMed("Measurement", ox, y, 0x00AC6D24);
+                MT(OptSys==0 ? "Metric" : "US", vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
                 if (hot && gMI.lClick) OptSys = 1 - OptSys;
             }
         }
@@ -1384,18 +1446,18 @@ static void RunOptions(bool& appQuit) {
             };
 
             int ox  = WinW * 80 / 800;
-            int y   = WinH * 415 / 600;
+            int y   = WinH * 350 / 600;
             int vx  = ox + lblW;
             int tvW = WinW * 130 / 800;  // clickable value column width
 
             // Audio / video driver (read-only)
-            MT("Audio Driver", ox, y, 0x00C8A060); MT("SDL2 Audio",  vx, y, 0x00C0C0C0); y += lnH;
-            MT("Video Driver", ox, y, 0x00C8A060); MT("OpenGL 3.3",  vx, y, 0x00C0C0C0); y += lnH;
+            MTMed("Audio Driver", ox, y, 0x00AC6D24); MT("SDL2 Audio",  vx, y, 0x00C0C0C0); y += lnH;
+            MTMed("Video Driver", ox, y, 0x00AC6D24); MT("OpenGL 3.3",  vx, y, 0x00C0C0C0); y += lnH;
 
             // Resolution — cycle presets for windowed/fullscreen; fixed at desktop for borderless
             {
                 char resBuf[32];
-                MT("Resolution", ox, y, 0x00C8A060);
+                MTMed("Resolution", ox, y, 0x00AC6D24);
                 if (OptDisplayMode == 2) {
                     // Borderless always uses the desktop resolution; not user-selectable
                     wsprintf(resBuf, "%dx%d", WinW, WinH);
@@ -1413,7 +1475,7 @@ static void RunOptions(bool& appQuit) {
             // Display mode — Windowed / Fullscreen / Borderless
             {
                 bool hot = gMI.x >= vx && gMI.x < vx+tvW && gMI.y >= y && gMI.y < y+lnH;
-                MT("Display", ox, y, 0x00C8A060);
+                MTMed("Display", ox, y, 0x00AC6D24);
                 MT(kModeNames[OptDisplayMode], vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
                 if (hot && gMI.lClick) ApplyDisplay(FindResIdx(), (OptDisplayMode + 1) % 3);
             }
@@ -1422,7 +1484,7 @@ static void RunOptions(bool& appQuit) {
             // VSync toggle
             {
                 bool hot = gMI.x >= vx && gMI.x < vx+tvW && gMI.y >= y && gMI.y < y+lnH;
-                MT("VSync", ox, y, 0x00C8A060);
+                MTMed("VSync", ox, y, 0x00AC6D24);
                 MT(OptVSync ? "On" : "Off", vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
                 if (hot && gMI.lClick) {
                     OptVSync = 1 - OptVSync;
@@ -1435,7 +1497,7 @@ static void RunOptions(bool& appQuit) {
             // 3D Shadows / Fog toggles
             auto Toggle = [&](const char* lbl, BOOL& flag) {
                 bool hot = gMI.x >= vx && gMI.x < vx+tvW && gMI.y >= y && gMI.y < y+lnH;
-                MT(lbl, ox, y, 0x00C8A060);
+                MTMed(lbl, ox, y, 0x00AC6D24);
                 MT(flag ? "On" : "Off", vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
                 if (hot && gMI.lClick) flag = !flag;
                 y += lnH;
@@ -1444,10 +1506,10 @@ static void RunOptions(bool& appQuit) {
             Toggle("Fog",        FOGENABLE);
 
             // Brightness slider — SOURCEPORT: live shader uniform, slider centre = neutral
-            MT("Brightness", ox, y, 0x00C8A060);
+            MTMed("Brightness", ox, y, 0x00AC6D24);
             {
                 int prev = OptBrightness;
-                OptBrightness = DrawSlider(vx, y+2, slW, lnH-6, OptBrightness+128, 0, 256) - 128;
+                OptBrightness = DrawSlider(vx, y+2, slW, lnH-6, OptBrightness+128, 64, 256) - 128;
                 if (OptBrightness != prev)
                     g_glRenderer->SetBrightness(1.0f + OptBrightness / 128.0f);
             }
@@ -1456,9 +1518,9 @@ static void RunOptions(bool& appQuit) {
         // ── CONTROLS panel ────────────────────────────────────────────────
         {
             char kbuf[32];
-            int ox   = WinW * 390 / 800;   // action label left edge
-            int kx   = WinW * 530 / 800;   // key name column
-            int y    = WinH * 100 / 600;
+            int ox   = WinW * 450 / 800;   // action label left edge
+            int kx   = WinW * 550 / 800;   // key name column
+            int y    = WinH * 80 / 600;
             int lnH2 = WinH * 24 / 600;
 
             for (int i = 0; i < kNumBindings; i++) {
@@ -1466,7 +1528,7 @@ static void RunOptions(bool& appQuit) {
                 bool hot = !waiting && gMI.x >= kx && gMI.x < kx+WinW*100/800 &&
                            gMI.y >= y && gMI.y < y+lnH2;
 
-                MT(bindings[i].name, ox, y, waiting ? 0x00FFFFFF : 0x00C8A060);
+                MTMed(bindings[i].name, ox, y, waiting ? 0x00FFFFFF : 0x00AC6D24);
                 if (waiting) {
                     MT("Press key...", kx, y, 0x00FFFF00);
                 } else {
@@ -1482,13 +1544,13 @@ static void RunOptions(bool& appQuit) {
             {
                 bool hot = waitIdx < 0 && gMI.x >= kx && gMI.x < kx+WinW*60/800 &&
                            gMI.y >= y && gMI.y < y+lnH2;
-                MT("Reverse mouse", ox, y, 0x00C8A060);
+                MTMed("Reverse mouse", ox, y, 0x00AC6D24);
                 MT(REVERSEMS ? "On" : "Off", kx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
                 if (hot && gMI.lClick) REVERSEMS = !REVERSEMS;
                 y += lnH2;
             }
             // Mouse sensitivity
-            MT("Mouse sens.", ox, y, 0x00C8A060);
+            MTMed("Mouse sensitivity", ox, y, 0x00AC6D24);
             OptMsSens = DrawSlider(kx, y+2, WinW*130/800, lnH2-6, OptMsSens, 1, 20);
         }
 
@@ -1499,6 +1561,8 @@ static void RunOptions(bool& appQuit) {
         SDL_Delay(16);
     }
 
+    FreePic(slBar);
+    FreePic(slBut);
     SaveTrophy();
     SaveDisplayConfig(); // SOURCEPORT: persist display/graphics settings globally
     FreeMenuScreen(ms);
@@ -1568,6 +1632,7 @@ static void RunTrophyRoom(bool& appQuit) {
 // list item text, selection indicators, and the dynamic account/cost numbers.
 
 static bool RunHuntSetup(bool& appQuit) {
+    MenuStartAmb();   // MENU2 → MENUAMB
     MenuScreen ms = {};
     LoadMenuScreen(ms,
         "HUNTDAT\\MENU\\MENU2.TGA",
@@ -1641,7 +1706,7 @@ static bool RunHuntSetup(bool& appQuit) {
     // fnt_Small average char width ≈ 6px in screen coords
     auto drawRight = [&](int val, int pLeft, int pRight, int iy, uint32_t col) {
         char nb[12]; wsprintf(nb, "%d", val);
-        int nx = pRight - (int)strlen(nb) * 6 - 5;
+        int nx = pRight - (int)strlen(nb) * 6 - 70;
         MT(nb, nx, iy, col);
     };
 
@@ -1675,7 +1740,7 @@ static bool RunHuntSetup(bool& appQuit) {
         int hdrH   = WinH * 48  / 600;   // panel header art height (icon + label)
         int listSH = WinH * 235 / 600;   // list area total height
         int panelW = WinW / 4;           // each of the 4 panels
-        int lineH  = WinH * 20  / 600;   // list row height
+        int lineH  = WinH * 16  / 600;   // list row height
 
         // ── TOP: preview image in VIEW frame ──────────────────────────────
         // Frame baked into MENU2 background at ≈ x=100-295, y=70-285 (800×600)
@@ -1692,13 +1757,13 @@ static bool RunHuntSetup(bool& appQuit) {
 
             // Account balance and hunt cost in ACCOUNT section (centre-top background art)
             // ≈ x=355 (balance) and x=440 (cost) in 800-space
-            int ay = WinH * 55 / 600;
+            int ay = WinH * 42 / 600;
             char buf[16];
             int displayRemaining = remaining < 0 ? 0 : remaining;
             wsprintf(buf, "%d", TrophyRoom.Score);
-            MT(buf, WinW * 355 / 800, ay, 0x00FFB040);
+            MTMed(buf, WinW * 351 / 800, ay, 0x00AC6D24);
             wsprintf(buf, "%d", displayRemaining);
-            MT(buf, WinW * 440 / 800, ay, 0x00FFB040);
+            MTMed(buf, WinW * 431 / 800, ay, 0x00AC6D24);
 
             // Info text in right section (≈ x=425, y=90 in 800×600)
             DrawMultiline(previewText.c_str(),
@@ -1734,16 +1799,16 @@ static bool RunHuntSetup(bool& appQuit) {
                     bool canAfford = sel || (delta <= remaining);
                     bool hot = canAfford &&
                                gMI.x >= px && gMI.x < pr &&
-                               gMI.y >= iy && gMI.y < iy + lineH;
+                               gMI.y >= iy + 20 && gMI.y < iy + 20 + lineH;
                     uint32_t col;
                     if (!canAfford) col = 0x00505050;       // grey — can't afford
                     else if (sel)   col = 0x00FFD040;       // yellow — selected
                     else            col = 0x0040C8B0;       // cyan — affordable
-                    MT(kAreaNames[i], px + 10, iy, col);
-                    drawRight(kAreaCost[i], px, pr, iy, col);
-                    if (hot && gMI.lClick) {
-                        curArea = i;
+                    MT(kAreaNames[i], px + 50, iy + 20, col);
+                    drawRight(kAreaCost[i], px, pr, iy + 20, col);
+                    if (hot) {
                         if (viewPanel != 0 || viewIdx != i) { viewPanel = 0; viewIdx = i; loadPreview(); }
+                        if (gMI.lClick) curArea = i;
                     }
                 }
                 break;
@@ -1757,16 +1822,16 @@ static bool RunHuntSetup(bool& appQuit) {
                     bool canAfford = en || (kDinoScore[i] <= remaining);
                     bool hot = canAfford &&
                                gMI.x >= px && gMI.x < pr &&
-                               gMI.y >= iy && gMI.y < iy + lineH;
+                               gMI.y >= iy + 20 && gMI.y < iy + 20 + lineH;
                     uint32_t col;
                     if (!canAfford) col = 0x00505050;
                     else if (en)    col = 0x00FFD040;
                     else            col = 0x0040C8B0;
-                    MT(kDinoSpecies[i], px + 10, iy, col);
-                    drawRight(kDinoScore[i], px, pr, iy, col);
-                    if (hot && gMI.lClick) {
-                        TargetDino ^= (1 << (i + AI_PARA));
+                    MT(kDinoSpecies[i], px + 35, iy + 20, col);
+                    drawRight(kDinoScore[i], px, pr, iy + 20, col);
+                    if (hot) {
                         if (viewPanel != 1 || viewIdx != i) { viewPanel = 1; viewIdx = i; loadPreview(); }
+                        if (gMI.lClick) TargetDino ^= (1 << (i + AI_PARA));
                     }
                 }
                 break;
@@ -1780,16 +1845,16 @@ static bool RunHuntSetup(bool& appQuit) {
                     bool canAfford = sel || (kWepCost[i] <= remaining);
                     bool hot = canAfford &&
                                gMI.x >= px && gMI.x < pr &&
-                               gMI.y >= iy && gMI.y < iy + lineH;
+                               gMI.y >= iy + 20 && gMI.y < iy + 20 + lineH;
                     uint32_t col;
                     if (!canAfford) col = 0x00505050;       // grey — can't afford
                     else if (sel)   col = 0x00FFD040;       // yellow — selected
                     else            col = 0x0040C8B0;       // cyan — affordable
-                    MT(kWepNames[i], px + 10, iy, col);
-                    drawRight(kWepCost[i], px, pr, iy, col);
-                    if (hot && gMI.lClick) {
-                        WeaponPres ^= (1 << i);
+                    MT(kWepNames[i], px + 35, iy + 20, col);
+                    drawRight(kWepCost[i], px, pr, iy + 20, col);
+                    if (hot) {
                         if (viewPanel != 2 || viewIdx != i) { viewPanel = 2; viewIdx = i; loadPreview(); }
+                        if (gMI.lClick) WeaponPres ^= (1 << i);
                     }
                 }
                 break;
@@ -1801,13 +1866,13 @@ static bool RunHuntSetup(bool& appQuit) {
                     if (iy + lineH > listSY + listSH) break;
                     bool en  = *equipFlags[i] != FALSE;
                     bool hot = gMI.x >= px && gMI.x < pr &&
-                               gMI.y >= iy && gMI.y < iy + lineH;
+                               gMI.y >= iy + 20 && gMI.y < iy + 20 + lineH;
                     // All equipment always selectable: yellow if equipped, cyan if not
                     uint32_t col = en ? 0x00FFD040 : 0x0040C8B0;
-                    MT(kEquipNms[i], px + 10, iy, col);
-                    if (hot && gMI.lClick) {
-                        *equipFlags[i] = *equipFlags[i] ? FALSE : TRUE;
+                    MT(kEquipNms[i], px + 35, iy + 20, col);
+                    if (hot) {
                         if (viewPanel != 3 || viewIdx != i) { viewPanel = 3; viewIdx = i; loadPreview(); }
+                        if (gMI.lClick) *equipFlags[i] = *equipFlags[i] ? FALSE : TRUE;
                     }
                 }
                 break;
@@ -1871,6 +1936,15 @@ static void RunCredits(bool& appQuit) {
 bool RunMenus(bool& appQuit, bool skipToHunt, bool skipPlayerSelect) {
     SDL_SetRelativeMouseMode(SDL_FALSE);
     SDL_ShowCursor(SDL_ENABLE);
+
+    // SOURCEPORT: Reset ambient-active tracking so MENUAMB restarts correctly after
+    // returning from a hunt (AudioStop was called, clearing the ambient slot).
+    gMenuAmbActive = nullptr;
+
+    // Play ship-hum during player-select (MENUR) — the only screen that uses it.
+    // MENUAMB takes over once the player reaches MENUM/MENU2/OPT.
+    if (ShipModel.SoundFX[0].lpData)
+        SetAmbient3d(ShipModel.SoundFX[0].length, ShipModel.SoundFX[0].lpData, 0.f, 0.f, 0.f);
 
     // When returning from a hunt: open hunt setup (MENU2) first.
     // If the player presses Back there, land on the main menu (MENUM), not player select.

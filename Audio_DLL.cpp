@@ -1,180 +1,106 @@
+// Audio_DLL.cpp — SOURCEPORT: replaces the original runtime-DLL dispatch.
+// The original code loaded a_soft.dll / a_ds3d.dll / a_a3d.dll / a_eax.dll at
+// runtime and called through function pointers.  In the source port we link
+// Audio_SDL.cpp directly and call it here instead.
+
 #include <windows.h>
 #include "hunt.h"
 
-#define req_versionH 0x0001
-#define req_versionL 0x0002
+// ─── Forward declarations from Audio_SDL.cpp ─────────────────────────────────
+bool SDL_Audio_Init();
+void SDL_Audio_Shutdown();
+void SDL_Audio_Stop();
+void SDL_Audio_SetCameraPos(float cx, float cy, float cz, float alpha, float beta);
+void SDL_Audio_AddVoice3dv(int length, short* data, float x, float y, float z, int vol);
+void SDL_Audio_SetAmbient(int length, short* data, int vol);
+void SDL_Audio_SetAmbient3d(int length, short* data, float x, float y, float z);
 
-HINSTANCE hAudioDLL = NULL;
-// SOURCEPORT: track whether audio is available so wrapper functions can safely no-op
-static BOOL audioAvailable = FALSE;
-void DoHalt(LPSTR);
+static bool g_audioAvailable = false;
+static bool g_noSnd = false;   // set only by explicit -nosnd flag, not by save file
 
-typedef void (WINAPI * LPFUNC1)(void);
-typedef void (WINAPI * LPFUNC2)(HWND, HANDLE);
-typedef void (WINAPI * LPFUNC3)(float, float, float, float, float);
-typedef void (WINAPI * LPFUNC4)(int, short int*, int);
-typedef void (WINAPI * LPFUNC5)(int, short int*, float, float, float);
-typedef void (WINAPI * LPFUNC6)(int, short int*, float, float, float, int);
+// Called from ProcessCommandLine when -nosnd is passed.
+void Audio_SetNoSnd() { g_noSnd = true; }
 
-typedef int  (WINAPI * LPFUNC7)(void);
-typedef void (WINAPI * LPFUNC8)(int, float);
+// ─── Public API ───────────────────────────────────────────────────────────────
 
+void InitAudioSystem(HWND /*hw*/, HANDLE /*hlog*/, int /*driver*/)
+{
+    // SOURCEPORT: legacy driver index (DLL selector) is ignored — SDL audio is always used.
+    // Only the explicit -nosnd flag (g_noSnd) disables audio; OptSound=-1 from old saves does not.
+    Audio_Shutdown();
 
-typedef void (WINAPI * LPFUNC9)(int, AudioQuad *);
-LPFUNC9 audio_uploadgeometry;
+    if (g_noSnd) {
+        PrintLog("Audio disabled by user (-nosnd).\n");
+        return;
+    }
 
-LPFUNC1 audio_restore;
-LPFUNC1 audiostop;
-LPFUNC1 audio_shutdown;
-
-LPFUNC2 initaudiosystem;
-LPFUNC3 audiosetcamerapos;
-LPFUNC4 setambient;
-LPFUNC5 setambient3d;
-LPFUNC6 addvoice3dv;
-LPFUNC7 audio_getversion;
-LPFUNC8 audio_setenvironment;
-
+    g_audioAvailable = SDL_Audio_Init();
+}
 
 void Audio_Shutdown()
 {
-	if (audio_shutdown) audio_shutdown();
-	if (hAudioDLL)  	FreeLibrary(hAudioDLL);
-	hAudioDLL = NULL;
-	audio_shutdown = NULL;
-	audioAvailable = FALSE;
+    if (!g_audioAvailable) return;
+    SDL_Audio_Shutdown();
+    g_audioAvailable = false;
 }
-
-
-void InitAudioSystem(HWND hw, HANDLE hlog, int  driver)
-{
-	Audio_Shutdown();
-
-	// SOURCEPORT: driver == -1 means audio disabled (e.g. nosnd command line flag)
-	if (driver < 0) {
-		PrintLog("Audio disabled by user.\n");
-		return;
-	}
-
-	const char* dllNames[] = { "a_soft.dll", "a_ds3d.dll", "a_a3d.dll", "a_eax.dll" };
-	const char* dllName = (driver >= 0 && driver <= 3) ? dllNames[driver] : dllNames[0];
-
-	hAudioDLL = LoadLibrary(dllName);
-	// SOURCEPORT: Don't halt if audio DLL is missing — just disable audio and continue
-	if (!hAudioDLL) {
-		char msg[256];
-		wsprintfA(msg, "WARNING: Can't load %s — audio disabled.\n", dllName);
-		PrintLog(msg);
-		return;
-	}
-
-	initaudiosystem   = (LPFUNC2) GetProcAddress(hAudioDLL, "InitAudioSystem");
-	audio_restore     = (LPFUNC1) GetProcAddress(hAudioDLL, "Audio_Restore");
-	audiostop         = (LPFUNC1) GetProcAddress(hAudioDLL, "AudioStop");
-	audio_shutdown    = (LPFUNC1) GetProcAddress(hAudioDLL, "Audio_Shutdown");
-	audiosetcamerapos = (LPFUNC3) GetProcAddress(hAudioDLL, "AudioSetCameraPos");
-	setambient        = (LPFUNC4) GetProcAddress(hAudioDLL, "SetAmbient");
-	setambient3d      = (LPFUNC5) GetProcAddress(hAudioDLL, "SetAmbient3d");
-	addvoice3dv       = (LPFUNC6) GetProcAddress(hAudioDLL, "AddVoice3dv");
-	audio_getversion  = (LPFUNC7) GetProcAddress(hAudioDLL, "Audio_GetVersion");
-	audio_setenvironment = (LPFUNC8) GetProcAddress(hAudioDLL, "Audio_SetEnvironment");
-	audio_uploadgeometry = (LPFUNC9) GetProcAddress(hAudioDLL, "Audio_UploadGeometry");
-	// SOURCEPORT: Audio_UploadGeometry is optional — not exported by retail 1.0 DLLs
-
-	// SOURCEPORT: Check required exports — disable audio if any are missing
-	if (!initaudiosystem || !audio_restore || !audiostop || !audio_shutdown ||
-		!audiosetcamerapos || !setambient || !setambient3d || !addvoice3dv ||
-		!audio_getversion || !audio_setenvironment) {
-		PrintLog("WARNING: Audio DLL missing required exports — audio disabled.\n");
-		FreeLibrary(hAudioDLL);
-		hAudioDLL = NULL;
-		return;
-	}
-
-	int v1 = audio_getversion()>>16;
-	int v2 = audio_getversion() & 0xFFFF;
-	// SOURCEPORT: downgrade version mismatch from halt to warning for retail DLL compat
-	if ( (v1!=req_versionH) || (v2<req_versionL) )
-		PrintLog("WARNING: Audio driver version mismatch (expected 1.2+)\n");
-
-	initaudiosystem(hw, hlog);
-	audioAvailable = TRUE;
-	PrintLog("Audio system initialized.\n");
-}
-
-void Audio_UploadGeometry()
-{
-	UploadGeometry();
-	if (audioAvailable && audio_uploadgeometry) // SOURCEPORT: optional, not in retail 1.0 DLLs
-		audio_uploadgeometry(AudioFCount, data);
-}
-
-
 
 void AudioStop()
 {
-	if (audioAvailable && audiostop)
-		audiostop();
+    if (!g_audioAvailable) return;
+    SDL_Audio_Stop();
 }
 
 void Audio_Restore()
 {
-	if (audioAvailable && audio_restore)
-  	  audio_restore();
+    // SDL audio device does not get lost on focus change — no-op.
 }
 
-
-
-void AudioSetCameraPos(float cx, float cy, float cz, float ca, float cb)
+void AudioSetCameraPos(float cx, float cy, float cz, float alpha, float beta)
 {
-	if (audioAvailable && audiosetcamerapos)
-		audiosetcamerapos(cx, cy, cz, ca, cb);
+    if (!g_audioAvailable) return;
+    SDL_Audio_SetCameraPos(cx, cy, cz, alpha, beta);
 }
 
-
-void Audio_SetEnvironment(int e, float f)
+void Audio_SetEnvironment(int /*env*/, float /*f*/)
 {
-	if (audioAvailable && audio_setenvironment)
-		audio_setenvironment(e, f);
+    // EAX reverb not implemented in SDL backend.
 }
 
-
-void SetAmbient(int length, short int* lpdata, int av)
+void Audio_UploadGeometry()
 {
-	if (audioAvailable && setambient)
-		setambient(length, lpdata, av);
+    UploadGeometry();
+    // Geometry-based reverb not implemented in SDL backend.
 }
 
-
-void SetAmbient3d(int length, short int* lpdata, float cx, float cy, float cz)
+void SetAmbient(int length, short* lpdata, int vol)
 {
-	if (audioAvailable && setambient3d)
-		setambient3d(length, lpdata, cx, cy, cz);
+    if (!g_audioAvailable) return;
+    SDL_Audio_SetAmbient(length, lpdata, vol);
 }
 
-
-void AddVoice3dv(int length, short int* lpdata, float cx, float cy, float cz, int vol)
+void SetAmbient3d(int length, short* lpdata, float cx, float cy, float cz)
 {
-	if (audioAvailable && addvoice3dv)
-		addvoice3dv(length, lpdata, cx, cy, cz, vol);
+    if (!g_audioAvailable) return;
+    SDL_Audio_SetAmbient3d(length, lpdata, cx, cy, cz);
 }
 
-
-
-
-void AddVoice3d(int length, short int* lpdata, float cx, float cy, float cz)
+void AddVoice3dv(int length, short* lpdata, float cx, float cy, float cz, int vol)
 {
-   AddVoice3dv(length, lpdata, cx, cy, cz, 256);
+    if (!g_audioAvailable) return;
+    SDL_Audio_AddVoice3dv(length, lpdata, cx, cy, cz, vol);
 }
 
-
-void AddVoicev(int length, short int* lpdata, int v)
+void AddVoice3d(int length, short* lpdata, float cx, float cy, float cz)
 {
-   AddVoice3dv(length, lpdata, 0,0,0, v);
+    AddVoice3dv(length, lpdata, cx, cy, cz, 256);
 }
 
-
-void AddVoice(int length, short int* lpdata)
+void AddVoicev(int length, short* lpdata, int vol)
 {
-   AddVoice3dv(length, lpdata, 0,0,0, 256);
+    AddVoice3dv(length, lpdata, 0.f, 0.f, 0.f, vol);
+}
+
+void AddVoice(int length, short* lpdata)
+{
+    AddVoice3dv(length, lpdata, 0.f, 0.f, 0.f, 256);
 }

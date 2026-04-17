@@ -24,8 +24,10 @@ if(RENDERER STREQUAL "opengl")
     message(STATUS "Building with OpenGL 3.3 + SDL2 renderer")
     add_compile_definitions(_opengl)
 
-    set(SDL2_DIR "${CMAKE_SOURCE_DIR}/deps/SDL2-2.30.12")
-    set(GLAD_DIR "${CMAKE_SOURCE_DIR}/deps/glad")
+    set(SDL2_DIR   "${CMAKE_SOURCE_DIR}/deps/SDL2-2.30.12")
+    set(GLAD_DIR   "${CMAKE_SOURCE_DIR}/deps/glad")
+    set(OPENAL_DIR "${CMAKE_SOURCE_DIR}/deps/openal-soft")
+    set(STB_DIR    "${CMAKE_SOURCE_DIR}/deps/stb")
 
     set(RENDERER_SOURCES
         renderer/RendererGL.cpp
@@ -35,12 +37,15 @@ if(RENDERER STREQUAL "opengl")
     set(RENDERER_INCLUDES
         ${SDL2_DIR}/include
         ${GLAD_DIR}/include
+        ${OPENAL_DIR}/include
+        ${STB_DIR}
         ${CMAKE_SOURCE_DIR}          # so renderer/ headers resolve from project root
     )
 
     set(RENDERER_LIBS
         ${SDL2_DIR}/lib/x64/SDL2.lib
         ${SDL2_DIR}/lib/x64/SDL2main.lib
+        ${OPENAL_DIR}/libs/Win64/OpenAL32.lib
         opengl32
     )
 
@@ -74,11 +79,14 @@ set(SOURCES
     Resources.cpp
     mathematics.cpp
     Audio_DLL.cpp
+    Audio_OpenAL.cpp
+    TextureOverrides.cpp
     renderd3d.cpp
     Menu.cpp
     ${RENDERER_SOURCES}
     # SOURCEPORT: Loading.cpp excluded — Interface.cpp provides loading UI
-    # SOURCEPORT: Audio.cpp excluded — compiled as a_soft.dll, loaded at runtime
+    # SOURCEPORT: Audio.cpp excluded — original DirectSound/x86-ASM backend, replaced by Audio_OpenAL.cpp
+    # SOURCEPORT: Audio_SDL.cpp retained in tree but not compiled — superseded by Audio_OpenAL.cpp
     # SOURCEPORT: Render3DFX.cpp excluded — requires defunct 3Dfx Glide SDK
     # SOURCEPORT: RenderSoft.cpp/renderasm.cpp excluded — requires x86 inline ASM
 )
@@ -112,5 +120,11 @@ if(RENDERER STREQUAL "opengl")
             "${SDL2_DIR}/lib/x64/SDL2.dll"
             $<TARGET_FILE_DIR:OpenCarnivores>
         COMMENT "Copying SDL2.dll"
+    )
+    add_custom_command(TARGET OpenCarnivores POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${OPENAL_DIR}/bin/Win64/soft_oal.dll"
+            "$<TARGET_FILE_DIR:OpenCarnivores>/OpenAL32.dll"
+        COMMENT "Copying OpenAL32.dll (soft_oal.dll)"
     )
 endif()
