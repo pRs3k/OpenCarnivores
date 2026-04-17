@@ -1,4 +1,19 @@
 build/
+dist/
+
+# ReShade (user-installed, not shipped)
+opengl32.dll
+ReShade.ini
+ReShade.log
+ReShadePreset.ini
+reshade-shaders/
+
+# Stray runtime copies in repo root (belong in build/Release only)
+/OpenCarnivores.exe
+/OpenCarnivores.map
+/SDL2.dll
+/OpenAL32.dll
+/display.cfg
 
 # dgVoodoo2 wrapper (downloaded separately)
 dgvoodoo2/

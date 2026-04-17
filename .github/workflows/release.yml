@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name (e.g. v0.1.0) — used for artifact name; no release is published in manual mode'
+        required: true
+        default: 'v0.0.0-manual'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write  # needed for gh release create / upload
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure (CMake + MSVC)
+        run: cmake -B build -A x64
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Stage runtime bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.name }}"
+          STAGE="OpenCarnivores-${TAG}-win64"
+          mkdir -p "dist/${STAGE}"
+          cp build/Release/OpenCarnivores.exe "dist/${STAGE}/"
+          cp build/Release/SDL2.dll            "dist/${STAGE}/"
+          cp build/Release/OpenAL32.dll        "dist/${STAGE}/"
+          cat > "dist/${STAGE}/README.txt" <<'EOF'
+          OpenCarnivores — Carnivores 2 source port
+          =========================================
+
+          Installation
+          ------------
+          1. Copy OpenCarnivores.exe, SDL2.dll, and OpenAL32.dll into your
+             Carnivores 2 game folder (the one containing HUNTDAT\ and the
+             retail AREA*.MAP / AREA*.RSC files).
+          2. Double-click OpenCarnivores.exe.
+
+          You must own a legal copy of Carnivores 2. No game assets are
+          shipped with this engine.
+
+          Command line
+          ------------
+          -width=N -height=N    Override starting resolution
+          -fullscreen           Exclusive fullscreen
+          -borderless           Borderless fullscreen (desktop resolution)
+          -vsync / -novsync     Toggle adaptive VSync
+          -nosnd                Disable audio
+
+          Troubleshooting
+          ---------------
+          Window opens tiny / compacted:
+            Delete display.cfg from the game folder and relaunch.
+
+          No audio / crashes on launch:
+            Make sure OpenAL32.dll sits next to OpenCarnivores.exe.
+
+          High-res texture mods: see README.md in the source repo.
+
+          Homepage: https://github.com/${{ github.repository }}
+          EOF
+          echo "STAGE=${STAGE}" >> "$GITHUB_ENV"
+
+      - name: Zip bundle
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/$env:STAGE/*" -DestinationPath "dist/$env:STAGE.zip"
+          Get-ChildItem dist
+
+      - name: Upload artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.STAGE }}
+          path: dist/${{ env.STAGE }}.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (tag pushes only)
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.name }}"
+          gh release create "$TAG" \
+            "dist/${STAGE}.zip" \
+            --title "OpenCarnivores $TAG" \
+            --generate-notes \
+            --verify-tag
