@@ -9,8 +9,12 @@
 #undef min
 #undef max
 #include "RendererGL.h"
+#include "../Materials.h"
+#include "../CustomMaterials.h"
+#include "../HotReload.h"
 #include <cstring>
 #include <cstdio>
+#include <string>
 
 // Global renderer instance
 IRenderer* g_Renderer = nullptr;
@@ -77,7 +81,57 @@ uniform bool uAlphaTest;
 // SOURCEPORT: runtime brightness multiplier (1.0 = neutral, 0.0 = black, 2.0 = double-bright)
 uniform float uBrightness;
 
+// SOURCEPORT: PBR override path. When uPBR is set, the bound texture at unit 0
+// is the albedo; units 1/2/3 supply tangent-space normal, metallic+roughness
+// (glTF convention: metallic in R, roughness in G), and AO. Tangent frame is
+// rebuilt from screen-space derivatives so the retail vertex format needs no
+// tangent/bitangent attributes. Lighting = vertex-baked irradiance (vColor)
+// as diffuse + Cook-Torrance GGX specular against a hardcoded sun direction.
+uniform bool      uPBR;
+uniform sampler2D uNormalMap;
+uniform sampler2D uMRMap;
+uniform sampler2D uAOMap;
+uniform float     uMetallicFactor;
+uniform float     uRoughnessFactor;
+uniform vec3      uSunDirView;     // normalized; camera-ish space approximation
+
 out vec4 FragColor;
+
+// Christian Schüler's cotangent-frame trick — builds tangent basis from
+// derivatives of position+UV so we don't need per-vertex tangents.
+mat3 cotangentFrame(vec3 N, vec3 p, vec2 uv) {
+    vec3 dp1 = dFdx(p);
+    vec3 dp2 = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = inversesqrt(max(dot(T,T), dot(B,B)));
+    return mat3(T * invmax, B * invmax, N);
+}
+
+float DistributionGGX(float NdotH, float roughness) {
+    float a  = roughness * roughness;
+    float a2 = a * a;
+    float d  = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * d * d + 1e-7);
+}
+
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) * 0.125;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+
+float GeometrySmith(float NdotV, float NdotL, float roughness) {
+    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
+}
+
+vec3 FresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
 
 void main() {
     vec4 texel = texture(uTexture, vTexCoord);
@@ -87,7 +141,15 @@ void main() {
     // so at full-res this makes no difference. At mip levels, averaging 0/1 pixels yields
     // intermediate values; 0.5 would discard leaves with <50% coverage (foliage vanishes);
     // 0.1 keeps them visible down to 10% coverage, eliminating the flicker/pop.
-    if (uAlphaTest && texel.a < 0.1)
+    // SOURCEPORT: higher discard threshold on alpha-test foliage to keep the
+    // silhouette sharp. Transparent texels have RGB=0 (required so the sun's
+    // additive pass produces no halo); bilinear MAG filtering across a leaf
+    // edge therefore returns (r*a, g*a, b*a, a). Surviving low-a edge pixels
+    // render as darkened half-leaves ("black outline" / "glow"). Cutting at
+    // 0.5 discards the edge band entirely so what remains is full-coverage
+    // leaf. Mip-averaged alpha can still fall below 0.5 for sparse foliage;
+    // accept the stricter cutoff at distance in exchange for crisp close-ups.
+    if (uAlphaTest && texel.a < 0.5)
         discard;
 
     vec4 color = texel * vColor;
@@ -105,7 +167,47 @@ void main() {
         color.a = vColor.a;
     }
 
-    // Apply brightness (clamped to [0,1] to avoid HDR blow-out on non-HDR displays)
+    // SOURCEPORT: PBR path — Cook-Torrance GGX on top of retail vertex light.
+    // vColor.rgb already encodes per-vertex Lambert against the sun + ambient,
+    // so we treat it as diffuse irradiance and add a physically-plausible
+    // specular on top. Tangent frame comes from screen-space derivatives so
+    // no per-vertex tangent attribute is needed.
+    if (uPBR) {
+        vec3  albedo    = texel.rgb;
+        vec2  mr        = texture(uMRMap, vTexCoord).rg;
+        float metallic  = mr.r * uMetallicFactor;
+        float roughness = max(mr.g * uRoughnessFactor, 0.04);
+        float ao        = texture(uAOMap, vTexCoord).r;
+
+        vec3 nTS = texture(uNormalMap, vTexCoord).xyz * 2.0 - 1.0;
+        vec3 N0  = vec3(0.0, 0.0, 1.0);
+        vec3 p   = vec3(gl_FragCoord.xy, gl_FragCoord.z * 1000.0);
+        mat3 TBN = cotangentFrame(N0, p, vTexCoord);
+        vec3 N   = normalize(TBN * nTS);
+
+        vec3 V = vec3(0.0, 0.0, 1.0);
+        vec3 L = normalize(uSunDirView);
+        vec3 H = normalize(V + L);
+        float NdotL = max(dot(N, L), 0.0);
+        float NdotV = max(dot(N, V), 1e-4);
+        float NdotH = max(dot(N, H), 0.0);
+        float VdotH = max(dot(V, H), 0.0);
+
+        vec3 F0 = mix(vec3(0.04), albedo, metallic);
+        vec3  F = FresnelSchlick(VdotH, F0);
+        float D = DistributionGGX(NdotH, roughness);
+        float G = GeometrySmith(NdotV, NdotL, roughness);
+        vec3 spec = (D * G * F) / (4.0 * NdotV * max(NdotL, 1e-4) + 1e-4);
+
+        vec3 kS = F;
+        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+
+        vec3 diffuse  = kD * albedo * vColor.rgb;
+        vec3 specular = spec * NdotL;
+        color.rgb = (diffuse + specular) * ao;
+    }
+
+    // Brightness multiplier (unified for both paths).
     color.rgb = clamp(color.rgb * uBrightness, 0.0, 1.0);
 
     // Apply fog
@@ -239,6 +341,18 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
     }
 
     CompileShaders();
+
+    // SOURCEPORT: register shader files for hot reload. Watches are cheap (one
+    // stat() per file ~3× per second); callbacks only fire when mtime advances.
+    HotReload::Watch("shaders/basic.vert", [this]() {
+        CompileShaders();
+        fprintf(stdout, "[HotReload] shader reloaded: shaders/basic.vert\n");
+    });
+    HotReload::Watch("shaders/basic.frag", [this]() {
+        CompileShaders();
+        fprintf(stdout, "[HotReload] shader reloaded: shaders/basic.frag\n");
+    });
+
     CreateBuffers();
 
     // Initial GL state
@@ -270,21 +384,52 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
     return true;
 }
 
-void RendererGL::CompileShaders() {
-    GLuint vs = CompileShader(GL_VERTEX_SHADER, vertexShaderSrc);
-    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fragmentShaderSrc);
+// SOURCEPORT: read a text file fully into a std::string, returning empty on miss.
+// Used so `shaders/basic.{vert,frag}` can override the embedded shader source
+// for dev hot reload; missing files fall back to the embedded strings silently.
+static std::string ReadTextFile(const char* path) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return {};
+    std::fseek(f, 0, SEEK_END);
+    long n = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::string s;
+    if (n > 0) { s.resize((size_t)n); std::fread(&s[0], 1, (size_t)n, f); }
+    std::fclose(f);
+    return s;
+}
 
-    m_shaderProgram = glCreateProgram();
-    glAttachShader(m_shaderProgram, vs);
-    glAttachShader(m_shaderProgram, fs);
-    glLinkProgram(m_shaderProgram);
+void RendererGL::CompileShaders() {
+    // SOURCEPORT: prefer shaders/basic.{vert,frag} on disk (hot-reloadable);
+    // fall back to the embedded sources if either file is missing.
+    std::string vsDisk = ReadTextFile("shaders/basic.vert");
+    std::string fsDisk = ReadTextFile("shaders/basic.frag");
+    const char* vsSrc = vsDisk.empty() ? vertexShaderSrc   : vsDisk.c_str();
+    const char* fsSrc = fsDisk.empty() ? fragmentShaderSrc : fsDisk.c_str();
+
+    GLuint vs = CompileShader(GL_VERTEX_SHADER,   vsSrc);
+    GLuint fs = CompileShader(GL_FRAGMENT_SHADER, fsSrc);
+
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vs);
+    glAttachShader(prog, fs);
+    glLinkProgram(prog);
 
     GLint success;
-    glGetProgramiv(m_shaderProgram, GL_LINK_STATUS, &success);
+    glGetProgramiv(prog, GL_LINK_STATUS, &success);
     if (!success) {
         char log[512];
-        glGetProgramInfoLog(m_shaderProgram, sizeof(log), nullptr, log);
+        glGetProgramInfoLog(prog, sizeof(log), nullptr, log);
         fprintf(stderr, "Shader link error: %s\n", log);
+        glDeleteProgram(prog);
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+        // Keep any previously-linked program active — hot-reload failure leaves
+        // the game running on the last good shader.
+        if (m_shaderProgram) return;
+    } else {
+        if (m_shaderProgram) glDeleteProgram(m_shaderProgram);
+        m_shaderProgram = prog;
     }
 
     glDeleteShader(vs);
@@ -298,6 +443,25 @@ void RendererGL::CompileShaders() {
     m_locAlphaTest  = glGetUniformLocation(m_shaderProgram, "uAlphaTest");
     m_locBrightness = glGetUniformLocation(m_shaderProgram, "uBrightness");
     // uHUDMode removed — fproc1/fproc2 alpha handled unconditionally in shader
+
+    // SOURCEPORT: PBR uniforms + sampler bindings for units 1/2/3.
+    m_locPBR              = glGetUniformLocation(m_shaderProgram, "uPBR");
+    m_locMetallicFactor   = glGetUniformLocation(m_shaderProgram, "uMetallicFactor");
+    m_locRoughnessFactor  = glGetUniformLocation(m_shaderProgram, "uRoughnessFactor");
+    m_locSunDirView       = glGetUniformLocation(m_shaderProgram, "uSunDirView");
+    GLint locNormal = glGetUniformLocation(m_shaderProgram, "uNormalMap");
+    GLint locMR     = glGetUniformLocation(m_shaderProgram, "uMRMap");
+    GLint locAO     = glGetUniformLocation(m_shaderProgram, "uAOMap");
+    if (m_locTexture >= 0) glUniform1i(m_locTexture, 0);
+    if (locNormal   >= 0)  glUniform1i(locNormal,    1);
+    if (locMR       >= 0)  glUniform1i(locMR,        2);
+    if (locAO       >= 0)  glUniform1i(locAO,        3);
+    glUniform1i(m_locPBR, 0);
+    glUniform1f(m_locMetallicFactor,  1.0f);
+    glUniform1f(m_locRoughnessFactor, 1.0f);
+    // Hardcoded screen-space sun (upper-right, toward viewer). Will make this
+    // data-driven once world→view basis is plumbed.
+    glUniform3f(m_locSunDirView, 0.4f, -0.5f, 0.8f);
 
     glUniform1f(m_locBrightness, 1.0f); // default: neutral (no change)
 
@@ -412,6 +576,9 @@ void RendererGL::BeginFrame() {
        -1.0f,     1.0f,  -(F+N)/(F-N),   1.0f,
     };
     glUniformMatrix4fv(m_locProjection, 1, GL_FALSE, proj);
+    // SOURCEPORT: cache for CustomMaterials::Apply; custom programs need the
+    // same screen-space projection to render pre-transformed vertices correctly.
+    std::memcpy(m_projMatrix, proj, sizeof(proj));
 
     m_frameCounter++;
 }
@@ -474,21 +641,43 @@ void RendererGL::SetTexture(void* lpData, int w, int h) {
             }
         }
 
-        // SOURCEPORT: check for 32-bit PNG override before 16-bit decode.
-        int ow = 0, oh = 0;
-        const uint32_t* over = TextureOverrides::Get(lpData, &ow, &oh);
-        GLuint tex;
-        if (over) {
+        // SOURCEPORT: prefer BCn DDS override, then 8-bit RGBA override,
+        // finally fall back to the retail 16-bit decode.
+        GLuint tex = 0;
+        if (const TextureOverrides::CompressedTex* ct = TextureOverrides::GetCompressed(lpData)) {
             glGenTextures(1, &tex);
             glBindTexture(GL_TEXTURE_2D, tex);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, ow, oh, 0, GL_RGBA, GL_UNSIGNED_BYTE, over);
-            glGenerateMipmap(GL_TEXTURE_2D);
+            int lw = ct->w, lh = ct->h;
+            for (int i = 0; i < ct->mipCount; ++i) {
+                glCompressedTexImage2D(GL_TEXTURE_2D, i, (GLenum)ct->glFormat,
+                                       lw, lh, 0,
+                                       (GLsizei)ct->mipSizes[i],
+                                       ct->data + ct->mipOffsets[i]);
+                lw = (lw > 1) ? lw >> 1 : 1;
+                lh = (lh > 1) ? lh >> 1 : 1;
+            }
+            if (ct->mipCount <= 1) glGenerateMipmap(GL_TEXTURE_2D);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  ct->mipCount - 1);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
         } else {
-            tex = UploadTexture16(lpData, w, h);
+            int ow = 0, oh = 0;
+            const uint32_t* over = TextureOverrides::Get(lpData, &ow, &oh);
+            if (over) {
+                glGenTextures(1, &tex);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, ow, oh, 0, GL_RGBA, GL_UNSIGNED_BYTE, over);
+                glGenerateMipmap(GL_TEXTURE_2D);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
+            } else {
+                tex = UploadTexture16(lpData, w, h);
+            }
         }
         m_texCache[key] = { tex, m_frameCounter };
         m_currentTexture = tex;
@@ -629,6 +818,47 @@ void RendererGL::SetBrightness(float b) {
     glUniform1f(m_locBrightness, b);
 }
 
+void RendererGL::BindMaterial(const void* materialPtr) {
+    const Materials::Material* m = static_cast<const Materials::Material*>(materialPtr);
+    // Only enable PBR when a normal map exists — without it the tangent-frame
+    // path contributes no perturbation and specular would be flat lit.
+    if (!m || m->normalTex == 0) {
+        if (m_pbrActive) {
+            glUniform1i(m_locPBR, 0);
+            m_pbrActive = false;
+        }
+        return;
+    }
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)m->normalTex);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, m->mrTex ? (GLuint)m->mrTex : GetWhiteTexture());
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, m->aoTex ? (GLuint)m->aoTex : GetWhiteTexture());
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1f(m_locMetallicFactor,  m->metallicFactor);
+    glUniform1f(m_locRoughnessFactor, m->roughnessFactor);
+    glUniform1i(m_locPBR, 1);
+    m_pbrActive = true;
+}
+
+void RendererGL::BindCustomMaterial(const void* materialPtr) {
+    const CustomMaterials::Material* cm =
+        static_cast<const CustomMaterials::Material*>(materialPtr);
+    if (!cm) {
+        // Restore the engine's default program. GL uniforms are per-program
+        // so fog/alpha/brightness/PBR state in the default program is still
+        // intact — nothing else to re-push.
+        if (m_customProgramActive) {
+            glUseProgram(m_shaderProgram);
+            m_customProgramActive = false;
+        }
+        return;
+    }
+    CustomMaterials::Apply(cm, m_projMatrix);
+    m_customProgramActive = true;
+}
+
 // --- 2D operations ---
 
 void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey, int srcH) {
@@ -640,20 +870,35 @@ void RendererGL::DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, 
     int uploadH = (srcH > 0) ? srcH : h;
     int uploadW = srcW;
 
-    // Convert 16-bit source to RGBA (only the actual source pixels)
-    std::vector<uint32_t> rgba(uploadW * uploadH);
-    uint16_t* src = (uint16_t*)lpData;
-    for (int row = 0; row < uploadH; row++) {
-        for (int col = 0; col < uploadW; col++) {
-            uint16_t pixel = src[row * srcW + col];
-            rgba[row * uploadW + col] = m_isRGB565 ? RGB565toRGBA(pixel) : RGB555toRGBA(pixel);
+    // SOURCEPORT: menu/HUD override path. If TextureOverrides has a 32-bit PNG/
+    // TGA/BMP/JPEG registered for this TPicture's pixel buffer, upload it at
+    // its native resolution instead of decoding the retail 16-bit TGA. UVs are
+    // 0..1 so any size maps correctly onto the destination quad; high-res
+    // menu art drops in with no other code changes.
+    int overW = 0, overH = 0;
+    const uint32_t* over = TextureOverrides::Get(lpData, &overW, &overH);
+
+    // Convert 16-bit source to RGBA only when we don't have an override.
+    std::vector<uint32_t> rgba;
+    if (!over) {
+        rgba.resize(uploadW * uploadH);
+        uint16_t* src = (uint16_t*)lpData;
+        for (int row = 0; row < uploadH; row++) {
+            for (int col = 0; col < uploadW; col++) {
+                uint16_t pixel = src[row * srcW + col];
+                rgba[row * uploadW + col] = m_isRGB565 ? RGB565toRGBA(pixel) : RGB555toRGBA(pixel);
+            }
         }
     }
 
-    // Upload source texture at its natural size
+    // Upload source texture at its natural size (override dims may differ).
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_bitmapTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, uploadW, uploadH, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    if (over) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, overW, overH, 0, GL_RGBA, GL_UNSIGNED_BYTE, over);
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, uploadW, uploadH, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

@@ -1451,7 +1451,7 @@ static void RunOptions(bool& appQuit) {
             int tvW = WinW * 130 / 800;  // clickable value column width
 
             // Audio / video driver (read-only)
-            MTMed("Audio Driver", ox, y, 0x00AC6D24); MT("SDL2 Audio",  vx, y, 0x00C0C0C0); y += lnH;
+            MTMed("Audio Driver", ox, y, 0x00AC6D24); MT("OpenAL Soft",  vx, y, 0x00C0C0C0); y += lnH;
             MTMed("Video Driver", ox, y, 0x00AC6D24); MT("OpenGL 3.3",  vx, y, 0x00C0C0C0); y += lnH;
 
             // Resolution — cycle presets for windowed/fullscreen; fixed at desktop for borderless

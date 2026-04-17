@@ -436,7 +436,7 @@ void RenderObject(int x, int y)
 void ProcessMap2(int x, int y, int r)
 {
    //WATERREVERSE = FALSE;
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 ||
+   if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;      
   
    float BackR = BackViewR;
@@ -538,7 +538,7 @@ S2:
 
 void ProcessMap(int x, int y, int r)
 {    
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 ||
+   if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;      
   
    float BackR = BackViewR;
@@ -649,7 +649,7 @@ void ProcessMapW(int x, int y, int r)
    if (RunMode) return;
    
    
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 || x<0 || y<0) return;              
+   if (x>=gMapSize-1 || y>=gMapSize-1 || x<0 || y<0) return;
 
    int t1 = WaterList[ WMap[y][x] ].tindex;
    int hw = WaterList[ WMap[y][x] ].wlevel;
@@ -744,7 +744,7 @@ void ProcessMapW2(int x, int y, int r)
 		  (FMap[y+2][x  ] & fmWaterA) &&
 		  (FMap[y+2][x+2] & fmWaterA) )) return;
 
-   if (x>=ctMapSize-1 || y>=ctMapSize-1 || x<0 || y<0) return;              
+   if (x>=gMapSize-1 || y>=gMapSize-1 || x<0 || y<0) return;
 
    int t1 = WaterList[ WMap[y][x] ].tindex;
    int hw = WaterList[ WMap[y][x] ].wlevel;

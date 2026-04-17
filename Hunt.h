@@ -40,7 +40,18 @@ typedef void* LPDIRECTDRAWSURFACE;
 #endif
 
 #define pi 3.1415926535f
+// SOURCEPORT: map size parameterization.
+//   ctMapSize      — compile-time maximum (array stride); bump and rebuild to support
+//                    larger maps. Memory cost scales as ctMapSize^2 per layer (×8 layers,
+//                    half WORD/half byte). 1024 → ~12 MB, 2048 → ~48 MB, 4096 → ~192 MB.
+//   gMapSize       — runtime size of the currently-loaded map. Must be <= ctMapSize and
+//                    a power of two (loops and wrap masks assume this). Initialised to
+//                    1024 for retail .MAP compatibility; a future extended map format can
+//                    override it after reading a header.
+//   gMapMask       — gMapSize - 1, for wrap-around indexing (was hardcoded `& 1023`).
 #define ctMapSize 1024
+_EXTORNOT int gMapSize;
+_EXTORNOT int gMapMask;
 
 
 

@@ -1029,9 +1029,16 @@ void AnimateDimorDead(TCharacter *cptr)
             cptr->PrevPFTime  = cptr->FTime;
             cptr->PPMorphTime = 0; }
 
+		   int prevFx = cptr->pinfo->Anifx[DIM_FALL];
+		   int dieFx  = cptr->pinfo->Anifx[DIM_DIE];
 		   cptr->Phase = DIM_DIE;
 		   cptr->FTime = 0;
-		   ActivateCharacterFx(cptr);
+		   // SOURCEPORT: flyer CARs often map DIM_FALL and DIM_DIE to the same
+		   // thud sample, so firing fx on both phase transitions played it twice
+		   // at the moment of impact. Only fire the DIE fx when it actually
+		   // differs from the fall fx that just played.
+		   if (dieFx != -1 && dieFx != prevFx)
+		       ActivateCharacterFx(cptr);
 	   }
    }    else    {
      ThinkY_Beta_Gamma(cptr, 140, 126, 0.6f, 0.5f);	 

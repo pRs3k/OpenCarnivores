@@ -39,6 +39,18 @@ public:
     void SetBrightness(float b);   // SOURCEPORT: live brightness uniform (1.0=neutral)
     void SetHUDMode(bool enabled);
 
+    // SOURCEPORT: bind a PBR material's supplementary maps (normal/MR/AO) to
+    // texture units 1/2/3 and enable the PBR branch in the fragment shader.
+    // Pass nullptr to fall back to the retail Lambert path. Call this AFTER
+    // the base-color texture has been bound to unit 0.
+    void BindMaterial(const void* material);   // Materials::Material*
+
+    // SOURCEPORT: switch the active GL program to a mod-supplied custom
+    // shader (from a .material file). Pass nullptr to restore the engine's
+    // default program. Because GL uniforms are per-program and persist, the
+    // engine's fog/alpha/brightness/PBR state is preserved across the swap.
+    void BindCustomMaterial(const void* customMaterial);  // CustomMaterials::Material*
+
     void DrawBitmap(int x, int y, int w, int h, int srcW, void* lpData, bool colorKey = true, int srcH = 0) override;
     void DrawText(int x, int y, const char* text, uint32_t color) override;
     int  MeasureText(const char* text);     // SOURCEPORT: width of text as rendered by DrawText
@@ -86,6 +98,16 @@ private:
     GLint  m_locAlphaTest  = -1;
     GLint  m_locHUDMode    = -1;
     GLint  m_locBrightness = -1;
+    GLint  m_locPBR             = -1;
+    GLint  m_locMetallicFactor  = -1;
+    GLint  m_locRoughnessFactor = -1;
+    GLint  m_locSunDirView      = -1;
+    bool   m_pbrActive          = false;
+
+    // SOURCEPORT: cached projection matrix for CustomMaterials::Apply. Updated
+    // every BeginFrame alongside the default-program uProjection uniform.
+    float  m_projMatrix[16]     = {0};
+    bool   m_customProgramActive = false;
 
     // Vertex buffer objects
     GLuint m_vao = 0;

@@ -9,19 +9,31 @@
 #include <SDL.h>
 #include <AL/al.h>
 #include <AL/alc.h>
+#define AL_ALEXT_PROTOTYPES
+#include <AL/efx.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
 #include "hunt.h"
 
+// SOURCEPORT: terrain raycast occlusion uses the game's GetLandH() to sample
+// ground height between listener and source. CameraX/Y/Z are world-space
+// floats updated every frame by Game.cpp before SetCameraPos fires.
+extern float GetLandH(float x, float z);
+extern float CameraX, CameraY, CameraZ;
+
 static void Log(const char* msg) { PrintLog(const_cast<char*>(msg)); }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 #define MAX_CHANNELS  16
 #define SAMPLE_RATE   22050
-#define MAX_RADIUS    6000.f
-#define MIN_RADIUS    512.f
+// SOURCEPORT: world scale is ~256 units/meter — 6000 was ~23m and caused sounds
+// to go silent after walking for a couple seconds. Bumped audible radius to
+// ~14000 (~55m) and reference distance to 768 so gain curve stays near 1.0
+// for a longer "natural" range before rolling off.
+#define MAX_RADIUS    14000.f
+#define MIN_RADIUS    768.f
 // OAmbient crossfade rate: ~3s matches Audio_SDL.cpp's FADE_SPEED=4 @ 1024-sample callback.
 #define FADE_RATE_PER_SEC  (256.f / 3.f)
 
@@ -31,6 +43,8 @@ static ALCcontext* g_context = nullptr;
 
 // One OpenAL source per one-shot voice slot.
 static ALuint g_srcVoice[MAX_CHANNELS] = {0};
+// Matching low-pass filter per voice for terrain occlusion.
+static ALuint g_filterVoice[MAX_CHANNELS] = {0};
 
 // OAmbient: two slots for crossfade. Each has its own source + buffer.
 struct OAmbient {
@@ -95,12 +109,16 @@ bool SDL_Audio_Init()
     // Distance attenuation: linear falloff between MIN_RADIUS and MAX_RADIUS.
     alDistanceModel(AL_LINEAR_DISTANCE_CLAMPED);
 
-    // Pre-generate voice sources.
+    // Pre-generate voice sources + matching occlusion filters.
     alGenSources(MAX_CHANNELS, g_srcVoice);
+    alGenFilters(MAX_CHANNELS, g_filterVoice);
     for (int i = 0; i < MAX_CHANNELS; i++) {
         alSourcef(g_srcVoice[i], AL_REFERENCE_DISTANCE, MIN_RADIUS);
         alSourcef(g_srcVoice[i], AL_MAX_DISTANCE,       MAX_RADIUS);
         alSourcef(g_srcVoice[i], AL_ROLLOFF_FACTOR,     1.f);
+        alFilteri(g_filterVoice[i], AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+        alFilterf(g_filterVoice[i], AL_LOWPASS_GAIN,   1.f);
+        alFilterf(g_filterVoice[i], AL_LOWPASS_GAINHF, 1.f);
     }
 
     // OAmbient sources: non-positional (SOURCE_RELATIVE), looping.
@@ -127,7 +145,9 @@ void SDL_Audio_Shutdown()
 
     alSourceStopv(MAX_CHANNELS, g_srcVoice);
     alDeleteSources(MAX_CHANNELS, g_srcVoice);
-    std::memset(g_srcVoice, 0, sizeof(g_srcVoice));
+    alDeleteFilters(MAX_CHANNELS, g_filterVoice);
+    std::memset(g_srcVoice,    0, sizeof(g_srcVoice));
+    std::memset(g_filterVoice, 0, sizeof(g_filterVoice));
 
     for (int a = 0; a < 2; a++) {
         if (g_amb[a].src) { alSourceStop(g_amb[a].src); alDeleteSources(1, &g_amb[a].src); }
@@ -193,6 +213,56 @@ void SDL_Audio_SetCameraPos(float cx, float cy, float cz, float alpha, float /*b
     }
 }
 
+// SOURCEPORT: terrain-raycast occlusion. Samples ground height at N points
+// along the listener→source ray; each sample whose terrain rises above the
+// straight-line ray counts as a blocked segment. Returns occlusion strength
+// in [0..1] where 0 = fully line-of-sight, 1 = completely blocked.
+// Caller maps this to AL_GAIN + AL_LOWPASS_GAINHF so blocked sounds are
+// quieter AND muffled (the physically-correct dual effect).
+static float ComputeTerrainOcclusion(float sx, float sy, float sz)
+{
+    // Source at the listener or very close: skip the raycast — the ray would
+    // degenerate and GetLandH on identical endpoints is wasted work.
+    float dx = sx - CameraX, dy = sy - CameraY, dz = sz - CameraZ;
+    float dist2 = dx*dx + dz*dz;
+    if (dist2 < 16.f * 16.f) return 0.f;
+
+    // 12 samples strike a reasonable balance between accuracy (can resolve a
+    // ridge between two low points) and cost (one GetLandH call per sample,
+    // called at most 16× per play, typically a few times per second).
+    constexpr int N = 12;
+    int blocked = 0;
+    float worstPenetration = 0.f;
+    const float dist = std::sqrt(dist2 + dy*dy);
+
+    for (int i = 1; i < N; ++i) {
+        float t   = (float)i / (float)N;
+        float wx  = CameraX + dx * t;
+        float wy  = CameraY + dy * t;
+        float wz  = CameraZ + dz * t;
+        float gnd = GetLandH(wx, wz);
+        if (gnd > wy) {
+            ++blocked;
+            float pen = gnd - wy;
+            if (pen > worstPenetration) worstPenetration = pen;
+        }
+    }
+
+    // Two-term occlusion: fraction of ray blocked, weighted by how deeply the
+    // ray passes through terrain. A ridge that pokes up a little bit barely
+    // attenuates; a hill that fully swallows the ray attenuates strongly.
+    float fracBlocked = (float)blocked / (float)(N - 1);
+    float depthNorm   = std::min(1.f, worstPenetration / 512.f);
+    float occ = fracBlocked * (0.4f + 0.6f * depthNorm);
+
+    // Long-distance grazing occlusion: even a very shallow blockage at >4000
+    // units away should muffle. Boost slightly with distance.
+    if (dist > 4000.f && occ > 0.f)
+        occ = std::min(1.f, occ * (1.f + (dist - 4000.f) / 8000.f));
+
+    return std::min(1.f, occ);
+}
+
 void SDL_Audio_AddVoice3dv(int length, short* data, float x, float y, float z, int vol)
 {
     if (!g_context || !data || length <= 0) return;
@@ -210,7 +280,26 @@ void SDL_Audio_AddVoice3dv(int length, short* data, float x, float y, float z, i
         alSourcei(g_srcVoice[i], AL_SOURCE_RELATIVE, spatial ? AL_FALSE : AL_TRUE);
         alSource3f(g_srcVoice[i], AL_POSITION, x, y, z);
         alSourcei(g_srcVoice[i], AL_LOOPING, AL_FALSE);
-        alSourcef(g_srcVoice[i], AL_GAIN, std::max(0, std::min(256, vol)) / 256.f);
+
+        float gain = std::max(0, std::min(256, vol)) / 256.f;
+
+        // SOURCEPORT: apply terrain occlusion to spatial voices only. Listener-
+        // relative sounds (weapon fire, UI beeps) are always "in the head" and
+        // never occluded. Occlusion attenuates volume to 15% minimum and rolls
+        // off high frequencies to 5% so blocked roars sound low and distant.
+        if (spatial) {
+            float occ = ComputeTerrainOcclusion(x, y, z);
+            float gainMul   = 1.f - 0.85f * occ;
+            float gainHFMul = 1.f - 0.95f * occ;
+            alFilterf(g_filterVoice[i], AL_LOWPASS_GAIN,   gainMul);
+            alFilterf(g_filterVoice[i], AL_LOWPASS_GAINHF, gainHFMul);
+            alSourcei(g_srcVoice[i], AL_DIRECT_FILTER, (ALint)g_filterVoice[i]);
+        } else {
+            // Reset any prior filter for this slot so non-spatial sounds play dry.
+            alSourcei(g_srcVoice[i], AL_DIRECT_FILTER, AL_FILTER_NULL);
+        }
+
+        alSourcef(g_srcVoice[i], AL_GAIN, gain);
         alSourcei(g_srcVoice[i], AL_BUFFER, (ALint)buf);
         alSourcePlay(g_srcVoice[i]);
         return;

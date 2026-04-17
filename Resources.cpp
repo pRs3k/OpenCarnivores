@@ -3,12 +3,67 @@
 #ifdef _opengl
 #include "renderer/RendererGL.h"
 #include "TextureOverrides.h"
+#include "Materials.h"
+#include "CustomMaterials.h"
 #endif
+#include "ModelOverrides.h"
+#include "HotReload.h"
+#include <string>
+#include <cstring>
 HANDLE hfile;
 DWORD  l;
 
 void GenerateModelMipMaps(TModel *mptr);
 void GenerateAlphaFlags(TModel *mptr);
+
+#ifdef _opengl
+// SOURCEPORT: forward decl — renderd3d's d3dMemMap invalidator (hot reload).
+extern void d3dInvalidateAllTextures();
+extern class RendererGL* g_glRenderer;
+
+// SOURCEPORT: hot-reload wiring for texture+material overrides. Watches every
+// candidate sibling path for `basePath` (stem without extension); when any of
+// them changes, re-probes the override registries and dumps the GPU texture
+// cache so the next frame re-uploads. Missing candidate files are harmless —
+// GetMtime returns -1 and the watch stays dormant until the file appears.
+static void HotWatchOverrideSet(void* key, std::string base) {
+    static const char* baseExts[]   = { ".dds", ".png", ".tga", ".bmp", ".jpg" };
+    static const char* pbrSuffixes[] = { "_normal.png", "_mr.png", "_ao.png" };
+    auto reload = [key, base]() {
+        TextureOverrides::TryRegisterWithExts(key, base.c_str());
+        Materials::TryRegisterWithExts(key, base.c_str());
+        if (g_glRenderer) g_glRenderer->InvalidateTextureCache();
+        d3dInvalidateAllTextures();
+        PrintLog("[HotReload] texture reloaded\n");
+    };
+    for (const char* ext : baseExts)    HotReload::Watch((base + ext).c_str(), reload);
+    for (const char* sfx : pbrSuffixes) HotReload::Watch((base + sfx).c_str(), reload);
+
+    // SOURCEPORT: custom-shader .material file — separate reload callback so
+    // editing the material script re-parses + recompiles without touching the
+    // texture cache. Writes to the base.material file trigger this. If the
+    // material wasn't registered at asset-load time (modder creates the file
+    // live), we fall back to TryRegisterWithExts so first-time detection also
+    // works without a game restart.
+    auto reloadMat = [key, base]() {
+        if (CustomMaterials::Get(key))
+            CustomMaterials::Reload(key);
+        else
+            CustomMaterials::TryRegisterWithExts(key, base.c_str());
+        PrintLog("[HotReload] .material reloaded\n");
+    };
+    HotReload::Watch((base + ".material").c_str(), reloadMat);
+}
+
+// Variant for sibling-style call sites that pass a full filename (e.g.
+// "HUNTDAT\\BINOCUL.3DF"); strips the extension first.
+static void HotWatchOverrideSibling(void* key, const char* sourcePath) {
+    std::string p = sourcePath ? sourcePath : "";
+    size_t dot = p.find_last_of('.');
+    std::string stem = (dot == std::string::npos) ? p : p.substr(0, dot);
+    HotWatchOverrideSet(key, stem);
+}
+#endif
 
 
 LPVOID _HeapAlloc(HANDLE hHeap, 
@@ -189,16 +244,16 @@ void CreateTMap()
 {
  int x,y; 
  LandingList.PCount = 0;
- for (y=0; y<ctMapSize; y++)
-     for (x=0; x<ctMapSize; x++) {          
+ for (y=0; y<gMapSize; y++)
+     for (x=0; x<gMapSize; x++) {          
           if (TMap1[y][x]==0xFFFF) TMap1[y][x] = 1;
           if (TMap2[y][x]==0xFFFF) TMap2[y][x] = 1;          
      }
 
 	              				  
 /*
-  for (y=1; y<ctMapSize-1; y++)
-     for (x=1; x<ctMapSize-1; x++) 
+  for (y=1; y<gMapSize-1; y++)
+     for (x=1; x<gMapSize-1; x++) 
 		 if (!(FMap[y][x] & fmWater) ) {			 
 			 
 			 if (FMap[y  ][x+1] & fmWater) { FMap[y][x]|= fmWater2; WMap[y][x] = WMap[y  ][x+1];}
@@ -210,8 +265,8 @@ void CreateTMap()
 			     if (HMap[y][x] > WaterList[WMap[y][x]].wlevel) HMap[y][x]=WaterList[WMap[y][x]].wlevel;					 
 		 }
 
-  for (y=1; y<ctMapSize-1; y++)
-     for (x=1; x<ctMapSize-1; x++) 
+  for (y=1; y<gMapSize-1; y++)
+     for (x=1; x<gMapSize-1; x++) 
 		 if (FMap[y][x] & fmWater2) {
 			 FMap[y][x]-=fmWater2;
 			 FMap[y][x]+=fmWater;
@@ -219,8 +274,8 @@ void CreateTMap()
 */
 
 
-  for (y=1; y<ctMapSize-1; y++)
-     for (x=1; x<ctMapSize-1; x++) 
+  for (y=1; y<gMapSize-1; y++)
+     for (x=1; x<gMapSize-1; x++) 
 		 if (!(FMap[y][x] & fmWater) ) {			 
 			 
 			 if (FMap[y  ][x+1] & fmWater) { FMap[y][x]|= fmWater2; WMap[y][x] = WMap[y  ][x+1];}
@@ -252,8 +307,8 @@ void CreateTMap()
 		 }
 			
 #ifdef _soft
-   for (y=0; y<1024; y++) 
-      for (x=0; x<1024; x++ ) {
+   for (y=0; y<gMapSize; y++)
+      for (x=0; x<gMapSize; x++ ) {
          if( abs( HMap[y][x]-HMap[y+1][x+1] ) > abs( HMap[y+1][x]-HMap[y][x+1] ) )
             FMap[y][x] |= fmReverse;
          else
@@ -262,8 +317,8 @@ void CreateTMap()
 #endif
 
 
-  for (y=0; y<ctMapSize; y++)
-   for (x=0; x<ctMapSize; x++) {
+  for (y=0; y<gMapSize; y++)
+   for (x=0; x<gMapSize; x++) {
 
 	if (!(FMap[y][x] & fmWaterA))
 		WMap[y][x]=255;
@@ -768,7 +823,14 @@ void LoadModelEx(TModel* &mptr, char* FName)
 	// next to BINOCUL.3DF).  If present, the GL renderer will upload the
 	// 32-bit image instead of the 16-bit RGB555 data.
 	TextureOverrides::TryRegisterSibling(mptr->lpTexture, FName);
+	Materials::TryRegisterSibling(mptr->lpTexture, FName);
+	CustomMaterials::TryRegisterSibling(mptr->lpTexture, FName);
+	HotWatchOverrideSibling(mptr->lpTexture, FName);
 #endif
+	// SOURCEPORT: also probe for a sibling OBJ/glTF replacement mesh (e.g.
+	// BINOCUL.obj next to BINOCUL.3DF). Static-only — animated .CAR models
+	// are handled separately.
+	ModelOverrides::TrySiblingAny(mptr, FName);
 }
 
 
@@ -909,10 +971,16 @@ void LoadPictureTGA(TPicture &pic, LPSTR pname)
     pic.H = h;
 	pic.lpImage = (WORD*) _HeapAlloc(Heap, 0, pic.W * pic.H * 2);
 
-    for (int y=0; y<pic.H; y++) 
+    for (int y=0; y<pic.H; y++)
       ReadFile( hfile, (void*)(pic.lpImage + (pic.H-y-1)*pic.W), 2*pic.W, &l, NULL );
-   
-    CloseHandle( hfile );    
+
+    CloseHandle( hfile );
+
+// SOURCEPORT: keying TextureOverrides by pic.lpImage caused cross-asset
+// bleed — the heap reuses the menu-picture address for terrain/model buffers
+// after inter-level ReleaseResources, and the stale menu override would then
+// apply to ground geometry. Menu/UI overrides need a separate, path-keyed
+// registry (or to be plumbed through DrawBitmap differently). Reverted for now.
 }
 
 
@@ -1267,6 +1335,9 @@ void LoadResources()
         char base[256];
         wsprintf(base, "%s_tex_%02d", ProjectName, tt);
         TextureOverrides::TryRegisterWithExts(Textures[tt]->DataA, base);
+        Materials::TryRegisterWithExts(Textures[tt]->DataA, base);
+        CustomMaterials::TryRegisterWithExts(Textures[tt]->DataA, base);
+        HotWatchOverrideSet(Textures[tt]->DataA, base);
 #endif
     }
 	PrintLog(" Done.\n");
@@ -1290,8 +1361,14 @@ void LoadResources()
             char base[256];
             wsprintf(base, "%s_obj_%02d", ProjectName, mm);
             TextureOverrides::TryRegisterWithExts(MObjects[mm].model->lpTexture, base);
+            Materials::TryRegisterWithExts(MObjects[mm].model->lpTexture, base);
+            CustomMaterials::TryRegisterWithExts(MObjects[mm].model->lpTexture, base);
+            HotWatchOverrideSet(MObjects[mm].model->lpTexture, base);
             wsprintf(base, "%s_obj_%02d_bmp", ProjectName, mm);
             TextureOverrides::TryRegisterWithExts(MObjects[mm].bmpmodel.lpTexture, base);
+            Materials::TryRegisterWithExts(MObjects[mm].bmpmodel.lpTexture, base);
+            CustomMaterials::TryRegisterWithExts(MObjects[mm].bmpmodel.lpTexture, base);
+            HotWatchOverrideSet(MObjects[mm].bmpmodel.lpTexture, base);
         }
 #endif
 
@@ -1330,6 +1407,8 @@ void LoadResources()
         char base[256];
         wsprintf(base, "%s_sky", ProjectName);
         TextureOverrides::TryRegisterWithExts(SkyPic, base);
+        Materials::TryRegisterWithExts(SkyPic, base);
+        HotWatchOverrideSet(SkyPic, base);
     }
 #endif
 	
@@ -1422,18 +1501,24 @@ void LoadResources()
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
     if (hfile==INVALID_HANDLE_VALUE)
-      DoHalt("Error opening map file.");                  
+      DoHalt("Error opening map file.");
 
-    ReadFile(hfile, HMap,    1024*1024, &l, NULL);
-    ReadFile(hfile, TMap1,   1024*1024*2, &l, NULL);
-    ReadFile(hfile, TMap2,   1024*1024*2, &l, NULL);
-    ReadFile(hfile, OMap,    1024*1024, &l, NULL);
-    ReadFile(hfile, FMap,    1024*1024*2, &l, NULL);
-     SetFilePointer(hfile, 1024*1024*OptDayNight, NULL, FILE_CURRENT);
-	ReadFile(hfile, LMap,    1024*1024, &l, NULL);
-	 SetFilePointer(hfile, 1024*1024*(2-OptDayNight), NULL, FILE_CURRENT);
-    ReadFile(hfile, WMap ,   1024*1024, &l, NULL);
-    ReadFile(hfile, HMapO,   1024*1024, &l, NULL);
+    // SOURCEPORT: default runtime map size for retail .MAP (1024×1024). Future extended
+    // map formats can sniff a header here and set gMapSize differently before the reads.
+    gMapSize = 1024;
+    gMapMask = gMapSize - 1;
+    const int mapBytes = gMapSize * gMapSize;
+
+    ReadFile(hfile, HMap,    mapBytes,   &l, NULL);
+    ReadFile(hfile, TMap1,   mapBytes*2, &l, NULL);
+    ReadFile(hfile, TMap2,   mapBytes*2, &l, NULL);
+    ReadFile(hfile, OMap,    mapBytes,   &l, NULL);
+    ReadFile(hfile, FMap,    mapBytes*2, &l, NULL);
+     SetFilePointer(hfile, mapBytes*OptDayNight, NULL, FILE_CURRENT);
+	ReadFile(hfile, LMap,    mapBytes,   &l, NULL);
+	 SetFilePointer(hfile, mapBytes*(2-OptDayNight), NULL, FILE_CURRENT);
+    ReadFile(hfile, WMap ,   mapBytes,   &l, NULL);
+    ReadFile(hfile, HMapO,   mapBytes,   &l, NULL);
 	ReadFile(hfile, FogsMap, 512*512, &l, NULL);
 	ReadFile(hfile, AmbMap,  512*512, &l, NULL);
 
@@ -1667,6 +1752,9 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 #ifdef _opengl
 	// SOURCEPORT: optional 32-bit PNG/TGA override sibling next to the .CAR file.
 	TextureOverrides::TryRegisterSibling(chinfo.mptr->lpTexture, FName);
+	Materials::TryRegisterSibling(chinfo.mptr->lpTexture, FName);
+	CustomMaterials::TryRegisterSibling(chinfo.mptr->lpTexture, FName);
+	HotWatchOverrideSibling(chinfo.mptr->lpTexture, FName);
 #endif
 	//CalcLights(chinfo.mptr);
 	
@@ -1755,7 +1843,7 @@ BOOL TraceVector(Vector3d v, Vector3d lv)
 
 void AddShadow(int x, int y, int d)
 {
-  if (x<0 || y<0 || x>1023 || y>1023) return;
+  if (x<0 || y<0 || x>gMapSize-1 || y>gMapSize-1) return;
   int l = LMap[y][x]; 
   l-=d;
   if (l<32) l=32;
@@ -1789,8 +1877,8 @@ void RenderLightMap()
   lv.y = - 1024;
   NormVector(lv, 1.0f);
     
-  for (y=1; y<ctMapSize-1; y++) 
-    for (x=1; x<ctMapSize-1; x++) {
+  for (y=1; y<gMapSize-1; y++) 
+    for (x=1; x<gMapSize-1; x++) {
      int ob = OMap[y][x];
      if (ob == 255) continue;
 
@@ -2005,7 +2093,7 @@ void LoadResourcesScript()
 {
     FILE *stream;
 	char line[256];
-    
+
 	stream = fopen("HUNTDAT\\_res.txt", "r");
     if (!stream) DoHalt("Can't open resources file _res.txt");
 
@@ -2016,6 +2104,26 @@ void LoadResourcesScript()
 	}
 
 	fclose (stream);
+
+	// SOURCEPORT: register once for hot reload. The watch is idempotent — if the
+	// same path is added twice, both entries fire on change, which is harmless.
+	// A static guard keeps us to a single registration across calls.
+	static bool s_resWatchRegistered = false;
+	if (!s_resWatchRegistered) {
+		s_resWatchRegistered = true;
+		HotReload::Watch("HUNTDAT\\_res.txt", []() {
+			FILE* s = fopen("HUNTDAT\\_res.txt", "r");
+			if (!s) return;
+			char ln[256];
+			while (fgets(ln, 255, s)) {
+				if (ln[0] == '.') break;
+				if (strstr(ln, "weapons"))    ReadWeapons(s);
+				if (strstr(ln, "characters")) ReadCharacters(s);
+			}
+			fclose(s);
+			PrintLog("[HotReload] _res.txt reloaded\n");
+		});
+	}
 }
 //===============================================================================================
 

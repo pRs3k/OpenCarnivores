@@ -5,7 +5,6 @@ Map / Radar
 
 Graphics / Rendering
 
-    Tree and ground models appear lower-resolution and possibly stretched compared to the original game. The world overall looks less sharp. In the original game, the world appeared sharper in "Software" video mode and more stretched in "Direct 3D." Direct3D should generally look better.
     The sky renders correctly when looking straight up, but ripples/waves distort it when it gets very close to the horizon.
     After playing in night mode, switching to dawn or day retains the green filter from night mode on dinosaurs; it should not. (may have fixed itself)
     Binoculars in widescreen don't have a graphic to extend to the edges of the screen and are currently just replaced with black

@@ -1,0 +1,29 @@
+# Example .material file — copy & rename to activate.
+#
+# To apply this to, say, the T-Rex, copy it to `HUNTDAT/TREX.material`
+# alongside `HUNTDAT/TREX.CAR`. The engine probes for <stem>.material every
+# time it loads an asset's texture; if found, the file is parsed and the
+# listed shader becomes the T-Rex's material.
+#
+# File syntax (one directive per line, whitespace-separated, # for comments):
+#
+#   shader <name>                       — loads shaders/<name>.vert + .frag
+#   tex    <uniform> <path>             — binds PNG/TGA/BMP/JPG to next
+#                                         texture unit (1..N); unit 0 is the
+#                                         engine's albedo
+#   float  <uniform> <x>                — float uniform
+#   vec2   <uniform> <x> <y>            — vec2 uniform
+#   vec3   <uniform> <x> <y> <z>        — vec3 uniform
+#   vec4   <uniform> <x> <y> <z> <w>    — vec4 uniform
+#
+# Editing a live .material (or its referenced .vert/.frag) triggers hot
+# reload — no game restart needed.
+
+shader  custom_tint
+
+# Optional detail overlay. Comment out if you don't want one; the shader
+# multiplies uDetail by uMix so a 0.0 mix is the same as no detail.
+# tex    uDetail   HUNTDAT/noise.png
+
+float   uMix      0.25
+vec3    uTint     1.05  1.0  0.95
