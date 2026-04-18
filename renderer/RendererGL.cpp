@@ -360,6 +360,11 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_GEQUAL); // Carnivores uses GREATEREQUAL depth test
     glClearDepth(0.0);      // Clear to 0 since we use GEQUAL
+    // SOURCEPORT: the projection maps sz=0.25 (camera z=-64) to z_ndc=1 (GL far plane).
+    // HUD weapon verts at z > -64 would be clipped by GL's far plane without this.
+    // GL_DEPTH_CLAMP disables near/far z-clipping and just clamps depth to [0,1],
+    // so close-to-camera stock/grip geometry renders correctly.
+    glEnable(GL_DEPTH_CLAMP);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_CULL_FACE); // Original game: D3DCULL_NONE

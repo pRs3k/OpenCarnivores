@@ -166,12 +166,17 @@ void CalcFogLevel_Gradient(Vector3d v)
 }
 
 
+// SOURCEPORT: tracked CPU-side too, so RenderModelClip can pick the right near-plane
+// sentinel (−8 for HUD weapons/compass/wind, −256 for world models).
+static bool s_hudMode = false;
 void d3dSetHUDMode(BOOL enable)
 {
+    s_hudMode = (enable != FALSE);
 #ifdef _opengl
     if (g_glRenderer) g_glRenderer->SetHUDMode(enable != FALSE);
 #endif
 }
+bool d3dIsHUDMode() { return s_hudMode; }
 
 void d3dSetDepthFunc(BOOL strict)
 {
@@ -4329,7 +4334,7 @@ void RenderShadowClip(TModel* _mptr,
     rVertex[s].z = (vz * cb + shy * sb) + z0;     
     if (rVertex[s].z<0) BL=TRUE;
 
-    if (rVertex[s].z>-256) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
+    if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
     else {   
      int f = 0;
      int sx =  VideoCX + (int)(rVertex[s].x / (-rVertex[s].z) * CameraW);
@@ -4475,7 +4480,7 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
     rVertex[s].z = (vz * cb + mptr->gVertex[s].y * sb) /* * mdlScale */ + z0;     
     if (rVertex[s].z<0) BL=TRUE;
 
-    if (rVertex[s].z>-256) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
+    if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
     else {   
      int f = 0;
      int sx =  VideoCX + (int)(rVertex[s].x / (-rVertex[s].z) * CameraW);
@@ -4493,10 +4498,10 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
    }   
    
    if (!BL) return;
-	     
+
    if (LOWRESTX) d3dSetTexture(mptr->lpTexture2, 128, 128);
             else d3dSetTexture(mptr->lpTexture, 256, 256);
-          
+
    BuildTreeClipNoSort();
       
    d3dStartBuffer();
@@ -4522,17 +4527,27 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
     cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = fptr->tbx;  cp[1].ty = fptr->tby; cp[1].ev.Fog = (float)vFogT[fptr->v2]; cp[1].ev.Light = mptr->VLight[VT][fptr->v2];
     cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = fptr->tcx;  cp[2].ty = fptr->tcy; cp[2].ev.Fog = (float)vFogT[fptr->v3]; cp[2].ev.Light = mptr->VLight[VT][fptr->v3];
    
-	{
-     for (u=0; u<vused; u++) cp[u].ev.v.z+= 8.0f;
+	// SOURCEPORT: near-plane clipping.
+    // • ClipZ: bias=1.0 for HUD (weapon at camera origin — clips only z > -1),
+    //   bias=8.0 for world models (clips z > -8, well before divide-by-zero).
+    //   GL_DEPTH_CLAMP (enabled in RendererGL::Init) prevents GL from discarding
+    //   verts whose sz maps outside GL's far-plane (z > -64); depth is clamped to 1.0.
+    // • ClipB/D: skipped in HUD mode — near-camera verts project far below/above
+    //   screen centre; GL viewport clips in xy. ClipB would incorrectly cull them.
+    // • ClipA/C: kept — prevents huge horizontal smearing from near-z side verts.
+    {
+     float nearBias = s_hudMode ? 1.0f : 8.0f;
+     for (u=0; u<vused; u++) cp[u].ev.v.z+= nearBias;
      for (u=0; u<vused; u++) ClipVector(ClipZ,u);
-     for (u=0; u<vused; u++) cp[u].ev.v.z-= 8.0f;
+     for (u=0; u<vused; u++) cp[u].ev.v.z-= nearBias;
      if (vused<3) goto LNEXT;
     }
-  
     if (CMASK & 1) for (u=0; u<vused; u++) ClipVector(ClipA,u); if (vused<3) goto LNEXT;
-    if (CMASK & 2) for (u=0; u<vused; u++) ClipVector(ClipC,u); if (vused<3) goto LNEXT;    
-    if (CMASK & 4) for (u=0; u<vused; u++) ClipVector(ClipB,u); if (vused<3) goto LNEXT;    
-    if (CMASK & 8) for (u=0; u<vused; u++) ClipVector(ClipD,u); if (vused<3) goto LNEXT;
+    if (CMASK & 2) for (u=0; u<vused; u++) ClipVector(ClipC,u); if (vused<3) goto LNEXT;
+    if (!s_hudMode) {
+     if (CMASK & 4) for (u=0; u<vused; u++) ClipVector(ClipB,u); if (vused<3) goto LNEXT;
+     if (CMASK & 8) for (u=0; u<vused; u++) ClipVector(ClipD,u); if (vused<3) goto LNEXT;
+    }
 	almask = 0xFF000000;
 	if (fptr->Flags & sfTransparent) almask = 0x70000000;
 	if (almask > alphamask) 
@@ -4607,7 +4622,7 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
     rVertex[s].z = (vz * cb + mptr->gVertex[s].y * sb) /* * mdlScale */ + z0;     
     if (rVertex[s].z<0) BL=TRUE;
 
-    if (rVertex[s].z>-256) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
+    if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
     else {   
      int f = 0;
      int sx =  VideoCX + (int)(rVertex[s].x / (-rVertex[s].z) * CameraW);
@@ -4657,15 +4672,13 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
     cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = PhongMapping[fptr->v2].x/256.f;  cp[1].ty = PhongMapping[fptr->v2].y/256.f;
     cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = PhongMapping[fptr->v3].x/256.f;  cp[2].ty = PhongMapping[fptr->v3].y/256.f;
 
-	
-   
-	{
+    if (!s_hudMode) {
      for (u=0; u<vused; u++) cp[u].ev.v.z+= 8.0f;
      for (u=0; u<vused; u++) ClipVector(ClipZ,u);
      for (u=0; u<vused; u++) cp[u].ev.v.z-= 8.0f;
      if (vused<3) goto LNEXT;
     }
-  
+
     if (CMASK & 1) for (u=0; u<vused; u++) ClipVector(ClipA,u); if (vused<3) goto LNEXT;
     if (CMASK & 2) for (u=0; u<vused; u++) ClipVector(ClipC,u); if (vused<3) goto LNEXT;    
     if (CMASK & 4) for (u=0; u<vused; u++) ClipVector(ClipB,u); if (vused<3) goto LNEXT;    
@@ -4750,7 +4763,7 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
     rVertex[s].z = (vz * cb + mptr->gVertex[s].y * sb) /* * mdlScale */ + z0;     
     if (rVertex[s].z<0) BL=TRUE;
 
-    if (rVertex[s].z>-256) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
+    if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
     else {   
      int f = 0;
      int sx =  VideoCX + (int)(rVertex[s].x / (-rVertex[s].z) * CameraW);
@@ -4797,14 +4810,14 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
     cp[0].ev.v = rVertex[fptr->v1]; cp[0].tx = PhongMapping[fptr->v1].x/256.f;  cp[0].ty = PhongMapping[fptr->v1].y/256.f;
     cp[1].ev.v = rVertex[fptr->v2]; cp[1].tx = PhongMapping[fptr->v2].x/256.f;  cp[1].ty = PhongMapping[fptr->v2].y/256.f;
     cp[2].ev.v = rVertex[fptr->v3]; cp[2].tx = PhongMapping[fptr->v3].x/256.f;  cp[2].ty = PhongMapping[fptr->v3].y/256.f;
-   
-	{
+
+    if (!s_hudMode) {
      for (u=0; u<vused; u++) cp[u].ev.v.z+= 8.0f;
      for (u=0; u<vused; u++) ClipVector(ClipZ,u);
      for (u=0; u<vused; u++) cp[u].ev.v.z-= 8.0f;
      if (vused<3) goto LNEXT;
     }
-  
+
     if (CMASK & 1) for (u=0; u<vused; u++) ClipVector(ClipA,u); if (vused<3) goto LNEXT;
     if (CMASK & 2) for (u=0; u<vused; u++) ClipVector(ClipC,u); if (vused<3) goto LNEXT;    
     if (CMASK & 4) for (u=0; u<vused; u++) ClipVector(ClipB,u); if (vused<3) goto LNEXT;    
