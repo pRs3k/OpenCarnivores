@@ -8,6 +8,12 @@
 #endif
 #include "ModelOverrides.h"
 #include "HotReload.h"
+#include "VFS.h"
+
+// SOURCEPORT: route asset reads through the VFS mod stack. The std::string
+// produced by ResolveRead lives for the full-expression in which .c_str() is
+// used, which is sufficient for a single CreateFile/fopen argument slot.
+#define VFS_R(p) (VFS::ResolveRead(p).c_str())
 #include <string>
 #include <cstring>
 HANDLE hfile;
@@ -755,14 +761,14 @@ void LoadAnimation(TVTL &vtl)
 void LoadModelEx(TModel* &mptr, char* FName)
 {    
     
-    hfile = CreateFile(FName,
+    hfile = CreateFile(VFS_R(FName),
         GENERIC_READ, FILE_SHARE_READ,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
-    if (hfile==INVALID_HANDLE_VALUE) {		
+    if (hfile==INVALID_HANDLE_VALUE) {
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", FName );
-		DoHalt(sz);        
+		DoHalt(sz);
     }
 
     mptr = (TModel*) _HeapAlloc(Heap, 0, sizeof(TModel));
@@ -840,7 +846,7 @@ void LoadWav(char* FName, TSFX &sfx)
 {
   DWORD l;  
 
-  HANDLE hfile = CreateFile(FName, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  HANDLE hfile = CreateFile(VFS_R(FName), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   if( hfile==INVALID_HANDLE_VALUE ) {		
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", FName );
@@ -910,11 +916,11 @@ void LoadPicture(TPicture &pic, LPSTR pname)
     DWORD l;
     HANDLE hfile;
 
-    hfile = CreateFile(pname, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
-    if( hfile==INVALID_HANDLE_VALUE ) {		
+    hfile = CreateFile(VFS_R(pname), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+    if( hfile==INVALID_HANDLE_VALUE ) {
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", pname );
-		DoHalt(sz);        
+		DoHalt(sz);
     }
 
     ReadFile( hfile, &bmpFH, sizeof( BITMAPFILEHEADER ), &l, NULL );
@@ -950,11 +956,11 @@ void LoadPictureTGA(TPicture &pic, LPSTR pname)
     HANDLE hfile;
 
 	
-    hfile = CreateFile(pname, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
-    if( hfile==INVALID_HANDLE_VALUE ) {		
+    hfile = CreateFile(VFS_R(pname), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+    if( hfile==INVALID_HANDLE_VALUE ) {
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", pname );
-		DoHalt(sz);        
+		DoHalt(sz);
     }
 
 	SetFilePointer(hfile, 12, 0, FILE_BEGIN);
@@ -1309,7 +1315,7 @@ void LoadResources()
 
 
 
-    hfile = CreateFile(RscName,
+    hfile = CreateFile(VFS_R(RscName),
         GENERIC_READ, FILE_SHARE_READ,
         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
@@ -1518,7 +1524,7 @@ void LoadResources()
 //================ Load MAPs file ==================//
 	PrintLoad("Loading .map...");
 	PrintLog("Loading .map:");
-    hfile = CreateFile(MapName,
+    hfile = CreateFile(VFS_R(MapName),
         GENERIC_READ, FILE_SHARE_READ,
 		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
@@ -1733,7 +1739,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 {
    ReleaseCharacterInfo(chinfo);
 
-   HANDLE hfile = CreateFile(FName,
+   HANDLE hfile = CreateFile(VFS_R(FName),
       GENERIC_READ, FILE_SHARE_READ,
 	  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
@@ -2121,7 +2127,7 @@ void LoadResourcesScript()
     FILE *stream;
 	char line[256];
 
-	stream = fopen("HUNTDAT\\_res.txt", "r");
+	stream = fopen(VFS_R("HUNTDAT\\_res.txt"), "r");
     if (!stream) DoHalt("Can't open resources file _res.txt");
 
 	while (fgets( line, 255, stream)) {
@@ -2144,7 +2150,7 @@ void LoadResourcesScript()
 	if (!s_resWatchRegistered) {
 		s_resWatchRegistered = true;
 		HotReload::Watch("HUNTDAT\\_res.txt", []() {
-			FILE* s = fopen("HUNTDAT\\_res.txt", "r");
+			FILE* s = fopen(VFS_R("HUNTDAT\\_res.txt"), "r");
 			if (!s) return;
 			char ln[256];
 			while (fgets(ln, 255, s)) {

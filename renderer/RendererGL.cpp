@@ -12,6 +12,7 @@
 #include "../Materials.h"
 #include "../CustomMaterials.h"
 #include "../HotReload.h"
+#include "../VFS.h"
 #include <cstring>
 #include <cstdio>
 #include <string>
@@ -393,7 +394,8 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
 // Used so `shaders/basic.{vert,frag}` can override the embedded shader source
 // for dev hot reload; missing files fall back to the embedded strings silently.
 static std::string ReadTextFile(const char* path) {
-    FILE* f = std::fopen(path, "rb");
+    // SOURCEPORT: route shader loads through VFS for mod overrides.
+    FILE* f = VFS::fopen(path, "rb");
     if (!f) return {};
     std::fseek(f, 0, SEEK_END);
     long n = std::ftell(f);

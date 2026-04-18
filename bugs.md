@@ -1,8 +1,5 @@
 Below is a list of known bugs and their expected behaviors or workarounds.
-
-Map / Radar
-    If "Radar" is selected in MENU2, red dots should indicate the locations of dinosaurs that are selected in MENU2. Non-selected dinosaurs can still appear in the world but should not appear on the radar.
-
+   
 Graphics / Rendering
 
     The sky renders correctly when looking straight up, but ripples/waves distort it when it gets very close to the horizon.
@@ -14,6 +11,8 @@ UI / Text / Menus
 
     The text shown when leaving the world ("Preparing for evacuation...") is not aligned properly
     Make sure the slider values make sense in the OPT menu (like what is the range of possible numbers for "Density" and what can the player set it to, etc.)
-    Look at the improvements to the game that Carnivores 2+ did and make a list of fixes they implemented that could improve the engine, but without adding new functionality to the game. https://www.moddb.com/games/carnivores-2/downloads/carnivores-21
 
-    make the sun larger and more blinding
+    I don't think mods are actually loading when they're checked. At least for example, when I load Carnivores 2+, there are supposed to be new worlds and new dinosaurs but they aren't showing up. Is that because they're baked into the carnivores.exe? At a minimum i know Carnivores 2+ has a modified MENUM.TGA which is not showing.
+    In the mods menu, there should be another button the left of "Back" that says "Apply". If a player click it, carnivores.exe restarts. If the player clicks "Back", any changes are discarded and it returns to the previous menu like it does currently. Delete "Changes apply on next launch." and "ESC to return"
+
+    Should dinosaurs killed in water sink to the ground?

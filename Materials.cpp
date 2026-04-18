@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "stb_image.h"  // STB_IMAGE_IMPLEMENTATION lives in TextureOverrides.cpp
+#include "VFS.h"
 
 namespace {
 
@@ -33,16 +34,18 @@ GLuint UploadRGBA(const unsigned char* rgba, int w, int h, bool srgb) {
 }
 
 bool FileExists(const char* p) {
-    FILE* f = std::fopen(p, "rb");
+    FILE* f = VFS::fopen(p, "rb");
     if (!f) return false;
     std::fclose(f);
     return true;
 }
 
 GLuint LoadMapFile(const char* path, bool srgb) {
-    if (!FileExists(path)) return 0;
+    // SOURCEPORT: resolve through VFS so mod folder PBR maps take priority.
+    std::string resolved = VFS::ResolveRead(path);
+    if (!FileExists(resolved.c_str())) return 0;
     int w = 0, h = 0, comp = 0;
-    unsigned char* px = stbi_load(path, &w, &h, &comp, 4);
+    unsigned char* px = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
     if (!px) return 0;
     GLuint id = UploadRGBA(px, w, h, srgb);
     stbi_image_free(px);

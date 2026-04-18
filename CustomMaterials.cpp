@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "stb_image.h"   // STB_IMAGE_IMPLEMENTATION lives in TextureOverrides.cpp
+#include "VFS.h"
 
 // Forward decl — RendererGL's restore routine. After Apply() we switch GL
 // away from the default program; Unapply() asks the renderer to re-bind its
@@ -79,7 +80,9 @@ std::unordered_map<std::string, Program>                  g_progCache;   // keye
 void Log(const char* s) { std::fputs(s, stdout); }
 
 std::string SlurpFile(const char* path) {
-    std::ifstream f(path, std::ios::binary);
+    // SOURCEPORT: route shader/material reads through VFS for mod overrides.
+    std::string resolved = VFS::ResolveRead(path);
+    std::ifstream f(resolved, std::ios::binary);
     if (!f) return std::string();
     std::ostringstream ss; ss << f.rdbuf();
     return ss.str();
@@ -165,8 +168,9 @@ Program BuildProgram(const std::string& shaderName) {
 }
 
 GLuint LoadTextureFile(const char* path) {
+    std::string resolved = VFS::ResolveRead(path);
     int w = 0, h = 0, comp = 0;
-    unsigned char* px = stbi_load(path, &w, &h, &comp, 4);
+    unsigned char* px = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
     if (!px) {
         char msg[512];
         std::snprintf(msg, sizeof(msg), "[CustomMaterials] texture load failed: %s\n", path);
@@ -202,7 +206,7 @@ std::string MaterialPathForBase(const char* basePath) {
 
 // Parse one .material file into `m`. Returns false on I/O error.
 bool ParseFile(const std::string& path, CustomMaterials::Material& m) {
-    std::ifstream in(path);
+    std::ifstream in(VFS::ResolveRead(path.c_str()));
     if (!in) return false;
 
     m.shaderName.clear();
@@ -293,7 +297,7 @@ namespace CustomMaterials {
 bool TryRegisterSibling(void* key, const char* sourcePath) {
     if (!key || !sourcePath) return false;
     std::string mpath = MaterialPathForSource(sourcePath);
-    std::ifstream probe(mpath);
+    std::ifstream probe(VFS::ResolveRead(mpath.c_str()));
     if (!probe) return false;
     probe.close();
 
@@ -318,7 +322,7 @@ bool TryRegisterSibling(void* key, const char* sourcePath) {
 bool TryRegisterWithExts(void* key, const char* basePath) {
     if (!key || !basePath) return false;
     std::string mpath = MaterialPathForBase(basePath);
-    std::ifstream probe(mpath);
+    std::ifstream probe(VFS::ResolveRead(mpath.c_str()));
     if (!probe) return false;
     probe.close();
 

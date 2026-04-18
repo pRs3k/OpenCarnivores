@@ -3,6 +3,7 @@
 
 #include "ModelOverrides.h"
 #include "hunt.h"
+#include "VFS.h"
 
 #include <cstdio>
 #include <cstring>
@@ -40,7 +41,7 @@ Corner ParseCorner(const char* tok) {
 // Minimal OBJ parser — positions, texcoords, and triangulated faces (fans).
 bool LoadOBJ(TModel* mptr, const char* objPath)
 {
-    FILE* f = std::fopen(objPath, "rb");
+    FILE* f = VFS::fopen(objPath, "rb");
     if (!f) return false;
 
     std::vector<float> vx, vy, vz;  // positions (1-based in file; we push index 0 stub)
@@ -187,7 +188,7 @@ bool TrySiblingAny(TModel* mptr, const char* sourcePath)
     // Only warn for glTF if one actually exists — silent miss otherwise.
     for (const char* ext : { ".gltf", ".glb" }) {
         std::string candidate = stem + ext;
-        FILE* f = std::fopen(candidate.c_str(), "rb");
+        FILE* f = VFS::fopen(candidate.c_str(), "rb");
         if (f) { std::fclose(f); return LoadGLTFStub(mptr, candidate.c_str()); }
     }
     return false;
