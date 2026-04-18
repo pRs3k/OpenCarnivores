@@ -123,13 +123,78 @@ Drop `<stem>.gltf`, `<stem>.glb`, or `<stem>.obj` next to the retail `.CAR` and 
 
 ---
 
+## For modders: data-driven dino & weapon stats (JSON overlays)
+
+Every dinosaur and weapon stat (health, damage, precision, smell/hearing/sight, trophy score, reload time, etc.) was previously baked into the retail `HUNTDAT/_res.txt` script. OpenCarnivores still reads `_res.txt` as the authoritative baseline, but you can now drop a JSON overlay next to it to tweak or add entries without touching the original file.
+
+### Quick start
+
+Create `HUNTDAT/dinos.json`:
+
+```jsonc
+{
+  "dinosaurs": [
+    {
+      "name": "T-Rex",      // matches the retail entry by name
+      "health": 1500,       // buffed from 1024
+      "basescore": 25,
+      "smell": 0.95
+    },
+    {
+      "name": "Moschops",
+      "health": 4           // nerfed so the shotgun doesn't one-shot
+    }
+  ]
+}
+```
+
+Create `HUNTDAT/weapons.json`:
+
+```jsonc
+{
+  "weapons": [
+    { "name": "Shotgun", "power": 2.0, "shots": 8, "reload": 900 },
+    { "name": "Sniper",  "prec": 1.4, "loud": 0.2 }
+  ]
+}
+```
+
+That's it — launch the game and the stats apply. Only fields present in the JSON are overwritten; everything you don't mention keeps its `_res.txt` value. **Hot reload** is wired: save the file and the running game re-layers the overlay within a second.
+
+### Matching rules
+
+Each entry is looked up against the retail table in this order:
+
+1. `"id"` — retail index (0..N-1 after `_res.txt` loads). Most exact, brittle if another mod reorders the table.
+2. `"ai"` — AI type constant (dinos only; `AI_TREX=18`, etc. — see `Hunt.h`).
+3. `"name"` — exact case-sensitive match against the `name` in `_res.txt`.
+
+If none of the above hit, the entry is appended as a brand-new creature or weapon. Capacity is 32 dinos and 8 weapons total across `_res.txt` + JSON.
+
+### Supported fields
+
+**Dinos**: `name`, `file`, `pic`, `ai`, `health`, `basescore`, `mass`, `length`, `radius`, `smell`, `hear`, `look`, `scale0`, `scaleA`, `shipdelta`, `danger` (bool)
+**Weapons**: `name`, `file`, `pic`, `power`, `prec`, `loud`, `rate`, `shots`, `reload`, `trace`, `optic` (bool), `fall` (bool)
+
+The parser accepts `//` line comments and `/* block */` comments — real JSON doesn't, but a modder config file is a better experience with them. Annotated templates live in `docs/dinos.example.json` and `docs/weapons.example.json`.
+
+---
+
+## For modders: the `mods/` folder
+
+Open the main menu and click **MODS** in the bottom-right corner. Any folder under `./mods/` is listed there; click a name to toggle it on or off. The enabled set is saved to `mods.cfg`.
+
+> **Heads up:** the virtual filesystem that actually honours this list is still landing — today the UI is in place and `mods.cfg` is written, but the engine still reads assets directly from the game root. Once the VFS ships (next release), a folder under `mods/` that mirrors the game layout — e.g. `mods/MyPack/HUNTDAT/TREX.png` — will be mounted on top of the retail files at launch. Retail files are never modified, overlapping mods resolve by list order (top = highest priority), and uninstalling is deleting the folder.
+
+Old mod packs that shipped a zipped game install (including a `Carn2.exe`) work too: unzip into `mods/<PackName>/`, ignore the bundled EXE, and launch `OpenCarnivores.exe`. The `.CAR`/`.RSC`/`.TGA`/`.WAV` files the pack ships still load through the original retail parsers.
+
+---
+
 ## Coming next
 
 Planned additions that will further expand what modders can do (see `CLAUDE.md` for the full roadmap):
 
-- JSON/TOML dino and weapon stats (no more recompiling to tweak balance)
-- Virtual filesystem with `mods/` folder priority — clean mod packs, no file overwrites
-- Menu/UI picture overrides (path-keyed registry — landed this release)
+- Virtual filesystem with `mods/` folder priority — clean mod packs, no file overwrites (UI landed this release, file routing next)
 - Lua scripting for AI and gameplay events
 - VR support (OpenXR)
 

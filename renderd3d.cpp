@@ -5510,13 +5510,14 @@ void RenderSun(float x, float y, float z)
 	
 	float d = (float)sqrt(x*x + y*y);
 	if (d<2048) {
-		SunLight = (220.f- d*220.f/2048.f);
+		SunLight = (290.f- d*290.f/2048.f);
 #ifdef _opengl
-		// SOURCEPORT: cap slightly higher than D3D (210 vs 140) — the GL path's
-		// additive rays are subtler, so the fullscreen tint does more of the work.
-		if (SunLight > 210) SunLight = 210;
+		// SOURCEPORT: cap higher than D3D (300 vs 180) — GL path's additive rays
+		// are subtler, so the fullscreen tint does more of the work. Boosted so
+		// staring directly at the sun produces a stronger glare/flare.
+		if (SunLight > 300) SunLight = 300;
 #else
-		if (SunLight>140) SunLight = 140;
+		if (SunLight>180) SunLight = 180;
 #endif
 		// SOURCEPORT: dim the fullscreen glare when the sun is occluded by hills,
 		// trees, or other geometry. SkyTraceK comes from gl_SampleSunOcclusion in
@@ -5533,7 +5534,7 @@ void RenderSun(float x, float y, float z)
 	// SOURCEPORT: sun model was sized for CameraW=400 (640x480 reference).
 	// Scale distance so the sun subtends the same angle at any resolution.
 	// Extra 1.15 shrinks the disc slightly so centre doesn't overpower the rays.
-	d *= (CameraW / 400.f) * 1.15f;
+	d *= (CameraW / 400.f) * 1.05f;
 #endif
     RenderModelSun(SunModel,  x*d, y*d, z*d, (int)(200.f* SkyTraceK));
 }

@@ -56,6 +56,8 @@ public:
     int  MeasureText(const char* text);     // SOURCEPORT: width of text as rendered by DrawText
     void DrawTextMed(int x, int y, const char* text, uint32_t color); // SOURCEPORT: fnt_Midd style (weight=550, 16px/7px at 600p)
     int  MeasureTextMed(const char* text);  // SOURCEPORT: width of text as rendered by DrawTextMed
+    void DrawTextBig(int x, int y, const char* text, uint32_t color); // SOURCEPORT: ~36px at 600p heading weight
+    int  MeasureTextBig(const char* text);  // SOURCEPORT: width of text as rendered by DrawTextBig
     void DrawFullscreenRect(uint32_t argbColor) override;
     void FillRect(int x, int y, int w, int h, uint32_t argbColor) override;
 
