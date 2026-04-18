@@ -2097,32 +2097,65 @@ static void RunModsScreen(bool& appQuit) {
             }
         }
 
-        // Footer hint
-        MT("Changes apply on next launch.", colX, WinH * 540 / 600, 0x00C0A060);
-        MT("ESC to return",                  colX, WinH * 565 / 600, 0x00909090);
+        // Bottom-right buttons: [APPLY]  [BACK]
+        // BACK discards changes and returns; APPLY persists mods.cfg and restarts
+        // the exe so the new mount stack takes effect immediately.
+        const char* kBack  = "BACK";
+        const char* kApply = "APPLY";
+        int backW   = g_glRenderer->MeasureTextBig(kBack);
+        int applyW  = g_glRenderer->MeasureTextBig(kApply);
+        int btnH    = WinH * 44 / 600;
+        int gap     = WinW * 30 / 800;
 
-        // Back hit: bottom-right area (below the MODS heading column)
-        const char* kBack = "BACK";
-        int backW  = g_glRenderer->MeasureTextBig(kBack);
-        int backH  = WinH * 44 / 600;
-        int backLX = WinW - backW - WinW * 20 / 800;
-        int backLY = WinH - backH - WinH * 12 / 600;
-        int backX0 = backLX - WinW * 6 / 800;
-        int backY0 = backLY - WinH * 4 / 600;
-        int backX1 = backLX + backW + WinW * 6 / 800;
-        int backY1 = backLY + backH;
-        bool backHot = (gMI.x >= backX0 && gMI.x < backX1 &&
-                        gMI.y >= backY0 && gMI.y < backY1);
-        MTBig(kBack, backLX, backLY, backHot ? 0x00FFE080 : 0x00AC6D24);
+        int backLX  = WinW - backW - WinW * 20 / 800;
+        int backLY  = WinH - btnH - WinH * 12 / 600;
+        int backX0  = backLX - WinW * 6 / 800;
+        int backY0  = backLY - WinH * 4 / 600;
+        int backX1  = backLX + backW + WinW * 6 / 800;
+        int backY1  = backLY + btnH;
 
-        if (gMI.scancode == SDL_SCANCODE_ESCAPE) break;
-        if (gMI.lClick && backHot) break;
+        int applyLX = backLX - gap - applyW;
+        int applyLY = backLY;
+        int applyX0 = applyLX - WinW * 6 / 800;
+        int applyY0 = backY0;
+        int applyX1 = applyLX + applyW + WinW * 6 / 800;
+        int applyY1 = backY1;
+
+        bool backHot  = (gMI.x >= backX0  && gMI.x < backX1  &&
+                         gMI.y >= backY0  && gMI.y < backY1);
+        bool applyHot = (gMI.x >= applyX0 && gMI.x < applyX1 &&
+                         gMI.y >= applyY0 && gMI.y < applyY1);
+
+        MTBig(kApply, applyLX, applyLY, applyHot ? 0x00FFE080 : 0x00AC6D24);
+        MTBig(kBack,  backLX,  backLY,  backHot  ? 0x00FFE080 : 0x00AC6D24);
+
+        bool doApply = (gMI.lClick && applyHot);
+        bool doBack  = (gMI.lClick && backHot) || gMI.scancode == SDL_SCANCODE_ESCAPE;
 
         MenuEnd();
         SDL_Delay(16);
+
+        if (doApply) {
+            SaveEnabledMods(folders, enabled);
+            FreeMenuScreen(ms);
+            // SOURCEPORT: relaunch ourselves so VFS::Init picks up the new mount
+            // stack. CreateProcess + ExitProcess is simpler than tearing down SDL
+            // / GL / audio cleanly and re-initialising in-place.
+            char exePath[MAX_PATH] = {};
+            GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+            STARTUPINFOA si = { sizeof(si) };
+            PROCESS_INFORMATION procInfo = {};
+            if (CreateProcessA(exePath, GetCommandLineA(), nullptr, nullptr,
+                               FALSE, 0, nullptr, nullptr, &si, &procInfo)) {
+                CloseHandle(procInfo.hProcess);
+                CloseHandle(procInfo.hThread);
+            }
+            ExitProcess(0);
+        }
+        if (doBack) break;
     }
 
-    SaveEnabledMods(folders, enabled);
+    // BACK / ESC path: discard any toggles — do NOT persist to mods.cfg.
     FreeMenuScreen(ms);
 }
 
