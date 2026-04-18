@@ -1835,6 +1835,12 @@ int main(int argc, char* argv[])
     }
 
     CreateLog();
+
+    // SOURCEPORT: build the VFS mount stack from mods.cfg BEFORE any asset load,
+    // so modded MENUM.TGA, .CAR, .RSC, _res.txt, etc. are picked up on first open.
+    // (The legacy WinMain path also calls this; main() is the actual SDL entry.)
+    VFS::Init();
+
     InitEngine();
     // SOURCEPORT: Match the D3D path — Init3DHardware() sets HARD3D=TRUE before resource
     // loading. Without this, DATASHIFT() runs on all model/terrain textures (multiplying
