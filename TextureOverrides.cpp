@@ -10,6 +10,7 @@
 
 #include "TextureOverrides.h"
 #include "hunt.h"
+#include "VFS.h"
 
 #include <cstdio>
 #include <cstring>
@@ -141,7 +142,9 @@ bool RegisterFromFile(void* key, const char* imagePath)
     if (!key || !imagePath) return false;
 
     int w = 0, h = 0, comp = 0;
-    stbi_uc* data = stbi_load(imagePath, &w, &h, &comp, 4);
+    // SOURCEPORT: route through VFS so mod folders override retail sibling files.
+    std::string resolved = VFS::ResolveRead(imagePath);
+    stbi_uc* data = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
     if (!data) return false;
 
     uint32_t* buf = new uint32_t[w * h];
@@ -175,7 +178,7 @@ bool RegisterDDS(void* key, const char* ddsPath)
 {
     if (!key || !ddsPath) return false;
 
-    FILE* f = std::fopen(ddsPath, "rb");
+    FILE* f = VFS::fopen(ddsPath, "rb");
     if (!f) return false;
 
     // Magic + header

@@ -7,6 +7,7 @@
 #include <SDL_syswm.h>
 #include "renderer/RendererGL.h"
 #include "HotReload.h"
+#include "VFS.h"
 
 // SOURCEPORT: SDL2 platform state
 // Under OpenGL, keyboard state is maintained via SDL events;
@@ -1729,6 +1730,10 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 	hInst = hInstance;
 	CreateLog();
+
+	// SOURCEPORT: build the VFS mount stack from mods.cfg before any asset load
+	// so modded MENUM.TGA, TREX.CAR, AREA*.RSC, etc. are picked up on first open.
+	VFS::Init();
 
 	CreateMainWindow();
 

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <set>
+#include "VFS.h"
 #undef min
 #undef max
 
@@ -109,11 +110,13 @@ static bool PollMenuEvents(bool& appQuit) {
 // ─── Safe TGA loader (returns false instead of DoHalt on missing files) ───────
 
 static bool SafeLoadTGA(TPicture& pic, const char* path) {
-    HANDLE hf = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ,
+    // SOURCEPORT: resolve through the mod VFS so modded menu TGAs win.
+    std::string resolved = VFS::ResolveRead(path);
+    HANDLE hf = CreateFileA(resolved.c_str(), GENERIC_READ, FILE_SHARE_READ,
                             NULL, OPEN_EXISTING, 0, NULL);
     if (hf == INVALID_HANDLE_VALUE) return false;
     CloseHandle(hf);
-    LoadPictureTGA(pic, (LPSTR)path);
+    LoadPictureTGA(pic, (LPSTR)resolved.c_str());
     conv_pic(pic);   // RGB555 → RGB565 for GL
     return true;
 }
@@ -140,7 +143,8 @@ static bool LoadMenuScreen(MenuScreen& ms, const char* offPath,
     if (onPath) SafeLoadTGA(ms.on, onPath);
 
     if (mapPath) {
-        FILE* f = fopen(mapPath, "rb");
+        // SOURCEPORT: route through VFS so modded .RAW hit-test maps override retail.
+        FILE* f = VFS::fopen(mapPath, "rb");
         if (f) {
             ms.map.resize(ms.mapW * ms.mapH, 0);
             fread(ms.map.data(), 1, ms.mapW * ms.mapH, f);
@@ -267,7 +271,8 @@ static void MTBig(const char* s, int x, int y, uint32_t col = 0x00FFFFFF) {
 // Read a text file up to maxBytes.
 static std::string ReadTextFile(const char* path, int maxBytes = 512) {
     std::string out;
-    FILE* f = fopen(path, "r");
+    // SOURCEPORT: area/description .TXT files live under HUNTDAT — route via VFS.
+    FILE* f = VFS::fopen(path, "r");
     if (!f) return out;
     char buf[512];
     while (fgets(buf, sizeof(buf), f) && (int)out.size() < maxBytes)

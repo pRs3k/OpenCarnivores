@@ -182,11 +182,24 @@ The parser accepts `//` line comments and `/* block */` comments — real JSON d
 
 ## For modders: the `mods/` folder
 
-Open the main menu and click **MODS** in the bottom-right corner. Any folder under `./mods/` is listed there; click a name to toggle it on or off. The enabled set is saved to `mods.cfg`.
+OpenCarnivores ships a virtual filesystem that mounts `mods/<PackName>/` folders on top of the retail game folder. **Retail files are never modified.** Any file the game opens is checked against the enabled mod list first (top = highest priority); the first hit wins, otherwise the retail file is used.
 
-> **Heads up:** the virtual filesystem that actually honours this list is still landing — today the UI is in place and `mods.cfg` is written, but the engine still reads assets directly from the game root. Once the VFS ships (next release), a folder under `mods/` that mirrors the game layout — e.g. `mods/MyPack/HUNTDAT/TREX.png` — will be mounted on top of the retail files at launch. Retail files are never modified, overlapping mods resolve by list order (top = highest priority), and uninstalling is deleting the folder.
+### Installing a mod
 
-Old mod packs that shipped a zipped game install (including a `Carn2.exe`) work too: unzip into `mods/<PackName>/`, ignore the bundled EXE, and launch `OpenCarnivores.exe`. The `.CAR`/`.RSC`/`.TGA`/`.WAV` files the pack ships still load through the original retail parsers.
+1. Extract the pack into `mods/<PackName>/` so its layout mirrors the game root — e.g. `mods/Carnivores 2+/HUNTDAT/MENU/MENUM.TGA`, `mods/MyPack/HUNTDAT/AREAS/AREA1.RSC`.
+2. Launch OpenCarnivores and open the main menu.
+3. Click **MODS** (bottom-right of the main menu) and toggle the packs you want on.
+4. Restart the game — the mount stack is rebuilt from `mods.cfg` on launch.
+
+Old retail-era mod packs that shipped a zipped Carnivores 2 install (including a `Carn2.exe`) work without modification: unzip into `mods/<PackName>/`, enable it in the MODS menu, and launch `OpenCarnivores.exe`. The bundled `Carn2.exe` is ignored — OpenCarnivores has the engine fixes. The `.CAR` / `.RSC` / `.TGA` / `.WAV` files the pack ships still load through the retail parsers, so compatibility is the same as the original engine.
+
+### What gets redirected
+
+Everything that reads game assets: character `.CAR`, standalone `.3DF`, area `.RSC`/`.MAP`, sound `.WAV`, menu `.TGA`/`.RAW`, area text `.TXT`, `_res.txt`, `dinos.json`/`weapons.json`, PBR / custom material sibling files, glTF / OBJ model overrides, GLSL shaders. Runtime files — trophy saves, screenshots, `display.cfg`, `mods.cfg`, `render.log` — stay in the game root and are not routed.
+
+### Priority and conflict resolution
+
+`mods.cfg` stores one enabled pack name per line, in priority order (top-to-bottom). If two packs both replace the same file (e.g. both ship a `HUNTDAT/TREX.CAR`), the one listed higher wins. Reorder by toggling off the lower-priority pack, then the higher one, then back — or edit `mods.cfg` directly. To uninstall a pack, untoggle it or delete the folder.
 
 ---
 

@@ -85,6 +85,7 @@ set(SOURCES
     Materials.cpp
     CustomMaterials.cpp
     DataDefs.cpp
+    VFS.cpp
     HotReload.cpp
     renderd3d.cpp
     Menu.cpp

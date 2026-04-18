@@ -4,6 +4,7 @@
 #include "DataDefs.h"
 #include "Hunt.h"
 #include "HotReload.h"
+#include "VFS.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -151,7 +152,7 @@ struct JParser {
 };
 
 std::shared_ptr<JValue> ParseJsonFile(const char* path) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = VFS::fopen(path, "rb");
     if (!f) return nullptr;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
