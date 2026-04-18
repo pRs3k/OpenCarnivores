@@ -1678,6 +1678,21 @@ static bool RunHuntSetup(bool& appQuit) {
     // Equipment: Camouflage, Radar, Cover scent, Double Ammo (Tranq is a tab toggle)
     BOOL* equipFlags[4] = { &CamoMode, &RadarMode, &ScentMode, &DoubleAmmo };
     static const char* kEquipNms[4] = { "Camouflage", "Radar", "Cover scent", "Double Ammo" };
+    // SOURCEPORT: preview assets are indexed in canonical game order
+    // (CAMOFLAG, SCENT, RADAR, TRANQ); MENU2's display order is different and
+    // swaps in Double Ammo for Tranq. Translate display row → preview assets.
+    static const char* kEquipPicsM2[4] = {
+        "HUNTDAT\\MENU\\PICS\\EQUIP1.TGA",  // Camouflage
+        "HUNTDAT\\MENU\\PICS\\EQUIP3.TGA",  // Radar
+        "HUNTDAT\\MENU\\PICS\\EQUIP2.TGA",  // Cover scent
+        "HUNTDAT\\MENU\\PICS\\EQUIP4.TGA",  // Double Ammo (no dedicated TGA; reuse)
+    };
+    static const char* kEquipNFOM2[4] = {
+        "HUNTDAT\\MENU\\TXT\\CAMOFLAG.NFO",
+        "HUNTDAT\\MENU\\TXT\\RADAR.NFO",
+        "HUNTDAT\\MENU\\TXT\\SCENT.NFO",
+        "HUNTDAT\\MENU\\TXT\\DOUBLE.NFO",
+    };
 
     // Dino species names and trophy scores, indexed by AI type (0-8)
     static const char* kDinoSpecies[9] = {
@@ -1697,7 +1712,11 @@ static bool RunHuntSetup(bool& appQuit) {
         case 0: if (viewIdx < kNumAreas) { SafeLoadTGA(previewPic, kAreaPics[viewIdx]); previewText = ReadTextFile(kAreaTxt[viewIdx],   512); } break;
         case 1: if (viewIdx < 9)         { SafeLoadTGA(previewPic, kDinoPics[viewIdx]); previewText = ReadTextFile(kDinoTxtM[viewIdx],  256); } break;
         case 2: if (viewIdx < 6)         { SafeLoadTGA(previewPic, kWeaponPics[viewIdx]); previewText = ReadTextFile(kWeaponTxt[viewIdx], 256); } break;
-        case 3: if (viewIdx < 4)         { SafeLoadTGA(previewPic, kEquipPics[viewIdx]); previewText = ReadTextFile(kEquipNFO[viewIdx],  256); } break;
+        case 3: if (viewIdx < 4)         { SafeLoadTGA(previewPic, kEquipPicsM2[viewIdx]); previewText = ReadTextFile(kEquipNFOM2[viewIdx],  256); } break;
+        // SOURCEPORT: Tranq is not in the equipment column (it's a tab toggle);
+        // give it its own preview case so hovering the tab shows the NFO.
+        case 4: { SafeLoadTGA(previewPic, "HUNTDAT\\MENU\\PICS\\EQUIP4.TGA");
+                  previewText = ReadTextFile("HUNTDAT\\MENU\\TXT\\TRANQ.NFO", 256); } break;
         }
     };
     loadPreview();
@@ -1776,7 +1795,10 @@ static bool RunHuntSetup(bool& appQuit) {
             for (int d = 0; d < 3; d++) {
                 if (hov == d + 1 && gMI.lClick) curDay = d;
             }
-            if (hov == 5 && gMI.lClick) tranqOn  = !tranqOn;
+            if (hov == 5) {
+                if (viewPanel != 4) { viewPanel = 4; viewIdx = 0; loadPreview(); }
+                if (gMI.lClick) tranqOn = !tranqOn;
+            }
             if (hov == 6 && gMI.lClick) observOn = !observOn;
         }
 

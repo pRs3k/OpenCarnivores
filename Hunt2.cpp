@@ -1446,17 +1446,26 @@ SKIPYMOVE:
        else stepdy = (float)min(1.f,fabs(VSpeed) + (float)fabs(SSpeed)) * (float)sin((float)RealTime / 80.f) * 22.f;
   float d = stepdy - _s;
 
+  // SOURCEPORT: original derivative sign-change test (d<0 && stepdd>=0) jitters at
+  // the sine peak on high framerates — tiny float noise around d≈0 causes multiple
+  // triggers per cycle (galloping). Gate with hysteresis on stepdy itself: arm
+  // when the sine is solidly positive, fire+disarm when it crosses back below zero.
+  // Exactly one footstep per sin(RealTime/80) period (~503ms → ~2 steps/sec).
+  static int stepArmed = 0;
+  if (stepdy > 10.f) stepArmed = 1;
   if (!UNDERWATER)
   if (PlayerY<h+64)
-    if (d<0 && stepdd >= 0) 
+    if (stepArmed && stepdy < 0.f) {
+      stepArmed = 0;
 	if (ONWATER) {
 	   AddWCircle(CameraX, CameraZ, 1.2f);
 	   AddVoicev(fxStepW[(RealTime % 3)].length,
 	             fxStepW[(RealTime % 3)].lpData, 64+(int)(VSpeed*30.f));
 	   }
 	 else
-	   AddVoicev(fxStep[(RealTime % 3)].length, 
+	   AddVoicev(fxStep[(RealTime % 3)].length,
 	             fxStep[(RealTime % 3)].lpData, 24+(int)(VSpeed*50.f));
+    }
   stepdd = d;
 
   if (PlayerBeta> 1.46f) PlayerBeta= 1.46f;
