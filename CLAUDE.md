@@ -219,10 +219,11 @@ Registry is pointer-keyed the same as `TextureOverrides` and `Materials`, and `R
 
 Example shader pair and annotated `.material` template ship in `shaders/custom_tint.vert`, `shaders/custom_tint.frag`, and `shaders/example.material`.
 
+**Data-driven dino/weapon overlays (JSON)** — `DataDefs.cpp`/`.h`. Loads `HUNTDAT\dinos.json` and `HUNTDAT\weapons.json` after the retail `_res.txt` parse and merges entries into `DinoInfo[]`/`WeapInfo[]`. Matching order per entry: `id` (retail index) → `ai` (AI type constant, dinos only) → `name` (case-sensitive). No match = appended as a new creature/weapon. Only fields present in the JSON are overwritten; everything else keeps the `_res.txt` baseline, so mods can tweak single stats without repackaging the whole script. Hand-rolled minimal JSON parser (no external dep) with `//` and `/* */` comment support. Hot-reloaded through `HotReload::Watch` on both JSON paths and the existing `_res.txt` watch — editing either re-layers the JSON so edits to one don't wipe the other. Example templates at `docs/dinos.example.json` and `docs/weapons.example.json`.
+
 ### Remaining for this phase
 
 - Virtual filesystem: wrap scattered path lookups in a VFS that can mount zips/folders with priority, enabling mod packs without overwriting game files
-- Data-driven dinos/weapons: move hardcoded stats out of `Characters.cpp` / `Game.cpp` into editable TOML/JSON
 - Menu/UI picture overrides — `LoadPictureTGA` needs a path-keyed registry (not pointer-keyed — the heap recycles menu-picture addresses for terrain/model buffers after inter-level `ReleaseResources`, so pointer keys cause cross-asset bleed)
 
 ## Phase 7 — Gameplay and Engine Improvements (FUTURE)

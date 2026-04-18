@@ -84,6 +84,7 @@ set(SOURCES
     ModelOverrides.cpp
     Materials.cpp
     CustomMaterials.cpp
+    DataDefs.cpp
     HotReload.cpp
     renderd3d.cpp
     Menu.cpp

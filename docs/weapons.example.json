@@ -1,0 +1,27 @@
+{
+  // OpenCarnivores weapon overlay.
+  //
+  // Drop this file at HUNTDAT/weapons.json to tweak or add weapons.
+  // Overlay order: HUNTDAT/_res.txt first, then this file.
+  //
+  // Matching (in order):
+  //   "id"   : retail index (0..TotalW-1)
+  //   "name" : case-sensitive string match against WeapInfo[i].Name
+  // Anything else is appended as a new weapon slot (capacity 8 total).
+  //
+  // Hot reload: save this file and changes apply on the next frame.
+
+  "weapons": [
+    {
+      "name": "Shotgun",
+      "power": 2.0,         // buff damage
+      "shots": 8,           // extra shells per hunt
+      "reload": 900         // faster reload (ms)
+    },
+    {
+      "name": "Sniper",
+      "prec": 1.4,          // tighter grouping
+      "loud": 0.2           // quieter (dinos detect from smaller radius)
+    }
+  ]
+}

@@ -12,6 +12,8 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <filesystem>
+#include <set>
 #undef min
 #undef max
 
@@ -250,6 +252,15 @@ static void MTMed(const char* s, int x, int y, uint32_t col = 0x00FFFFFF) {
         int sh = std::max(1, WinH / 720);  // 1px at ≤720p, 2px at 1440p, 3px at 2160p
         g_glRenderer->DrawTextMed(x+sh, y+sh, s, 0x00000000);
         g_glRenderer->DrawTextMed(x,    y,    s, col);
+    }
+}
+
+// SOURCEPORT: big heading text — used for section headings like the "MODS" screen title.
+static void MTBig(const char* s, int x, int y, uint32_t col = 0x00FFFFFF) {
+    if (s && s[0]) {
+        int sh = std::max(2, WinH / 360);
+        g_glRenderer->DrawTextBig(x+sh, y+sh, s, 0x00000000);
+        g_glRenderer->DrawTextBig(x,    y,    s, col);
     }
 }
 
@@ -557,8 +568,25 @@ static int RunMainMenu(bool& appQuit) {
             MTMed(scoreBuf, WinW*478/800, WinH*12/600, 0x00AC6D24);
         }
 
+        // SOURCEPORT: "Mods" link in the bottom-right corner — large heading text
+        // so it's readable at a glance without baked button art. Hit rect matches
+        // the rendered glyph bounds.
+        const char* kModsLabel = "MODS";
+        int mLabelW = g_glRenderer->MeasureTextBig(kModsLabel);
+        int mLabelH = WinH * 44 / 600;
+        int mLabelX = WinW - mLabelW - WinW * 20 / 800;
+        int mLabelY = WinH - mLabelH - WinH * 12 / 600;
+        int mHitX0  = mLabelX - WinW * 6 / 800;
+        int mHitY0  = mLabelY - WinH * 4 / 600;
+        int mHitX1  = mLabelX + mLabelW + WinW * 6 / 800;
+        int mHitY1  = mLabelY + mLabelH;
+        bool mHot = (gMI.x >= mHitX0 && gMI.x < mHitX1 &&
+                     gMI.y >= mHitY0 && gMI.y < mHitY1);
+        MTBig(kModsLabel, mLabelX, mLabelY, mHot ? 0x00FFE080 : 0x00AC6D24);
+
         if (gMI.lClick) {
-            switch (hov) {
+            if (mHot) { result = 6; }                    // Mods — SOURCEPORT
+            else switch (hov) {
             case 1: result = 0; break;   // HUNT
             case 2: result = 2; break;   // OPTIONS
             case 3: result = 1; break;   // TROPHY
@@ -1953,6 +1981,146 @@ static void RunCredits(bool& appQuit) {
     FreeMenuScreen(ms);
 }
 
+// ─── Mods ────────────────────────────────────────────────────────────────────
+// SOURCEPORT: enumerates ./mods/* directories, lets the user toggle each one
+// enabled/disabled, and persists the enabled list to mods.cfg (one folder name
+// per line). The VFS that actually honours this list is a future feature — for
+// now the screen is the UI landing; changes "apply on next launch" once the VFS
+// is wired.
+
+static std::vector<std::string> EnumerateModFolders() {
+    std::vector<std::string> out;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path modsDir = fs::path("mods");
+    if (!fs::exists(modsDir, ec) || !fs::is_directory(modsDir, ec)) return out;
+    for (auto& entry : fs::directory_iterator(modsDir, ec)) {
+        if (ec) break;
+        if (entry.is_directory(ec)) {
+            out.push_back(entry.path().filename().string());
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+static std::set<std::string> LoadEnabledMods() {
+    std::set<std::string> enabled;
+    FILE* f = fopen("mods.cfg", "r");
+    if (!f) return enabled;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        // trim trailing whitespace/newlines
+        int n = (int)strlen(line);
+        while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r' ||
+                         line[n-1] == ' '  || line[n-1] == '\t')) line[--n] = 0;
+        if (n > 0 && line[0] != '#') enabled.insert(std::string(line));
+    }
+    fclose(f);
+    return enabled;
+}
+
+static void SaveEnabledMods(const std::vector<std::string>& folders,
+                            const std::set<std::string>& enabled) {
+    FILE* f = fopen("mods.cfg", "w");
+    if (!f) return;
+    fprintf(f, "# OpenCarnivores enabled mod list. One folder name per line.\n");
+    fprintf(f, "# Lines are applied top-to-bottom (top = highest priority).\n");
+    // Preserve the display order from the folders list for determinism.
+    for (auto& name : folders) {
+        if (enabled.count(name)) fprintf(f, "%s\n", name.c_str());
+    }
+    fclose(f);
+}
+
+static void RunModsScreen(bool& appQuit) {
+    std::vector<std::string> folders = EnumerateModFolders();
+    std::set<std::string>    enabled = LoadEnabledMods();
+
+    // Reuse MENUM background for visual continuity; we overlay our own text on top.
+    MenuScreen ms = {};
+    LoadMenuScreen(ms,
+        "HUNTDAT\\MENU\\MENUM.TGA",
+        nullptr,
+        nullptr);
+
+    while (!appQuit) {
+        if (!PollMenuEvents(appQuit)) break;
+        CompositeMenu(ms);
+
+        MenuBegin();
+        DrawMenuScreen(ms);
+
+        // SOURCEPORT: all content lives on the right half of the screen so MENUM's
+        // baked art on the left remains visible behind it.
+        int colX    = WinW * 420 / 800;
+        int colRight = WinW * 780 / 800;
+
+        // Header
+        MTBig("MODS", colX, WinH * 70 / 600, 0x00FFD040);
+
+        // List area
+        int listX = colX;
+        int listY = WinH * 140 / 600;
+        int rowH  = WinH * 28  / 600;
+
+        if (folders.empty()) {
+            MT("No mods installed.",                               listX, listY,           0x00C0C0C0);
+            MT("Create a folder at ./mods/<name>/ to add one.",    listX, listY + rowH,     0x00909090);
+            MT("Folder contents should mirror the game layout",    listX, listY + rowH*2,   0x00909090);
+            MT("(e.g. mods/MyPack/HUNTDAT/TREX.png).",             listX, listY + rowH*3,   0x00909090);
+        } else {
+            for (size_t i = 0; i < folders.size(); ++i) {
+                int ry = listY + (int)i * rowH;
+                bool en = enabled.count(folders[i]) > 0;
+                int rowX0 = listX;
+                int rowX1 = colRight;
+                bool hot = (gMI.x >= rowX0 && gMI.x < rowX1 &&
+                            gMI.y >= ry     && gMI.y < ry + rowH);
+                uint32_t col = en ? 0x00FFE080 : 0x00A0A0A0;
+                if (hot) col = 0x00FFFFFF;
+                char line[320];
+                wsprintf(line, "[%s]  %s", en ? "X" : " ", folders[i].c_str());
+                MT(line, listX, ry, col);
+
+                if (hot && gMI.lClick) {
+                    if (en) enabled.erase(folders[i]);
+                    else    enabled.insert(folders[i]);
+                    if (fxMenuGo.lpData)
+                        AddVoicev(fxMenuGo.length, fxMenuGo.lpData, 200);
+                }
+            }
+        }
+
+        // Footer hint
+        MT("Changes apply on next launch.", colX, WinH * 540 / 600, 0x00C0A060);
+        MT("ESC to return",                  colX, WinH * 565 / 600, 0x00909090);
+
+        // Back hit: bottom-right area (below the MODS heading column)
+        const char* kBack = "BACK";
+        int backW  = g_glRenderer->MeasureTextBig(kBack);
+        int backH  = WinH * 44 / 600;
+        int backLX = WinW - backW - WinW * 20 / 800;
+        int backLY = WinH - backH - WinH * 12 / 600;
+        int backX0 = backLX - WinW * 6 / 800;
+        int backY0 = backLY - WinH * 4 / 600;
+        int backX1 = backLX + backW + WinW * 6 / 800;
+        int backY1 = backLY + backH;
+        bool backHot = (gMI.x >= backX0 && gMI.x < backX1 &&
+                        gMI.y >= backY0 && gMI.y < backY1);
+        MTBig(kBack, backLX, backLY, backHot ? 0x00FFE080 : 0x00AC6D24);
+
+        if (gMI.scancode == SDL_SCANCODE_ESCAPE) break;
+        if (gMI.lClick && backHot) break;
+
+        MenuEnd();
+        SDL_Delay(16);
+    }
+
+    SaveEnabledMods(folders, enabled);
+    FreeMenuScreen(ms);
+}
+
 // ─── Top-level entry point ────────────────────────────────────────────────────
 
 bool RunMenus(bool& appQuit, bool skipToHunt, bool skipPlayerSelect) {
@@ -2024,6 +2192,7 @@ bool RunMenus(bool& appQuit, bool skipToHunt, bool skipPlayerSelect) {
             }
             case 2: RunOptions(appQuit);    break;   // Options
             case 3: RunCredits(appQuit);    break;   // Credits
+            case 6: RunModsScreen(appQuit); break;   // Mods — SOURCEPORT
             case 4: {  // Quit
                 bool quit = RunQuitConfirm(appQuit);
                 if (appQuit || quit) return false;

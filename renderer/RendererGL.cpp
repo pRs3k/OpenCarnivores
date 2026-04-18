@@ -966,6 +966,23 @@ static HFONT GetScaledFont() {
     return s_scaledFont ? s_scaledFont : fnt_Small;
 }
 
+// SOURCEPORT: big heading font — ~36px at 600p, Bold. Used for menu screen headings.
+static HFONT  s_bigFont    = NULL;
+static int    s_bigWinH    = 0;
+
+static HFONT GetBigFont() {
+    if (s_bigWinH != WinH) {
+        if (s_bigFont) { DeleteObject(s_bigFont); s_bigFont = NULL; }
+        int fh = std::max(36, 36 * WinH / 600);
+        int fw = std::max(14, 14 * WinH / 600);
+        s_bigFont = CreateFontA(fh, fw, 0, 0, 700, 0, 0, 0,
+            ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH | FF_SWISS, NULL);
+        s_bigWinH = WinH;
+    }
+    return s_bigFont ? s_bigFont : GetScaledFont();
+}
+
 // SOURCEPORT: menu font — fnt_Midd style: weight=550 (semibold), 16px/7px at 600p, scaled by WinH/600.
 static HFONT  s_menuFont   = NULL;
 static int    s_menuWinH   = 0;
@@ -1125,6 +1142,26 @@ void RendererGL::DrawTextMed(int x, int y, const char* text, uint32_t color) {
     DrawTextWithFont(x, y, text, color, GetMenuFont(),
         m_bitmapTexture, m_vao, m_vbo,
         m_zBufferEnabled, m_locAlphaTest, m_locFogEnabled, m_fogEnabled);
+}
+
+void RendererGL::DrawTextBig(int x, int y, const char* text, uint32_t color) {
+    if (!text || !text[0]) return;
+    DrawTextWithFont(x, y, text, color, GetBigFont(),
+        m_bitmapTexture, m_vao, m_vbo,
+        m_zBufferEnabled, m_locAlphaTest, m_locFogEnabled, m_fogEnabled);
+}
+
+int RendererGL::MeasureTextBig(const char* text) {
+    if (!text || !text[0]) return 0;
+    HFONT font = GetBigFont();
+    HDC hdc = CreateCompatibleDC(NULL);
+    if (!hdc) return 0;
+    HFONT old = (HFONT)SelectObject(hdc, font);
+    SIZE sz = {};
+    GetTextExtentPoint32A(hdc, text, (int)strlen(text), &sz);
+    SelectObject(hdc, old);
+    DeleteDC(hdc);
+    return sz.cx;
 }
 
 // SOURCEPORT: Draw a filled rectangle at screen position (x,y) with size (w,h).

@@ -2111,6 +2111,11 @@ void ReadCharacters(FILE *stream)
 
 
 
+// SOURCEPORT: forward decl of the JSON overlay — defined in DataDefs.cpp.
+// Applied after retail _res.txt so mods can override specific fields without
+// repackaging the whole script.
+namespace DataDefs { void ApplyJsonOverlays(); void RegisterHotReload(); }
+
 void LoadResourcesScript()
 {
     FILE *stream;
@@ -2126,6 +2131,11 @@ void LoadResourcesScript()
 	}
 
 	fclose (stream);
+
+	// SOURCEPORT: layer JSON overlays (HUNTDAT\dinos.json / weapons.json) on top
+	// of the retail parse. Missing files are a no-op — vanilla installs unaffected.
+	DataDefs::ApplyJsonOverlays();
+	DataDefs::RegisterHotReload();
 
 	// SOURCEPORT: register once for hot reload. The watch is idempotent — if the
 	// same path is added twice, both entries fire on change, which is harmless.
@@ -2143,6 +2153,9 @@ void LoadResourcesScript()
 				if (strstr(ln, "characters")) ReadCharacters(s);
 			}
 			fclose(s);
+			// SOURCEPORT: re-layer JSON overlay so edits to _res.txt don't wipe out
+			// dinos.json / weapons.json overrides until the next JSON save.
+			DataDefs::ApplyJsonOverlays();
 			PrintLog("[HotReload] _res.txt reloaded\n");
 		});
 	}

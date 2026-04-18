@@ -47,3 +47,8 @@ deps/SDL2-*/lib/**/*.pdb
 .vs/
 out/
 Debug/
+
+# Player-local mod install: user's installed mod packs and their enabled list.
+# The mods.cfg is per-install and shouldn't be shared across repo clones.
+mods/
+mods.cfg

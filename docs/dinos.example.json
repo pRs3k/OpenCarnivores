@@ -1,0 +1,48 @@
+{
+  // OpenCarnivores dinosaur overlay.
+  //
+  // Drop this file at HUNTDAT/dinos.json to tweak or add creatures.
+  // Each entry is merged into the baseline loaded from HUNTDAT/_res.txt,
+  // so only the fields you set are changed — everything else stays stock.
+  //
+  // Matching (in order):
+  //   "id"   : retail index (0..TotalC-1 after _res.txt loads). Most exact.
+  //   "ai"   : AI type constant (see AI_* in Hunt.h). Useful if retail
+  //            order changes.
+  //   "name" : matches DinoInfo[i].Name case-sensitively.
+  // If none match, the entry is appended as a brand-new creature.
+  //
+  // Hot reload: save this file, changes apply within ~1s. No restart.
+
+  "dinosaurs": [
+    {
+      "name": "T-Rex",
+      "health": 1500,        // buff: 1024 -> 1500
+      "basescore": 25,       // and slightly more points per kill
+      "smell": 0.95          // sharper nose
+    },
+    {
+      "name": "Moschops",
+      "health": 4,           // nerf from 2 -> 4 so shotgun doesn't one-shot
+      "mass": 1.2
+    },
+
+    // Add a new creature — leave id/ai/name off the matcher side; the
+    // name here will become DinoInfo[new].Name.
+    {
+      "name": "Albino T-Rex",
+      "file": "TREX",
+      "pic":  "TREXICON",
+      "ai":   18,
+      "health": 2048,
+      "basescore": 40,
+      "mass": 7.5,
+      "length": 13.0,
+      "radius": 450.0,
+      "smell": 0.9, "hear": 0.9, "look": 0.9,
+      "scale0": 700, "scaleA": 200,
+      "shipdelta": 168.0,
+      "danger": true
+    }
+  ]
+}
