@@ -1,4 +1,7 @@
 #include "Hunt.h"
+#include "Bindings.h"
+#include "Gamepad.h"
+#include "Scripting.h"
 
 
 /*typedef struct tagAudioQuad
@@ -842,26 +845,16 @@ void InitEngine()
 
     ProcessCommandLine();
 
-    // SOURCEPORT: WASD defaults — used when creating a new player (KeyMap is zero-init).
-    // fkXxx stores Windows Virtual Key codes (same scale as SDL_ScancodeToVK output).
-    KeyMap.fkForward  = 'W';         // W
-    KeyMap.fkBackward = 'S';         // S
-    KeyMap.fkSLeft    = 'A';         // A — dedicated step-left (always strafes)
-    KeyMap.fkSRight   = 'D';         // D — dedicated step-right
-    KeyMap.fkLeft     = VK_LEFT;     // Left arrow — turn left / strafe when strafe held
-    KeyMap.fkRight    = VK_RIGHT;    // Right arrow
-    KeyMap.fkUp       = VK_UP;       // Up arrow — look up
-    KeyMap.fkDown     = VK_DOWN;     // Down arrow — look down
-    KeyMap.fkFire     = VK_LBUTTON;  // Mouse1 — fire
-    KeyMap.fkShow     = VK_RBUTTON;  // Mouse2 — switch weapon
-    KeyMap.fkStrafe   = VK_CONTROL;  // Ctrl — hold to strafe
-    KeyMap.fkJump     = VK_SPACE;    // Space
-    KeyMap.fkRun      = VK_SHIFT;    // Shift
-    KeyMap.fkCrouch   = 'X';         // X
-    KeyMap.fkCall     = VK_MENU;     // Alt — animal call
-    KeyMap.fkCCall    = 'C';         // C — change call
-    KeyMap.fkBinoc    = 'B';         // B — binoculars
-	
+    // SOURCEPORT: hardcoded defaults for keyboard + pad live in one place
+    // (Bindings::ResetToDefaults) so the "Reset" button in Options, the
+    // first-run init here, and any future call sites stay in sync.
+    Bindings::ResetToDefaults();
+
+    // SOURCEPORT: overlay any user rebinds from controls.cfg on top of the
+    // defaults above. Bindings::Load() only touches actions named in the
+    // file, so partial configs stay safe.
+    Bindings::Load();
+
 
     switch (OptDayNight) {
    case 0:
@@ -1209,9 +1202,14 @@ ENDTRACE:
 //======= character damage =========//
   
 
-  if (mort) Characters[ShotDino].Health = 0; 
+  int dmg = mort ? Characters[ShotDino].Health
+                 : WeapInfo[CurrentWeapon].Power;
+  if (mort) Characters[ShotDino].Health = 0;
        else Characters[ShotDino].Health-=WeapInfo[CurrentWeapon].Power;
   if (Characters[ShotDino].Health<0) Characters[ShotDino].Health=0;
+  // SOURCEPORT: Lua hook — dmg is what was actually subtracted (capped to
+  // the current HP on a lethal shot) so scripts can track damage dealt.
+  Scripting::OnDamage(&Characters[ShotDino], ShotDino, dmg);
 
     
    if (!Characters[ShotDino].Health) {	 	 

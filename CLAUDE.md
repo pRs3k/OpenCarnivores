@@ -158,7 +158,7 @@ Audio_DLL.cpp     — Thin wrapper exposing the original engine's audio API over
 | Ground models displayed wrong textures after an inter-level reload | `LoadPictureTGA` registered `pic.lpImage` as a `TextureOverrides` key; after `ReleaseResources` freed the menu buffer, the heap recycled that address for a terrain/model buffer and the stale menu override bled onto ground geometry | Reverted the `LoadPictureTGA` override hook; menu/UI overrides need a path-keyed registry instead of pointer-keyed |
 | Ground/object impact particles rendered pale yellow instead of sandy brown | Two stacked issues: (1) `RenderElements` cleared `hTexture` but left `hMaterial`/`hCustomMaterial` pointing at whatever `d3dSetTexture` last set during `RenderWater`, so particles drove `uPBR=1` with garbage normal/MR/AO bindings; (2) `basic.frag`'s hard `clamp(rgb*uBrightness, 0, 1)` clipped R and G before B on any saturated warm color, turning `#B4824B × 1.7+` into pale yellow `(1,1,0.6)` | `RenderElements` entry now also clears `hMaterial = hCustomMaterial = NULL`; `basic.frag` replaces the hard clamp with a hue-preserving scale-down: if `max(r,g,b) > 1` divide the whole vector by it, so chroma survives elevated brightness |
 
-## Phase 6 — Modern Asset Pipeline
+## Phase 6 — Modern Asset Pipeline (COMPLETE)
 
 ### Implemented and verified
 
@@ -221,14 +221,9 @@ Example shader pair and annotated `.material` template ship in `shaders/custom_t
 
 **Data-driven dino/weapon overlays (JSON)** — `DataDefs.cpp`/`.h`. Loads `HUNTDAT\dinos.json` and `HUNTDAT\weapons.json` after the retail `_res.txt` parse and merges entries into `DinoInfo[]`/`WeapInfo[]`. Matching order per entry: `id` (retail index) → `ai` (AI type constant, dinos only) → `name` (case-sensitive). No match = appended as a new creature/weapon. Only fields present in the JSON are overwritten; everything else keeps the `_res.txt` baseline, so mods can tweak single stats without repackaging the whole script. Hand-rolled minimal JSON parser (no external dep) with `//` and `/* */` comment support. Hot-reloaded through `HotReload::Watch` on both JSON paths and the existing `_res.txt` watch — editing either re-layers the JSON so edits to one don't wipe the other. Example templates at `docs/dinos.example.json` and `docs/weapons.example.json`.
 
-### Remaining for this phase
+## Phase 7 — Gameplay and Engine Improvements (Current Phase)
 
-- Virtual filesystem: wrap scattered path lookups in a VFS that can mount zips/folders with priority, enabling mod packs without overwriting game files
-- Menu/UI picture overrides — `LoadPictureTGA` needs a path-keyed registry (not pointer-keyed — the heap recycles menu-picture addresses for terrain/model buffers after inter-level `ReleaseResources`, so pointer keys cause cross-asset bleed)
-
-## Phase 7 — Gameplay and Engine Improvements (FUTURE)
-
-- Modern input handling (raw input, configurable bindings)
+- ~~Modern input handling (raw input, configurable bindings)~~ DONE
 - Improved AI (behavior trees, NavMesh pathfinding)
 - Physics integration (ragdoll, foliage interaction)
 - ~~Audio modernization (OpenAL or SDL_mixer)~~ DONE — migrated to OpenAL Soft (`Audio_OpenAL.cpp`)
@@ -236,6 +231,7 @@ Example shader pair and annotated `.material` template ship in `shaders/custom_t
 - Formalize the renderer abstraction: move all `d3d*` functions behind the `Renderer` interface entirely, kill `renderd3d.cpp` glue so Vulkan / Metal / WebGPU backends become drop-in
 - Decouple frame rate from simulation: split into fixed-step sim + interpolated render for smooth 90/120 Hz VR
 - Embed Lua or AngelScript with bindings for `Character` struct + event hooks (OnDamage, OnSpawn, OnFire) to open modding to non-C++ devs
+- Virtual filesystem: Enable wrap scattered path lookups in a VFS that can mount zips with priority (folders are already implemented)
 
 ### VR plumbing (requires HMD pipeline in place first)
 

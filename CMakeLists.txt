@@ -28,10 +28,18 @@ if(RENDERER STREQUAL "opengl")
     set(GLAD_DIR   "${CMAKE_SOURCE_DIR}/deps/glad")
     set(OPENAL_DIR "${CMAKE_SOURCE_DIR}/deps/openal-soft")
     set(STB_DIR    "${CMAKE_SOURCE_DIR}/deps/stb")
+    set(LUA_DIR    "${CMAKE_SOURCE_DIR}/deps/lua")
+
+    # Lua 5.4 — compiled as C; lua.c and luac.c are the CLI entry points and
+    # are excluded (we embed, not launch, the interpreter).
+    file(GLOB LUA_SOURCES "${LUA_DIR}/src/*.c")
+    list(FILTER LUA_SOURCES EXCLUDE REGEX ".*/lua\\.c$")
+    list(FILTER LUA_SOURCES EXCLUDE REGEX ".*/luac\\.c$")
 
     set(RENDERER_SOURCES
         renderer/RendererGL.cpp
         ${GLAD_DIR}/src/gl.c
+        ${LUA_SOURCES}
     )
 
     set(RENDERER_INCLUDES
@@ -39,6 +47,7 @@ if(RENDERER STREQUAL "opengl")
         ${GLAD_DIR}/include
         ${OPENAL_DIR}/include
         ${STB_DIR}
+        ${LUA_DIR}/src
         ${CMAKE_SOURCE_DIR}          # so renderer/ headers resolve from project root
     )
 
@@ -86,6 +95,9 @@ set(SOURCES
     CustomMaterials.cpp
     DataDefs.cpp
     VFS.cpp
+    Gamepad.cpp
+    Bindings.cpp
+    Scripting.cpp
     HotReload.cpp
     renderd3d.cpp
     Menu.cpp

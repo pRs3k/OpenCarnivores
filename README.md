@@ -39,6 +39,8 @@ That's it. The game should launch at your monitor's native resolution.
 - **PBR materials** (normal / metallic-roughness / AO maps) per-asset, opt-in
 - **Custom GLSL shaders per asset** via `.material` files — no C++ required
 - **Hot reload** for textures, shaders, `.material` files, and `_RES.txt` — edit & save, no restart
+- **Lua 5.4 scripting** with `OnSpawn` / `OnDamage` / `OnFire` hooks for gameplay mods
+- **Modern input** — raw mouse, Xbox / DualShock / Switch Pro gamepad support (hot-plug, analog look), and fully rebindable keyboard + gamepad bindings persisted to `controls.cfg`
 - Many subtle rendering and AI fixes
 
 All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load **unchanged**.
@@ -180,6 +182,65 @@ The parser accepts `//` line comments and `/* block */` comments — real JSON d
 
 ---
 
+## For modders: Lua scripting
+
+OpenCarnivores embeds **Lua 5.4** with three event hooks so you can add gameplay logic without recompiling the engine. Drop any number of `.lua` files into a `scripts/` folder next to the exe; each is loaded once at startup, and errors in one script log-and-continue so a typo in one mod can't break the others.
+
+### Hooks
+
+| Hook | Signature | When it fires |
+|---|---|---|
+| `OnInit` | `()` | Once, after all scripts have loaded |
+| `OnSpawn` | `(ch)` | When a dinosaur (or the player) is (re)spawned |
+| `OnDamage` | `(ch, amount)` | When the player's shot reduces a dino's HP |
+| `OnFire` | `(weaponIndex)` | When the player successfully discharges a weapon |
+
+`ch` is a read-only snapshot table with the fields: `id` (index into the `Characters` array), `ctype`, `name` (e.g. `"Trex"`, `"Parasaur"`), `ai`, `health` (post-damage for `OnDamage`), `state`, `x`, `y`, `z`, `alpha`, `beta`.
+
+### Engine helpers
+
+All exposed under a single `oc` global table:
+
+```lua
+oc.log(msg)                -- write to the log file
+oc.message(msg)            -- show an in-game HUD message
+oc.setHealth(id, hp)       -- write hp back (0 = instant kill)
+oc.getHealth(id)           -- read hp; -1 if id invalid
+oc.playerPos()             -- returns x, y, z of the player
+oc.dinoCount()             -- number of live entries in Characters[]
+oc.getCharacter(id)        -- same snapshot table as the hooks receive
+```
+
+### Example
+
+```lua
+-- scripts/announcer.lua
+function OnSpawn(ch)
+    if ch.name == "Trex" or ch.name == "Ceratosaurus" then
+        oc.message("A " .. ch.name .. " is nearby...")
+    end
+end
+
+function OnDamage(ch, amount)
+    if amount >= 40 and ch.health > 0 then
+        oc.message(string.format("Solid hit on %s (-%d HP)", ch.name, amount))
+    end
+end
+```
+
+A full annotated template ships as `scripts/example.lua`.
+
+---
+
+## Input and bindings
+
+- **Mouse** — raw relative input via SDL's unscaled path; OS mouse-accel and Windows sens sliders are bypassed so aim is 1:1 with hand motion. The in-game **Mouse Sensitivity** slider scales both mouse and gamepad look.
+- **Gamepad** — any SDL-recognised controller works (Xbox, DualShock 4/5, Switch Pro, generic). Hot-plug supported. Defaults: left stick = move, right stick = look (analog), A = jump, B = crouch, X = call, Y = change call, LB/RB = prev/next weapon, RT = fire, LT = binoculars, Back = map, Start = pause/menu, L3 = run, D-pad = turn up/down/left/right.
+- **Rebinding** — **Options → Controls** shows three columns per action (name / keyboard / gamepad). Click either slot to capture a new binding; press **ESC** to clear it (unbind); the **Reset** button restores all defaults. Triggers (LT/RT) and stick directions can be assigned to any action.
+- **Persistence** — rebinds are written to `controls.cfg` on exit and reloaded on launch; unknown or missing actions safely fall back to the hardcoded defaults.
+
+---
+
 ## For modders: the `mods/` folder
 
 OpenCarnivores ships a virtual filesystem that mounts `mods/<PackName>/` folders on top of the retail game folder. **Retail files are never modified.** Any file the game opens is checked against the enabled mod list first (top = highest priority); the first hit wins, otherwise the retail file is used.
@@ -207,8 +268,11 @@ Everything that reads game assets: character `.CAR`, standalone `.3DF`, area `.R
 
 Planned additions that will further expand what modders can do (see `CLAUDE.md` for the full roadmap):
 
-- Virtual filesystem with `mods/` folder priority — clean mod packs, no file overwrites (UI landed this release, file routing next)
-- Lua scripting for AI and gameplay events
+- Zip-archive mounting alongside the existing `mods/` folder support
+- Expanded Lua API (more hooks, richer Character mutation, AI behaviour tree overrides)
+- Behavior-tree AI and NavMesh pathfinding
+- Physics integration (ragdoll, foliage interaction)
+- EFX reverb zones and HRTF toggle in OpenAL
 - VR support (OpenXR)
 
 ---
@@ -220,7 +284,7 @@ cmake -B build
 cmake --build build --config Release
 ```
 
-Requires Visual Studio 2022 (or MSVC toolchain) and CMake 3.20+. All dependencies (SDL2, OpenAL Soft, glad, stb_image, tinygltf, tinyobjloader) are vendored under `deps/`.
+Requires Visual Studio 2022 (or MSVC toolchain) and CMake 3.20+. All dependencies (SDL2, OpenAL Soft, glad, stb_image, tinygltf, tinyobjloader, Lua 5.4) are vendored under `deps/`.
 
 Run `build/Release/OpenCarnivores.exe` from the Carnivores 2 game folder, or pass `-width=N -height=N -fullscreen` on the command line.
 
@@ -237,6 +301,6 @@ Pull requests welcome! The repo is configured to require a PR + 1 review before 
 - Original game: **Action Forms**, 1999
 - Source code preservation: [videogamepreservation/carnivores2](https://github.com/videogamepreservation/carnivores2)
 - OpenCarnivores port: engine modernization, renderer abstraction, audio/asset pipelines
-- Dependencies: SDL2 (zlib), OpenAL Soft (LGPL), glad (MIT), stb_image (public domain), tinygltf (MIT), tinyobjloader (MIT)
+- Dependencies: SDL2 (zlib), OpenAL Soft (LGPL), glad (MIT), stb_image (public domain), tinygltf (MIT), tinyobjloader (MIT), Lua 5.4 (MIT)
 
 Not affiliated with Action Forms. You must own a legal copy of Carnivores 2 to use this engine.

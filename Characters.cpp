@@ -1,4 +1,5 @@
 #include "Hunt.h"
+#include "Scripting.h"
 #include "stdio.h"
 
 BOOL NewPhase;
@@ -514,7 +515,9 @@ replace1:
      Characters[ChCount].tgz = Characters[ChCount].pos.z;
 	 Characters[ChCount].tgtime = 0;
 
-	 ResetCharacter(&Characters[ChCount]);     
+	 ResetCharacter(&Characters[ChCount]);
+	 // SOURCEPORT: fire the Lua OnSpawn hook once the dino is fully wired.
+	 Scripting::OnSpawn(&Characters[ChCount], ChCount);
 	 ChCount++;
 }
 
@@ -2820,7 +2823,13 @@ SKIPROT:
 	                   cptr->lookz * cptr->vspeed * TimeDt, TRUE, TRUE);      
    */
 
-   ThinkY_Beta_Gamma(cptr, 256, 128, 0.1f, 0.2f);                               
+   ThinkY_Beta_Gamma(cptr, 256, 128, 0.1f, 0.2f);
+   // SOURCEPORT: brachiosaurus is the only land dino large enough to wade. The
+   // shared ThinkY_Beta_Gamma clamps Y up to the water surface (correct for
+   // small AIs that shouldn't intersect water); for a 12m sauropod that places
+   // the feet on top of the lake. Stamp land height back so it stands on the
+   // bed with legs submerged, while beta/gamma still track the terrain slope.
+   cptr->pos.y = GetLandH(cptr->pos.x, cptr->pos.z);
    DeltaFunc(cptr->gamma, cptr->tggamma, TimeDt / 4048.f);
 }
 

@@ -11,6 +11,7 @@
 #include <AL/alc.h>
 #define AL_ALEXT_PROTOTYPES
 #include <AL/efx.h>
+#include <AL/efx-presets.h>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -73,6 +74,89 @@ static std::unordered_map<BufKey, ALuint, BufKeyHash, BufKeyEq> g_bufCache;
 
 static Uint32 g_lastTick = 0;
 
+// ─── EFX reverb zones ────────────────────────────────────────────────────────
+// One aux effect slot attached to every spatial voice; the EAX-reverb effect
+// inside it is swapped between presets as the player's environment changes
+// (surface → FOREST, swim → UNDERWATER, high altitude above the tree canopy
+// → MOUNTAINS). Dry weapon/UI sounds bypass the send so muzzle reports and
+// HUD beeps stay clean.
+//
+// Zero-cost graceful fallback: if ALC_EXT_EFX is unavailable or the driver
+// rejects the slot/effect gens, g_reverbSlot stays 0 and every voice path
+// skips the AL_AUXILIARY_SEND_FILTER call — identical to pre-EFX behaviour.
+static ALuint g_reverbEffect = 0;
+static ALuint g_reverbSlot   = 0;
+static int    g_currentPreset = -1;   // cached so we don't re-upload on every frame
+
+enum ReverbZone {
+    ZONE_FOREST     = 0,   // default — dense vegetation, medium tail
+    ZONE_MOUNTAINS  = 1,   // open high-altitude, long sparse reflections
+    ZONE_UNDERWATER = 2,   // heavily low-passed, long tail
+};
+
+static void ApplyReverbPreset(ReverbZone zone)
+{
+    if (!g_reverbEffect || g_currentPreset == (int)zone) return;
+
+    EFXEAXREVERBPROPERTIES p;
+    switch (zone) {
+        case ZONE_UNDERWATER: { EFXEAXREVERBPROPERTIES u = EFX_REVERB_PRESET_UNDERWATER; p = u; } break;
+        case ZONE_MOUNTAINS:  { EFXEAXREVERBPROPERTIES m = EFX_REVERB_PRESET_MOUNTAINS;  p = m; } break;
+        case ZONE_FOREST:
+        default:              { EFXEAXREVERBPROPERTIES f = EFX_REVERB_PRESET_FOREST;     p = f; } break;
+    }
+
+    // Upload the EAX-reverb property block. Only the EAXReverb effect reads
+    // all of these; if the driver falls back to plain AL_EFFECT_REVERB the
+    // non-core parameters silently no-op, which is fine.
+    alEffectf (g_reverbEffect, AL_EAXREVERB_DENSITY,             p.flDensity);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_DIFFUSION,           p.flDiffusion);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_GAIN,                p.flGain);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_GAINHF,              p.flGainHF);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_GAINLF,              p.flGainLF);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_DECAY_TIME,          p.flDecayTime);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_DECAY_HFRATIO,       p.flDecayHFRatio);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_DECAY_LFRATIO,       p.flDecayLFRatio);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_REFLECTIONS_GAIN,    p.flReflectionsGain);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_REFLECTIONS_DELAY,   p.flReflectionsDelay);
+    alEffectfv(g_reverbEffect, AL_EAXREVERB_REFLECTIONS_PAN,     p.flReflectionsPan);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_LATE_REVERB_GAIN,    p.flLateReverbGain);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_LATE_REVERB_DELAY,   p.flLateReverbDelay);
+    alEffectfv(g_reverbEffect, AL_EAXREVERB_LATE_REVERB_PAN,     p.flLateReverbPan);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_ECHO_TIME,           p.flEchoTime);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_ECHO_DEPTH,          p.flEchoDepth);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_MODULATION_TIME,     p.flModulationTime);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_MODULATION_DEPTH,    p.flModulationDepth);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_AIR_ABSORPTION_GAINHF,
+                                                                 p.flAirAbsorptionGainHF);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_HFREFERENCE,         p.flHFReference);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_LFREFERENCE,         p.flLFReference);
+    alEffectf (g_reverbEffect, AL_EAXREVERB_ROOM_ROLLOFF_FACTOR, p.flRoomRolloffFactor);
+    alEffecti (g_reverbEffect, AL_EAXREVERB_DECAY_HFLIMIT,       p.iDecayHFLimit);
+
+    // Rebind the updated effect into the active aux slot so the changes
+    // take effect; without this second call the slot keeps the previous
+    // snapshot of the effect's properties.
+    alAuxiliaryEffectSloti(g_reverbSlot, AL_EFFECTSLOT_EFFECT, (ALint)g_reverbEffect);
+
+    g_currentPreset = (int)zone;
+}
+
+// Pick the zone based on the player's current environment. UNDERWATER is the
+// one hard signal the engine already tracks; MOUNTAINS is inferred from the
+// player being well above their local ground (ridgeline / high plateau).
+static ReverbZone SelectZoneForPlayer()
+{
+    extern int UNDERWATER;
+    if (UNDERWATER) return ZONE_UNDERWATER;
+    // Player Y above terrain by > ~6m (256 units/m) and no canopy overhead
+    // → treat as high-altitude open. Sampling a single GetLandH under the
+    // player is cheap and matches where the listener actually is.
+    float gnd = GetLandH(CameraX, CameraZ);
+    if (CameraY - gnd > 1500.f) return ZONE_MOUNTAINS;
+    return ZONE_FOREST;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 static ALuint GetOrCreateBuffer(int length, short* data)
 {
@@ -115,7 +199,13 @@ bool SDL_Audio_Init()
     for (int i = 0; i < MAX_CHANNELS; i++) {
         alSourcef(g_srcVoice[i], AL_REFERENCE_DISTANCE, MIN_RADIUS);
         alSourcef(g_srcVoice[i], AL_MAX_DISTANCE,       MAX_RADIUS);
-        alSourcef(g_srcVoice[i], AL_ROLLOFF_FACTOR,     1.f);
+        // SOURCEPORT: rolloff was 1.0 → linear falloff hit 50% only at ~7k units,
+        // which made distant dino roars/footfalls sound uncomfortably close. With
+        // 1.75 the curve reaches ~50% near 4.5k units and zero by ~8.3k, so near-
+        // field voices are unchanged while far-away ones correctly fade into the
+        // ambient bed. Full formula (AL_LINEAR_DISTANCE_CLAMPED):
+        //     gain = 1 - ROLLOFF * (dist - REF) / (MAX - REF), clamped [0,1].
+        alSourcef(g_srcVoice[i], AL_ROLLOFF_FACTOR,     1.75f);
         alFilteri(g_filterVoice[i], AL_FILTER_TYPE, AL_FILTER_LOWPASS);
         alFilterf(g_filterVoice[i], AL_LOWPASS_GAIN,   1.f);
         alFilterf(g_filterVoice[i], AL_LOWPASS_GAINHF, 1.f);
@@ -133,6 +223,26 @@ bool SDL_Audio_Init()
     alListener3f(AL_POSITION, 0.f, 0.f, 0.f);
     ALfloat orient[6] = {0.f, 0.f, -1.f,  0.f, 1.f, 0.f};
     alListenerfv(AL_ORIENTATION, orient);
+
+    // EFX reverb setup — optional; if the device/driver lacks ALC_EXT_EFX we
+    // leave g_reverbSlot=0 and every downstream path no-ops the send wiring.
+    if (alcIsExtensionPresent(g_device, "ALC_EXT_EFX")) {
+        alGenEffects(1, &g_reverbEffect);
+        alEffecti(g_reverbEffect, AL_EFFECT_TYPE, AL_EFFECT_EAXREVERB);
+        if (alGetError() != AL_NO_ERROR) {
+            // Driver doesn't support EAX reverb — fall back to plain reverb
+            // which still gives us a meaningful (if less parameterized) tail.
+            alEffecti(g_reverbEffect, AL_EFFECT_TYPE, AL_EFFECT_REVERB);
+        }
+        alGenAuxiliaryEffectSlots(1, &g_reverbSlot);
+        if (alGetError() == AL_NO_ERROR && g_reverbSlot && g_reverbEffect) {
+            ApplyReverbPreset(ZONE_FOREST);
+            Log("OpenAL EFX reverb zones active.\n");
+        } else {
+            if (g_reverbEffect) { alDeleteEffects(1, &g_reverbEffect); g_reverbEffect = 0; }
+            if (g_reverbSlot)   { alDeleteAuxiliaryEffectSlots(1, &g_reverbSlot); g_reverbSlot = 0; }
+        }
+    }
 
     g_lastTick = SDL_GetTicks();
     Log("OpenAL audio initialized.\n");
@@ -156,6 +266,10 @@ void SDL_Audio_Shutdown()
 
     for (auto& kv : g_bufCache) alDeleteBuffers(1, &kv.second);
     g_bufCache.clear();
+
+    if (g_reverbSlot)   { alDeleteAuxiliaryEffectSlots(1, &g_reverbSlot); g_reverbSlot = 0; }
+    if (g_reverbEffect) { alDeleteEffects(1, &g_reverbEffect);            g_reverbEffect = 0; }
+    g_currentPreset = -1;
 
     alcMakeContextCurrent(nullptr);
     alcDestroyContext(g_context); g_context = nullptr;
@@ -189,6 +303,10 @@ void SDL_Audio_SetCameraPos(float cx, float cy, float cz, float alpha, float /*b
         0.f, 1.f, 0.f   // up
     };
     alListenerfv(AL_ORIENTATION, orient);
+
+    // Pick the reverb zone for wherever the listener is now. Internal
+    // cache short-circuits if the zone hasn't changed since last frame.
+    if (g_reverbSlot) ApplyReverbPreset(SelectZoneForPlayer());
 
     // Tick ambient crossfades here (called every frame by the game).
     Uint32 now = SDL_GetTicks();
@@ -294,9 +412,20 @@ void SDL_Audio_AddVoice3dv(int length, short* data, float x, float y, float z, i
             alFilterf(g_filterVoice[i], AL_LOWPASS_GAIN,   gainMul);
             alFilterf(g_filterVoice[i], AL_LOWPASS_GAINHF, gainHFMul);
             alSourcei(g_srcVoice[i], AL_DIRECT_FILTER, (ALint)g_filterVoice[i]);
+            // Route this voice through the reverb aux slot so environmental
+            // tails paint the tone of whatever zone the player is in.
+            if (g_reverbSlot) {
+                alSource3i(g_srcVoice[i], AL_AUXILIARY_SEND_FILTER,
+                           (ALint)g_reverbSlot, 0, AL_FILTER_NULL);
+            }
         } else {
             // Reset any prior filter for this slot so non-spatial sounds play dry.
             alSourcei(g_srcVoice[i], AL_DIRECT_FILTER, AL_FILTER_NULL);
+            // Dry send too — UI/weapon sfx shouldn't get the world's reverb tail.
+            if (g_reverbSlot) {
+                alSource3i(g_srcVoice[i], AL_AUXILIARY_SEND_FILTER,
+                           AL_EFFECTSLOT_NULL, 0, AL_FILTER_NULL);
+            }
         }
 
         alSourcef(g_srcVoice[i], AL_GAIN, gain);
