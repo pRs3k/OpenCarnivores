@@ -242,17 +242,29 @@ void CheckCollision(float &cx, float &cz)
 		}
    }
 
-   if (!TrophyMode) return;
+   // SOURCEPORT: extend live-hunt collision to dinosaurs so the player can't
+   // walk through them. Retail's `if (!TrophyMode) return;` limited this to
+   // the trophy room; a live hunt needs the same shove.
+   // Filters:
+   //   - Health == 0: skip dead/dying dinos (a corpse on the ground shouldn't
+   //     wall off the player — trophies are collected on-contact).
+   //   - Y distance: skip characters whose body is vertically far from the
+   //     player (covers airborne pterosaurs/dimorphs, aboveground flyers,
+   //     and any dino on a cliff above/below that happens to be planar-close).
+   //   - r > tiny epsilon: avoid div-by-zero when the player is pinned on
+   //     the exact centre after a spawn or teleport.
    for (int c=0; c<ChCount; c++) {
+	   if (Characters[c].Health <= 0) continue;
 	   float px = Characters[c].pos.x;
+	   float py = Characters[c].pos.y;
 	   float pz = Characters[c].pos.z;
+	   if (fabsf(py - PlayerY) > 384.f) continue;  // head-height-ish window
        float CR = DinoInfo[ Characters[c].CType ].Radius;
 	   float r = (float) sqrt( (px-cx)*(px-cx) + (pz-cz)*(pz-cz) );
-         if (r<CR) {
+         if (r < CR && r > 0.001f) {
            cx = cx - (px - cx) * (CR-r)/r;
            cz = cz - (pz - cz) * (CR-r)/r;
-         }       
-
+         }
    }
 
 }

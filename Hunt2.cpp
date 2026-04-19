@@ -8,12 +8,16 @@
 #include "renderer/RendererGL.h"
 #include "HotReload.h"
 #include "VFS.h"
+#include "Gamepad.h"
+#include "Scripting.h"
 
 // SOURCEPORT: SDL2 platform state
 // Under OpenGL, keyboard state is maintained via SDL events;
 // GetKeyboardState() is never called — we update KeyboardState[] directly.
-static int  g_sdlMouseDX = 0;  // accumulated relative mouse X since last ProcessPlayerMovement
-static int  g_sdlMouseDY = 0;
+// SOURCEPORT: non-static so Gamepad.cpp can feed right-stick motion into the
+// same mouselook accumulator keyboard/mouse use.
+int  g_sdlMouseDX = 0;  // accumulated relative mouse X since last ProcessPlayerMovement
+int  g_sdlMouseDY = 0;
 // SOURCEPORT: set by Game.cpp ExitTime expiry to trigger return-to-menus instead of DoHalt
 bool g_returnToMenus = false;
 
@@ -1069,6 +1073,8 @@ for (int s=0; s<=WeapInfo[CurrentWeapon].TraceC; s++) {
 	 v.z = PlayerZ;
 	 MakeNoise(v, ctViewR*200 * WeapInfo[CurrentWeapon].Loud);
 	 ShotsLeft[CurrentWeapon]--;
+	 // SOURCEPORT: fire Lua OnFire hook after the shot is committed.
+	 Scripting::OnFire(CurrentWeapon);
    }
 }
 
@@ -1828,8 +1834,20 @@ int main(int argc, char* argv[])
     // displays (e.g. 150% scaling: 2560x1440 physical vs 1707x960 logical).
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
 
+    // SOURCEPORT: raw mouse input — bypass the OS pointer-acceleration curve
+    // ("Enhanced pointer precision") and per-user speed slider so mouselook is
+    // 1:1 with hardware counts. SDL2 on Windows uses RawInput WM_INPUT messages
+    // for relative motion when available; these hints disable the app-side and
+    // OS-side scaling that would otherwise re-apply the acceleration curve on
+    // top. Players who relied on the OS curve can compensate with OptMsSens.
+    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE, "0");
+    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE,  "1.0");
+    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_SCALING,      "0");
+    SDL_SetHint(SDL_HINT_MOUSE_RELATIVE_WARP_MOTION,  "0");
+
     // SOURCEPORT: audio is OpenAL Soft; SDL audio subsystem not used.
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
+    // GAMECONTROLLER pulled in so SDL emits CONTROLLERDEVICE/BUTTON events.
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
         MessageBoxA(NULL, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
         return 1;
     }
@@ -1840,6 +1858,15 @@ int main(int argc, char* argv[])
     // so modded MENUM.TGA, .CAR, .RSC, _res.txt, etc. are picked up on first open.
     // (The legacy WinMain path also calls this; main() is the actual SDL entry.)
     VFS::Init();
+
+    // SOURCEPORT: game-controller support. Opens the first connected pad, handles
+    // hot-plug, and routes analog/button state through the same KeyboardState[] +
+    // g_sdlMouseDX/DY that keyboard/mouse feed into.
+    Gamepad::Init();
+
+    // SOURCEPORT: Lua scripting layer. Loads every scripts/*.lua file and
+    // arms the OnSpawn/OnDamage/OnFire hooks. Safe if scripts/ is absent.
+    Scripting::Init();
 
     InitEngine();
     // SOURCEPORT: Match the D3D path — Init3DHardware() sets HARD3D=TRUE before resource
@@ -2040,8 +2067,17 @@ int main(int argc, char* argv[])
                     if (ev.button.button == SDL_BUTTON_LEFT)
                         KeyboardState[KeyMap.fkFire] &= ~128;
                     break;
+                case SDL_CONTROLLERDEVICEADDED:
+                case SDL_CONTROLLERDEVICEREMOVED:
+                case SDL_CONTROLLERBUTTONDOWN:
+                case SDL_CONTROLLERBUTTONUP:
+                    Gamepad::HandleEvent(ev);
+                    break;
                 }
             }
+            // SOURCEPORT: sample analog sticks + triggers once per poll pass,
+            // before ProcessGame() reads KeyboardState / g_sdlMouseDX[Y].
+            Gamepad::Sample((float)TimeDt);
             if (!huntDone) {
                 // SOURCEPORT: dev hot reload — polls registered files (shaders,
                 // _res.txt, texture overrides) ~3×/sec, fires callbacks on change.

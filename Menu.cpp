@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <set>
 #include "VFS.h"
+#include "Bindings.h"
+#include "Gamepad.h"
 #undef min
 #undef max
 
@@ -239,7 +241,10 @@ static void DrawMenuScreen(MenuScreen& ms) {
 // Overlay a sub-image (like an area/dino preview) on top of the current frame.
 static void OverlayPic(TPicture& pic, int x, int y, int w, int h) {
     if (!pic.lpImage || pic.W <= 0 || pic.H <= 0) return;
-    g_glRenderer->DrawBitmap(x, y, w, h, pic.W, pic.lpImage, false, pic.H);
+    // SOURCEPORT: pass &pic as overrideKey so a registered PNG/DDS sibling wins.
+    // lpImage is heap-recycled across ReleaseResources; &pic is stable for the
+    // lifetime of this TPicture.
+    g_glRenderer->DrawBitmap(x, y, w, h, pic.W, pic.lpImage, false, pic.H, &pic);
 }
 
 // Draw simple text using the renderer's text system.
@@ -1230,7 +1235,7 @@ static void RunOptions(bool& appQuit) {
         int range = maxVal - minVal;
         // Bar background
         if (slBar.lpImage && slBar.W > 0)
-            g_glRenderer->DrawBitmap(tx, ty, tw, th, slBar.W, slBar.lpImage, false, slBar.H);
+            g_glRenderer->DrawBitmap(tx, ty, tw, th, slBar.W, slBar.lpImage, false, slBar.H, &slBar);
         else
             g_glRenderer->FillRect(tx, ty, tw, th, 0xFF302820);
 
@@ -1242,7 +1247,7 @@ static void RunOptions(bool& appQuit) {
             int thumbX = tx + (travel > 0 ? (val - minVal) * travel / range : 0);
             int thumbY = ty + th / 2 - butH / 2;
             if (slBut.lpImage && slBut.W > 0)
-                g_glRenderer->DrawBitmap(thumbX, thumbY, butW, butH, slBut.W, (void*)slBut.lpImage, true, slBut.H);
+                g_glRenderer->DrawBitmap(thumbX, thumbY, butW, butH, slBut.W, (void*)slBut.lpImage, true, slBut.H, &slBut);
             else
                 g_glRenderer->FillRect(thumbX, thumbY, butW, butH + 4, 0xFFC09060);
         }
@@ -1258,28 +1263,32 @@ static void RunOptions(bool& appQuit) {
     };
 
     // Key rebinding state: waitIdx = index into bindings[] being rebound (-1 = none)
-    struct Binding { const char* name; int* vk; };
+    // waitIsPad picks which column (keyboard VK vs gamepad button) the capture
+    // writes to. Capture accepts either kind of input but only fills the slot
+    // the user clicked on, so pad and key can be assigned independently.
+    struct Binding { const char* name; int* vk; int* pad; };
     Binding bindings[] = {
-        { "Forward",     &KeyMap.fkForward  },
-        { "Backward",    &KeyMap.fkBackward },
-        { "Turn Up",     &KeyMap.fkUp       },
-        { "Turn Down",   &KeyMap.fkDown     },
-        { "Turn Left",   &KeyMap.fkLeft     },
-        { "Turn Right",  &KeyMap.fkRight    },
-        { "Fire",        &KeyMap.fkFire     },
-        { "Get weapon",  &KeyMap.fkShow     },
-        { "Step Left",   &KeyMap.fkSLeft    },
-        { "Step Right",  &KeyMap.fkSRight   },
-        { "Strafe",      &KeyMap.fkStrafe   },
-        { "Jump",        &KeyMap.fkJump     },
-        { "Run",         &KeyMap.fkRun      },
-        { "Crouch",      &KeyMap.fkCrouch   },
-        { "Call",        &KeyMap.fkCall     },
-        { "Change Call", &KeyMap.fkCCall    },
-        { "Binoculars",  &KeyMap.fkBinoc    },
+        { "Forward",     &KeyMap.fkForward,  &PadMap.fkForward  },
+        { "Backward",    &KeyMap.fkBackward, &PadMap.fkBackward },
+        { "Turn Up",     &KeyMap.fkUp,       &PadMap.fkUp       },
+        { "Turn Down",   &KeyMap.fkDown,     &PadMap.fkDown     },
+        { "Turn Left",   &KeyMap.fkLeft,     &PadMap.fkLeft     },
+        { "Turn Right", &KeyMap.fkRight,     &PadMap.fkRight    },
+        { "Fire",        &KeyMap.fkFire,     &PadMap.fkFire     },
+        { "Get weapon",  &KeyMap.fkShow,     &PadMap.fkShow     },
+        { "Step Left",   &KeyMap.fkSLeft,    &PadMap.fkSLeft    },
+        { "Step Right",  &KeyMap.fkSRight,   &PadMap.fkSRight   },
+        { "Strafe",      &KeyMap.fkStrafe,   &PadMap.fkStrafe   },
+        { "Jump",        &KeyMap.fkJump,     &PadMap.fkJump     },
+        { "Run",         &KeyMap.fkRun,      &PadMap.fkRun      },
+        { "Crouch",      &KeyMap.fkCrouch,   &PadMap.fkCrouch   },
+        { "Call",        &KeyMap.fkCall,     &PadMap.fkCall     },
+        { "Change Call", &KeyMap.fkCCall,    &PadMap.fkCCall    },
+        { "Binoculars",  &KeyMap.fkBinoc,    &PadMap.fkBinoc    },
     };
     const int kNumBindings = (int)(sizeof(bindings)/sizeof(bindings[0]));
-    int waitIdx = -1;   // index of binding waiting for a key press
+    int waitIdx = -1;      // index of binding waiting for input
+    bool waitIsPad = false;
 
     // Convert SDL scancode → Windows VK (for rebinding)
     auto ScancodeToVK = [](SDL_Scancode sc) -> int {
@@ -1310,8 +1319,8 @@ static void RunOptions(bool& appQuit) {
                 ScaleMouse(ev.button.x, ev.button.y);
                 if (ev.button.button == SDL_BUTTON_LEFT)  { gMI.lClick = true; gMI.lHeld = true; }
                 if (ev.button.button == SDL_BUTTON_RIGHT) gMI.rClick = true;
-                // While waiting for a key: mouse buttons are also valid bindings
-                if (waitIdx >= 0) {
+                // While waiting for a key (not pad): mouse buttons count too.
+                if (waitIdx >= 0 && !waitIsPad) {
                     int vk = (ev.button.button == SDL_BUTTON_LEFT)  ? VK_LBUTTON :
                              (ev.button.button == SDL_BUTTON_RIGHT) ? VK_RBUTTON : 0;
                     if (vk) { *bindings[waitIdx].vk = vk; waitIdx = -1; gMI.lClick = false; gMI.lHeld = false; }
@@ -1322,15 +1331,33 @@ static void RunOptions(bool& appQuit) {
                 break;
             case SDL_KEYDOWN:
                 if (waitIdx >= 0) {
-                    // Escape cancels rebind; any other key sets it
+                    // ESC clears the binding (unbind). Works for either
+                    // column — the key slot is zeroed, the pad slot is set
+                    // to -1, and the capture ends.
                     if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+                        if (waitIsPad) *bindings[waitIdx].pad = -1;
+                        else           *bindings[waitIdx].vk  = 0;
                         waitIdx = -1;
-                    } else {
+                    } else if (!waitIsPad) {
                         int vk = ScancodeToVK(ev.key.keysym.scancode);
                         if (vk) { *bindings[waitIdx].vk = vk; waitIdx = -1; }
                     }
+                    // Keyboard input while waiting on the pad column is
+                    // ignored (except ESC above) — user clicked the pad
+                    // slot, they're expected to press a controller input.
                 } else {
                     gMI.scancode = ev.key.keysym.scancode;
+                }
+                break;
+            case SDL_CONTROLLERBUTTONDOWN:
+                // Pad rebind capture: any controller button (A/B/X/Y, bumpers,
+                // dpad, stick clicks) is accepted while waiting on the pad
+                // column. Triggers and stick directions are polled below via
+                // Gamepad::PollPadAxisEdge since SDL reports them as axes,
+                // not buttons.
+                if (waitIdx >= 0 && waitIsPad) {
+                    *bindings[waitIdx].pad = ev.cbutton.button;
+                    waitIdx = -1;
                 }
                 break;
             case SDL_WINDOWEVENT:
@@ -1349,6 +1376,14 @@ static void RunOptions(bool& appQuit) {
         }
         if (appQuit) break;
         if (waitIdx < 0 && gMI.scancode == SDL_SCANCODE_ESCAPE) break;
+
+        // Pad axis rebind capture: SDL delivers triggers + stick directions
+        // as AXISMOTION events, not buttons, so we sample them directly.
+        // PollPadAxisEdge returns 0 when no axis crossed threshold this frame.
+        if (waitIdx >= 0 && waitIsPad) {
+            int vbtn = PollPadAxisEdge();
+            if (vbtn) { *bindings[waitIdx].pad = vbtn; waitIdx = -1; }
+        }
 
         int hov = CompositeMenu(ms);
         MenuBegin();
@@ -1549,28 +1584,59 @@ static void RunOptions(bool& appQuit) {
         }
 
         // ── CONTROLS panel ────────────────────────────────────────────────
+        // Three columns: action name | key | pad button. Click either of the
+        // two rightmost columns to rebind; ESC cancels an active rebind.
         {
             char kbuf[32];
-            int ox   = WinW * 450 / 800;   // action label left edge
-            int kx   = WinW * 550 / 800;   // key name column
+            int ox   = WinW * 420 / 800;   // action label left edge
+            int kx   = WinW * 510 / 800;   // key name column
+            int px   = WinW * 640 / 800;   // pad button column
+            int colW = WinW *  95 / 800;
             int y    = WinH * 80 / 600;
             int lnH2 = WinH * 24 / 600;
 
             for (int i = 0; i < kNumBindings; i++) {
-                bool waiting = (waitIdx == i);
-                bool hot = !waiting && gMI.x >= kx && gMI.x < kx+WinW*100/800 &&
-                           gMI.y >= y && gMI.y < y+lnH2;
+                bool waitingKey = (waitIdx == i && !waitIsPad);
+                bool waitingPad = (waitIdx == i &&  waitIsPad);
+                bool hotKey = waitIdx < 0 && gMI.x >= kx && gMI.x < kx+colW &&
+                              gMI.y >= y && gMI.y < y+lnH2;
+                bool hotPad = waitIdx < 0 && gMI.x >= px && gMI.x < px+colW &&
+                              gMI.y >= y && gMI.y < y+lnH2;
 
-                MTMed(bindings[i].name, ox, y, waiting ? 0x00FFFFFF : 0x00AC6D24);
-                if (waiting) {
+                MTMed(bindings[i].name, ox, y,
+                      (waitingKey || waitingPad) ? 0x00FFFFFF : 0x00AC6D24);
+
+                // Key column
+                if (waitingKey) {
                     MT("Press key...", kx, y, 0x00FFFF00);
                 } else {
                     VKStr(*bindings[i].vk, kbuf, sizeof(kbuf));
-                    MT(kbuf, kx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
-                    if (hot && gMI.lClick) { waitIdx = i; gMI.lClick = false; }
+                    MT(kbuf, kx, y, hotKey ? 0x00FFFF40 : 0x00C0C0C0);
+                    if (hotKey && gMI.lClick) { waitIdx = i; waitIsPad = false; gMI.lClick = false; }
+                }
+                // Pad column
+                if (waitingPad) {
+                    MT("Press pad...", px, y, 0x00FFFF00);
+                } else {
+                    MT(PadBtnName(*bindings[i].pad), px, y, hotPad ? 0x00FFFF40 : 0x00C0C0C0);
+                    if (hotPad && gMI.lClick) { waitIdx = i; waitIsPad = true; gMI.lClick = false; }
                 }
                 y += lnH2;
                 if (y > WinH * 530 / 600) break;
+            }
+
+            // Hint line + Reset button (only meaningful when waiting / between rebinds)
+            {
+                MT("ESC: clear binding", ox, y, 0x00888888);
+                int bx = px, bw = colW;
+                bool hotR = waitIdx < 0 && gMI.x >= bx && gMI.x < bx+bw &&
+                            gMI.y >= y && gMI.y < y+lnH2;
+                MT("Reset", bx, y, hotR ? 0x00FFFF40 : 0x00C0C0C0);
+                if (hotR && gMI.lClick) {
+                    Bindings::ResetToDefaults();
+                    gMI.lClick = false;
+                }
+                y += lnH2;
             }
 
             // Reverse mouse
@@ -1598,6 +1664,7 @@ static void RunOptions(bool& appQuit) {
     FreePic(slBut);
     SaveTrophy();
     SaveDisplayConfig(); // SOURCEPORT: persist display/graphics settings globally
+    Bindings::Save();    // SOURCEPORT: persist key rebinds to controls.cfg
     FreeMenuScreen(ms);
 }
 
