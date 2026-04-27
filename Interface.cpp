@@ -50,7 +50,7 @@ void wait_mouse_release()
 int GetTextW(HDC hdc, LPSTR s)
 {
   SIZE sz;
-  GetTextExtentPoint(hdc, s, strlen(s), &sz);
+  GetTextExtentPoint(hdc, s, (int)strlen(s), &sz);
   return sz.cx;
 }
 
@@ -59,10 +59,10 @@ void PrintText(LPSTR s, int x, int y, int rgb)
   HBITMAP hbmpOld = (HBITMAP)SelectObject(hdcCMain,hbmpVideoBuf);   
   SetBkMode(hdcCMain, TRANSPARENT);     
    
-  SetTextColor(hdcCMain, 0x00000000);  
-  TextOut(hdcCMain, x+1, y+1, s, strlen(s));
+  SetTextColor(hdcCMain, 0x00000000);
+  TextOut(hdcCMain, x+1, y+1, s, (int)strlen(s));
   SetTextColor(hdcCMain, rgb);
-  TextOut(hdcCMain, x, y, s, strlen(s));
+  TextOut(hdcCMain, x, y, s, (int)strlen(s));
 
   SelectObject(hdcCMain,hbmpOld);		  
 }

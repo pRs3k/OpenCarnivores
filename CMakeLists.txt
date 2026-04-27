@@ -99,6 +99,7 @@ set(SOURCES
     Bindings.cpp
     Scripting.cpp
     HotReload.cpp
+    XR.cpp
     renderd3d.cpp
     Menu.cpp
     ${RENDERER_SOURCES}
@@ -144,5 +145,11 @@ if(RENDERER STREQUAL "opengl")
             "${OPENAL_DIR}/bin/Win64/soft_oal.dll"
             "$<TARGET_FILE_DIR:OpenCarnivores>/OpenAL32.dll"
         COMMENT "Copying OpenAL32.dll (soft_oal.dll)"
+    )
+    add_custom_command(TARGET OpenCarnivores POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/shaders"
+            "$<TARGET_FILE_DIR:OpenCarnivores>/shaders"
+        COMMENT "Copying shaders"
     )
 endif()

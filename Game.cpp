@@ -178,10 +178,10 @@ float GetLandLt2(float x, float y)
    int dx = (int)x % 512;
    int dy = (int)y % 512; 
 
-   int h1 = VMap[CY+128][CX+128].Light;
-   int h2 = VMap[CY+128][CX+2+128].Light;
-   int h3 = VMap[CY+2+128][CX+2+128].Light;
-   int h4 = VMap[CY+2+128][CX+128].Light; 
+   int h1 = VMap[CY+VMAP_CENTER][CX+VMAP_CENTER].Light;
+   int h2 = VMap[CY+VMAP_CENTER][CX+2+VMAP_CENTER].Light;
+   int h3 = VMap[CY+2+VMAP_CENTER][CX+2+VMAP_CENTER].Light;
+   int h4 = VMap[CY+2+VMAP_CENTER][CX+VMAP_CENTER].Light;
 
    float h = (float)
 	   (h1   * (512-dx) + h2 * dx) * (512-dy) +
@@ -601,6 +601,23 @@ void HideWeapon()
 
 
 
+// SOURCEPORT: re-derives ctViewR from OptViewR on demand. Called from both
+// InitGameInfo() at startup and ReInitGame() when a hunt starts, so the
+// Options slider takes effect without a program restart.
+// Curve (slider range 1..255, retail default 160):
+//   Non-linear: ctViewR = 42 + OptViewR*OptViewR/300, clamped to [20,250].
+//   slider   1 → ctViewR  42  (far shorter than retail — framerate recovers)
+//   slider 128 → ctViewR  96  (slightly > retail 82, user's requested feel)
+//   slider 160 → ctViewR 127  (retail save-file default)
+//   slider 255 → ctViewR 250  (clamp ceiling — enlarged VMap[512][512] max)
+void ApplyViewRange()
+{
+	int v = 42 + ((int)OptViewR * (int)OptViewR) / 300;
+	if (v < 20)  v = 20;
+	if (v > 250) v = 250;
+	ctViewR = v;
+}
+
 void InitGameInfo()
 {
 	for (int c=0; c<32; c++) {
@@ -887,7 +904,9 @@ void InitEngine()
     //ctViewR  = 72;
 	//ctViewR1 = 28;
 	//ctViewRM = 24;
-	ctViewR  = 42 + (int)(OptViewR / 8)*2;
+	// SOURCEPORT: moved into ApplyViewRange() so ReInitGame() can re-derive
+	// ctViewR from OptViewR when the player changes the slider mid-session.
+	ApplyViewRange();
 	ctViewR1 = 28;
 	ctViewRM = 24;
 	

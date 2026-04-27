@@ -94,7 +94,7 @@ BOOL _HeapFree(HANDLE hHeap,
 	if (!lpMem) return FALSE;
 	
 	HeapReleased+=
-		HeapSize(hHeap, HEAP_NO_SERIALIZE, lpMem);
+		(DWORD)HeapSize(hHeap, HEAP_NO_SERIALIZE, lpMem);
 
 	BOOL res = HeapFree(hHeap, 
                        dwFlags, 
@@ -1644,6 +1644,9 @@ void LoadCharacters()
 void ReInitGame()
 {
 	PrintLog("ReInitGame();\n");
+	// SOURCEPORT: re-derive ctViewR from the current OptViewR so the Options
+	// view-range slider takes effect each time a hunt starts.
+	ApplyViewRange();
 	PlaceHunter();
 	if (TrophyMode) {
 		PlaceTrophy();

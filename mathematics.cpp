@@ -13,9 +13,9 @@ void NormVector(Vector3d& v, float Scale)
   n=v.x*v.x + v.y*v.y + v.z*v.z;
   if (n<0.000000001) n=0.000000001;
   n=(double)Scale / sqrt(n);
-  v.x=v.x*n; 
-  v.y=v.y*n;  
-  v.z=v.z*n;
+  v.x=(float)(v.x*n);
+  v.y=(float)(v.y*n);
+  v.z=(float)(v.z*n);
 }
 
 float SGN(float f)
@@ -180,8 +180,8 @@ void CheckBoundCollision(float &px, float &py, float cx, float cy, float oy, TBo
 	     h = bound[o].b+2.f;
 		}
 
-	    float dw = fabs(ppx - ccx) - w;
-	    float dh = fabs(ppy - ccy) - h;
+	    float dw = fabsf(ppx - ccx) - w;
+	    float dh = fabsf(ppy - ccy) - h;
 
 	    if ( (dw > 0) || (dh > 0) ) continue;
 
@@ -574,8 +574,8 @@ void InitClips()
 //	float YFOV = atan(CameraH , VideoCY);
 	float xx = (VideoCX+1) / (CameraW);
 	float yy = (VideoCY+2) / (CameraH);
-	float LX = sqrt(1.0 + xx * xx);
-	float LY = sqrt(1.0 + yy * yy);
+	float LX = sqrtf(1.0f + xx * xx);
+	float LY = sqrtf(1.0f + yy * yy);
 
    ClipA.v1.x = - (float)xx / LX;
    ClipA.v1.y = 0;
@@ -749,7 +749,7 @@ void CalcGouraud(TModel* mptr, Vector3d *nvs)
 
 	for (int v=0; v<VCount; v++) {		
          MulVectorsScal(nvs[v], slight, c);
-		 if (c<0) c=0; c=(c-0.5)*2;
+		 if (c<0) c=0; c=(c-0.5f)*2.0f;
 		 c=c*c*c;
 		 c = c * 96;
 		 if (c>96) c=96;
@@ -882,8 +882,8 @@ void CalcEnvMapping(TModel* mptr, Vector3d *nv)
 {
     Vector3d l,v,m, tx, ty;
 	float x,y,s;
-	float cc = cos((PlayerX + PlayerZ) / 500);
-	float ss = sin((PlayerX + PlayerZ) / 500);
+	float cc = cosf((PlayerX + PlayerZ) / 500.0f);
+	float ss = sinf((PlayerX + PlayerZ) / 500.0f);
 	tx.x = cc; tx.y = 0.0f; tx.z =-ss;
 	ty.x = ss; ty.y = 0.0f; ty.z = cc;
 

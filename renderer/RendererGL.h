@@ -37,7 +37,12 @@ public:
     void SetZBufferEnabled(bool enabled) override;
     void SetDepthMask(bool write);
     void SetBrightness(float b);   // SOURCEPORT: live brightness uniform (1.0=neutral)
+    // SOURCEPORT: stencil modes for weapon/overlay isolation.
+    // 0=off, 1=write (mark drawn pixels with ref=1), 2=test (only draw where ref==1).
+    void SetStencilMode(int mode);
     void SetHUDMode(bool enabled);
+    // SOURCEPORT: debug visualization mode. 0=normal, 1=PBR off, 2=PBR magenta.
+    void SetDebugMode(int mode);
 
     // SOURCEPORT: bind a PBR material's supplementary maps (normal/MR/AO) to
     // texture units 1/2/3 and enable the PBR branch in the fragment shader.
@@ -104,6 +109,7 @@ private:
     GLint  m_locMetallicFactor  = -1;
     GLint  m_locRoughnessFactor = -1;
     GLint  m_locSunDirView      = -1;
+    GLint  m_locDebugMode       = -1;
     bool   m_pbrActive          = false;
 
     // SOURCEPORT: cached projection matrix for CustomMaterials::Apply. Updated

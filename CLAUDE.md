@@ -119,6 +119,7 @@ renderer/
 | Binoculars expose raw scene on widescreen sides | `BINOCUL.3DF` model was designed for 4:3; Hor+ widescreen leaves extra horizontal area uncovered | After rendering the binocular model, fill side bars with `FillRect` black: width = `(WinW − WinH×4/3) / 2` each side. TODO: replace black bars with a native widescreen binocular graphic. |
 | HUD weapon stock/grip missing (crossbow bottom piece invisible) | Projection maps sz=0.25 (camera z=−64) to z_ndc=1 (GL far plane). Stock/grip verts at z > −64 (very close to camera) get clipped by GL's far-plane clip before rasterization. | `glEnable(GL_DEPTH_CLAMP)` in `RendererGL::Init()` — disables near/far z clipping, clamps depth to [0,1] instead; xy viewport clipping still works. |
 | Footsteps play ~4× expected rate (galloping) | Original edge detection `d<0 && stepdd>=0` fires on derivative sign-change at sine peak; at high framerate, float precision causes d to jitter around 0 for multiple frames, triggering extra steps per sine cycle. | Replace with hysteresis gate in `Hunt2.cpp`: arm when `stepdy > 10`, fire + disarm when `stepdy < 0`. Guarantees exactly one footstep per sin(RealTime/80) cycle (~2 steps/sec). |
+| Ground/trees/bushes darken while moving, brighten when stopped; circle of light on ground in front | Foliage textures use `GL_LINEAR_MIPMAP_LINEAR`; as camera moves (horizontal motion + headbob), terrain UV derivatives shift and GPU selects higher mip levels for foliage. At mip 1-2, the averaged alpha for sparse leaf patches (e.g. 30%) falls below the `texel.a < 0.5` discard threshold → those pixels are culled → less visible foliage → scene appears darker. Near foliage stays on mip 0 (no culling) creating a bright "circle of light" around the player. | Lower alpha discard threshold `0.5 → 0.1` in `shaders/basic.frag` so mip-averaged leaf coverage ≥10% passes. (sRGB-correct mipmap generation and LOD_BIAS −0.75 were already in place but didn't address the alpha-cull path.) |
 
 ## Phase 5 — Audio (COMPLETE)
 
@@ -221,6 +222,64 @@ Example shader pair and annotated `.material` template ship in `shaders/custom_t
 
 **Data-driven dino/weapon overlays (JSON)** — `DataDefs.cpp`/`.h`. Loads `HUNTDAT\dinos.json` and `HUNTDAT\weapons.json` after the retail `_res.txt` parse and merges entries into `DinoInfo[]`/`WeapInfo[]`. Matching order per entry: `id` (retail index) → `ai` (AI type constant, dinos only) → `name` (case-sensitive). No match = appended as a new creature/weapon. Only fields present in the JSON are overwritten; everything else keeps the `_res.txt` baseline, so mods can tweak single stats without repackaging the whole script. Hand-rolled minimal JSON parser (no external dep) with `//` and `/* */` comment support. Hot-reloaded through `HotReload::Watch` on both JSON paths and the existing `_res.txt` watch — editing either re-layers the JSON so edits to one don't wipe the other. Example templates at `docs/dinos.example.json` and `docs/weapons.example.json`.
 
+## Headlamp Bug — Investigation Log (open — original game behavior confirmed, fix TBD)
+
+**Bug**: On NVIDIA hardware, a circular brighter region appears on the ground directly in front of the player while walking. Visible at all resolutions (more prominent at higher res). Not present on Intel integrated graphics.
+
+**Confirmed original game behavior**: present in vanilla Carnivores 2 D3D6 renderer on Windows 10 + RTX 2070 Super, and on Windows XP + GeForce GT 730. Not introduced by the port.
+
+### Root cause (identified)
+
+The game world's foliage (trees/bushes) has a non-uniform radial density distribution. The area immediately in front of the player is sparser (terrain more visible = brighter); at mid-range the canopy is denser (foliage covers terrain = darker scene). This contrast creates the "headlamp" circle.
+
+**Decisive test — mode 10** (terrain=texture, foliage=solid gray 0.5): headlamp clearly visible because terrain is brighter in the center (less gray-foliage coverage) than the denser mid-range ring. Mode 4 (all geometry as raw texel) shows no headlamp because foliage texture brightness happens to match terrain brightness, masking the coverage contrast.
+
+NVIDIA's trilinear filter amplifies the foliage/terrain brightness delta (Intel's softer filtering de-emphasises it), which is why the effect is GPU-specific even though the underlying density distribution is identical.
+
+### Potential future fix directions
+
+- **Adjust vegetation placement**: modify the RSC/map vegetation placement to produce a more uniform radial density. Would change original game world layout.
+- **Per-fragment brightness compensation**: compute screen-space radial distance and apply a subtle inverse-brightness curve to even out the foliage/terrain contrast ring. Fragile — tuned per-level.
+- **Foliage instancing with uniform screen-coverage guarantee**: replace alpha-tested quads with a coverage-aware placement that maintains constant foliage pixel density across the view distance. Large engineering effort.
+
+### Attempted shader/renderer fixes (all failed or reverted)
+
+| Attempt | Rationale | Result |
+|---|---|---|
+| Remove terrain mipmaps (`GL_LINEAR` for opaque terrain) | Thought hardware mip selection was producing brighter samples near camera | Persists |
+| Remove `GL_TEXTURE_LOD_BIAS = -0.75` from `gl_SetAnisotropy` | NVIDIA driver clamps per-texture LOD bias to ≥0, so bias was silently zeroed | Persists |
+| Replace `texture()` with explicit `textureLod()` + self-computed LOD (−0.75 bias) | `textureLod` takes absolute LOD, not a bias — NVIDIA cannot clamp it | Persists |
+| Alpha test against mip-0 alpha instead of biased-LOD alpha | Mip-0 alpha is binary (0/1), eliminates distance-dependent averaged-alpha discard variation | Persists |
+| Test at 1920×1080 (vs 2560×1440) | Ruled out resolution as a factor (less prominent at lower res, but still present) | Persists |
+| Cap `w = 16 / max(aDepth, 0.01)` in vertex shader | Prevents extreme `w` for very distant vertices, limits perspective-correct UV interpolation error | Persists |
+| Disable anisotropic filtering (`GL_TEXTURE_MAX_ANISOTROPY = 1.0f`) | NVIDIA may apply aniso even to `textureLod()` with explicit LOD; Intel may not | Persists |
+| Snap alpha-test UV to nearest texel centre before discard | NVIDIA TMU 8-bit fixed-point bilinear weights; sub-texel UV drift near leaf/background texel edge could flip alpha test on NVIDIA in a distance ring | Persists |
+| Depth-based LOD for foliage (replacing screen-space derivative LOD) | Screen-space derivatives oscillate with headbob → LOD oscillates → bilinear blend varies in ring | Persists (but kept — fixes separate headbob strobe bug) |
+| Disable headbob (`CameraY = PlayerY + HeadY` without `stepdy`) | If stepdy-driven CameraY oscillation causes the ring via UV/derivative changes | Persists — headbob not the cause |
+| `lod = max(lod, 1.0)` for foliage color (clamp to filled-background mips) | Mip-0 has black transparent backgrounds; bilinear leaf+black → dim at mip 0; mip 1+ have avg-filled backgrounds → bright; discontinuity forms ring | Persists — reverted (made close foliage unnecessarily use mip 1; root cause is coverage not mip levels) |
+
+### Debug mode observations
+
+| Mode | Output | Headlamp? | Deduction |
+|---|---|---|---|
+| 0 | Normal rendering | **YES** | Baseline |
+| 3 | Vertex color only (`vColor.rgb`) | **NO** | Vertex/terrain lighting is uniform; not a CPU lighting issue |
+| 4 | Raw texel, all geometry | **NO** | Texture sampling is uniform when all geometry uses same path; foliage texture ≈ terrain brightness |
+| 5 | Solid gray (all fragments, no alpha test) | **NO** | Erases foliage/terrain contrast → ring invisible. Does NOT rule out coverage variation — only shows it's a contrast effect |
+| 6 | Force mip-0 texel color | **YES** | Mip-0 bilinear of leaf+black creates darker foliage vs terrain; ring visible (but coverage is primary, mip darkening amplifies) |
+| 7 | LOD heatmap | **NO** | LOD values are uniform; the ring is not a mip-selection gradient |
+| 8 | UV fract as RG color | **NO** | UV coordinates are uniform; sub-texel drift is not the cause |
+| 9 | Depth-based LOD, no alpha discard | **YES** | Ring in raw texture colors even without alpha culling; not purely a discard-coverage issue |
+| 10 | Terrain=texture, foliage=solid gray 0.5 | **YES** | **Decisive**: ring clearly visible — center terrain brighter (sparse foliage), mid-range ring darker (dense foliage coverage). Pure foliage density effect. |
+| 12 | vFog as grayscale | Solid white | Fog is zero everywhere in this level — fog is not the cause |
+| 13 | Fog disabled | **YES** | Headlamp persists with fog completely off — fog is not the cause |
+
+### Fixes kept from investigation (address separate real bugs)
+
+- **Depth-based LOD for foliage** (`shaders/basic.frag`): replaces screen-space derivative LOD for alpha-tested geometry. Fixes headbob-induced foliage strobe on NVIDIA — headbob oscillates CameraY → screen-space derivatives oscillate → LOD oscillates → mip-level color jumps. Depth-based LOD is stable.
+- **Alpha test at LOD=0** (`shaders/basic.frag`): alpha discard uses mip-0 alpha (binary 0/1) for precise keying regardless of the color-sampling LOD.
+- **Debug modes 3–13** (`shaders/basic.frag`, `Hunt2.cpp`): visualization modes added during investigation; retained for future debugging (F8 cycles, 14 modes total).
+
 ## Phase 7 — Gameplay and Engine Improvements (Current Phase)
 
 - ~~Modern input handling (raw input, configurable bindings)~~ DONE
@@ -229,7 +288,7 @@ Example shader pair and annotated `.material` template ship in `shaders/custom_t
 - ~~Audio modernization (OpenAL or SDL_mixer)~~ DONE — migrated to OpenAL Soft (`Audio_OpenAL.cpp`)
 - Support for Virtual Reality
 - Formalize the renderer abstraction: move all `d3d*` functions behind the `Renderer` interface entirely, kill `renderd3d.cpp` glue so Vulkan / Metal / WebGPU backends become drop-in
-- Decouple frame rate from simulation: split into fixed-step sim + interpolated render for smooth 90/120 Hz VR
+- ~~Decouple frame rate from simulation: split into fixed-step sim + interpolated render for smooth 90/120 Hz VR~~ DONE
 - Embed Lua or AngelScript with bindings for `Character` struct + event hooks (OnDamage, OnSpawn, OnFire) to open modding to non-C++ devs
 - Virtual filesystem: Enable wrap scattered path lookups in a VFS that can mount zips with priority (folders are already implemented)
 
@@ -239,7 +298,7 @@ Example shader pair and annotated `.material` template ship in `shaders/custom_t
 - OpenXR session: open an XR session, get headset pose + per-eye projection matrices + eye swapchain textures, submit rendered eye textures back to the runtime for lens-distortion composite
 - SDL3 or OpenXR input abstraction: replace `_KeyFlags` bitfield with an action-binding layer so VR controllers, gamepads, and rebindable keyboards all route through it
 - Head-tracking as camera source: abstract `CameraAlpha/Beta` behind a `CameraController` interface so OpenXR HMD pose can drive it
-- 6DoF locomotion + snap turn options for VR comfort
+- 6DoF locomotion + snap turn options for VR comfort (Partially implemented- Added Q/E snap-turn (±30°) in the SDL key-down handler — a self-contained VR-comfort primitive that works in flatscreen now and will bind to controller thumbstick-click in the HMD build.))
 - World-space UI: `Interface.cpp` draws to 2D screen coords — needs a canvas layer that can render to a quad in 3D for VR
 
 ### Audio (building on OpenAL Soft)
@@ -266,6 +325,19 @@ Example shader pair and annotated `.material` template ship in `shaders/custom_t
 - Use shell variables and relative paths, not hardcoded absolute paths
 - Validate assumptions before implementing — if unsure about original engine behavior, check the original source first
 - **Mod compatibility rule**: every new asset loader is additive; never remove a retail-format parser (.CAR, .3DF, .RSC, .MAP, .TGA, .WAV). Existing mods like Carnivores 2+ must continue to load unchanged. New formats (glTF, PNG, JSON dino defs, etc.) slot in beside the originals, never replace them.
+
+### 64-bit correctness (enforced — static analysis findings)
+
+- **Win32 callback signatures**: always use `LRESULT`/`WPARAM`/`LPARAM` — never `LONG`/`UINT`/`LONG`. `LRESULT` and `LPARAM` are 64-bit on x64; using `LONG` silently truncates pointer-sized return values.
+- **GDI handle casts**: `SelectObject` returns `HGDIOBJ`; always cast the return to the specific handle type (`(HBITMAP)`, `(HFONT)`, etc.). `GetStockObject` similarly returns `HGDIOBJ` and must be cast to `(HBRUSH)` etc. before assigning to a typed field.
+- **`strlen` / `size_t` → `int`**: Win32 text functions (`TextOut`, `GetTextExtentPoint`, etc.) take `int` for length. Always cast: `(int)strlen(s)`. Never pass `size_t` or `SIZE_T` directly to a `DWORD` or `int` parameter.
+- **`SIZE_T` accumulation**: `HeapSize` and similar functions return `SIZE_T` (64-bit on x64). When accumulating into a `DWORD` counter, cast explicitly: `(DWORD)HeapSize(...)`. Prefer widening the accumulator to `size_t` / `DWORD64` for new code.
+
+### Float precision (enforced — static analysis findings)
+
+- **Use float math functions**: prefer `fabsf`, `sqrtf`, `sinf`, `cosf`, `atan2f`, `powf`, etc. over their double counterparts when the inputs and output are `float`. Passing `float` to `fabs`/`sqrt`/`sin`/`cos` promotes to `double` and back, generating C4244 warnings and unnecessary double-precision round-trips.
+- **Float literals**: use the `f` suffix (`0.5f`, `1.0f`, `500.0f`) in float expressions. Bare `0.5`, `1.0` are `double` and will widen the whole sub-expression.
+- **Explicit narrowing cast**: when a `double` result must be stored in a `float` (e.g. intermediate double-precision computation intentionally), add an explicit `(float)` cast to make the truncation visible and suppress C4244.
 
 ## Important Context
 - The .CAR model format is documented by community tools: C3Dit (https://github.com/carnivores-cpe/c3dit) can read/write .CAR files.

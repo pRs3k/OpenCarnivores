@@ -11,6 +11,7 @@ bool SDL_Audio_Init();
 void SDL_Audio_Shutdown();
 void SDL_Audio_Stop();
 void SDL_Audio_SetCameraPos(float cx, float cy, float cz, float alpha, float beta);
+void SDL_Audio_Update();
 void SDL_Audio_AddVoice3dv(int length, short* data, float x, float y, float z, int vol);
 void SDL_Audio_SetAmbient(int length, short* data, int vol);
 void SDL_Audio_SetAmbient3d(int length, short* data, float x, float y, float z);
@@ -59,6 +60,15 @@ void AudioSetCameraPos(float cx, float cy, float cz, float alpha, float beta)
 {
     if (!g_audioAvailable) return;
     SDL_Audio_SetCameraPos(cx, cy, cz, alpha, beta);
+}
+
+// Per-frame audio tick (ambient crossfades, etc.) — must be called every
+// frame regardless of whether the game loop, menus, or a cutscene is
+// driving the display, so fades advance in all game states.
+void AudioUpdate()
+{
+    if (!g_audioAvailable) return;
+    SDL_Audio_Update();
 }
 
 void Audio_SetEnvironment(int /*env*/, float /*f*/)

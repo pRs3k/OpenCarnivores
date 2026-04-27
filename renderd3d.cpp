@@ -18,7 +18,11 @@
 #define _ZSCALE - 16.f
 #define _AZSCALE (1.f /  16.f);
 
-Vector2di ORList[2048];
+// SOURCEPORT: Object-render-list cap sized for the old ctViewR≤122 ceiling.
+// At ctViewR=250 the terrain scan covers ~240k tiles and the retail 2048 cap
+// silently drops every object beyond the first ~2000 — nearby trees/bushes
+// disappear. Bumped to 65536; Vector2di is 8 B so this is 512 KB of BSS.
+Vector2di ORList[65536];
 int ORLCount = 0;
 
 // SOURCEPORT: Vertex pointers — used by all geometry code in both backends.
@@ -1768,6 +1772,85 @@ int DownLoadTexture(LPVOID tptr, int w, int h)
 #ifdef _opengl
 #include "TextureOverrides.h"
 
+// SOURCEPORT: sRGB-correct mipmap generation.
+// glGenerateMipmap averages in the texture's storage space (gamma ~2.2),
+// producing higher mips that are perceptually darker than level 0.  As the
+// camera bobs (walk animation changes camera Y → terrain UV derivatives
+// shift → GPU picks a higher mip) the scene dims during motion.  Fix: box-
+// filter each mip level in linear light, converting to/from sRGB manually.
+static inline float srgb_to_linear(float c)
+{
+    return c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+}
+static inline float linear_to_srgb(float c)
+{
+    if (c <= 0.0f) return 0.0f;
+    if (c >= 1.0f) return 1.0f;
+    return c < 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1.0f / 2.4f) - 0.055f;
+}
+// Generates and uploads mip levels 1..N for the already-bound texture from
+// the supplied level-0 RGBA8 data.  Alpha is averaged linearly (it is
+// coverage, not light).
+static void gl_GenerateLinearMipmaps(const uint32_t* level0, int w0, int h0)
+{
+    std::vector<uint32_t> src(level0, level0 + w0 * h0);
+    int w = w0, h = h0;
+    for (int lv = 1; w > 1 || h > 1; ++lv) {
+        int nw = (w > 1) ? w / 2 : 1;
+        int nh = (h > 1) ? h / 2 : 1;
+        std::vector<uint32_t> dst(nw * nh);
+        for (int y = 0; y < nh; ++y) {
+            for (int x = 0; x < nw; ++x) {
+                float r = 0, g = 0, b = 0, a = 0;
+                int cnt = 0;
+                for (int dy = 0; dy < 2 && (y*2+dy) < h; ++dy) {
+                    for (int dx = 0; dx < 2 && (x*2+dx) < w; ++dx) {
+                        uint32_t c = src[(y*2+dy)*w + (x*2+dx)];
+                        r += srgb_to_linear((c        & 0xFF) / 255.0f);
+                        g += srgb_to_linear(((c >> 8) & 0xFF) / 255.0f);
+                        b += srgb_to_linear(((c >>16) & 0xFF) / 255.0f);
+                        a += ((c >> 24) & 0xFF) / 255.0f;
+                        ++cnt;
+                    }
+                }
+                float inv = 1.0f / cnt;
+                auto pack = [](float v) -> uint32_t {
+                    int i = (int)(v * 255.5f);
+                    return (uint32_t)(i < 0 ? 0 : i > 255 ? 255 : i);
+                };
+                dst[y*nw + x] = pack(linear_to_srgb(r*inv))
+                              | (pack(linear_to_srgb(g*inv)) << 8)
+                              | (pack(linear_to_srgb(b*inv)) << 16)
+                              | (pack(a*inv)                 << 24);
+            }
+        }
+        glTexImage2D(GL_TEXTURE_2D, lv, GL_RGBA8, nw, nh, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, dst.data());
+        src = std::move(dst);
+        w = nw; h = nh;
+    }
+}
+
+static void gl_SetAnisotropy()
+{
+    static GLfloat maxAniso = -1.0f;
+    if (maxAniso < 0.0f) {
+        if (GLAD_GL_ARB_texture_filter_anisotropic || GLAD_GL_EXT_texture_filter_anisotropic) {
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+        } else {
+            maxAniso = 0.0f;
+        }
+    }
+    if (maxAniso > 1.0f) {
+        GLfloat aniso = maxAniso < 16.0f ? maxAniso : 16.0f;
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, aniso);
+    }
+    // SOURCEPORT: LOD bias is now applied in the fragment shader via textureLod()
+    // so it works on NVIDIA regardless of the "Negative LOD bias: Clamp" driver
+    // setting.  Do NOT set GL_TEXTURE_LOD_BIAS here — it would double-apply on
+    // non-NVIDIA hardware where the texture-object bias is not clamped.
+}
+
 // SOURCEPORT: shared RGBA8 upload path — used by both the 16-bit decode and
 // the 32-bit override path. Preserves the foliage-mip-fix from the original
 // 16-bit upload.
@@ -1813,29 +1896,48 @@ static GLuint gl_UploadRGBA(const uint32_t* rgba, int w, int h)
             uint32_t fill = ((uint32_t)(bSum/cnt) << 16) | ((uint32_t)(gSum/cnt) << 8) | (uint32_t)(rSum/cnt);
             for (int i = 0; i < w * h; i++)
                 if ((filled[i] >> 24) == 0) filled[i] = fill;
-            // Upload filled version → generate mip levels 1..N from correct averages
+            // Upload filled version → generate mip levels 1..N with sRGB-correct averages
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, filled.data());
-            glGenerateMipmap(GL_TEXTURE_2D);
+            gl_GenerateLinearMipmaps(filled.data(), w, h);
             // SOURCEPORT: restore ORIGINAL data at level 0 (transparent pixels RGB=0).
-            // This is required for the sun's additive (BLEND_ONE) pass — any non-zero RGB
-            // in the transparent border bleeds into the frame as a white ring around the
-            // disc when GL_LINEAR-sampled at mip 0. The foliage-edge darkening that this
-            // used to produce (black outline on trees/bushes at close range) is now
-            // compensated in the fragment shader: for alpha-test textures, RGB is divided
-            // by the sampled alpha so bilinear mag filtering recovers the full leaf colour.
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
         } else {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-            glGenerateMipmap(GL_TEXTURE_2D);
+            gl_GenerateLinearMipmaps(rgba, w, h);
         }
     } else {
-        // Opaque textures (terrain): trilinear hardware LOD replaces DataA/DataB swap
+        // SOURCEPORT: opaque textures (terrain, solid objects) — NO mipmaps.
+        // The original game used manual software LOD (DataA 128×128 / DataB 64×64)
+        // rather than hardware mip chains.  Hardware mipmaps cause a GPU-driver-specific
+        // brightness variation: NVIDIA drivers clamp GL_TEXTURE_LOD_BIAS to ≥ 0 by default
+        // (Control Panel "Negative LOD bias: Clamp"), silently discarding the -0.75 bias
+        // we apply in gl_SetAnisotropy.  Without the bias correction, higher mip levels
+        // (selected as the camera bobs and UV derivatives shift) are perceptually darker,
+        // producing a moving "headlamp" circle on terrain and general dimming while walking.
+        // Intel/AMD integrated GPUs don't apply the clamp, which is why the artifact is
+        // NVIDIA-only.  Fix: GL_LINEAR (no mip chain) for opaque textures — always samples
+        // mip 0, driver cannot override, perfectly matches the original DataA behaviour.
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        glGenerateMipmap(GL_TEXTURE_2D);
+        // No glGenerateMipmap — mips unused with GL_LINEAR min filter below.
     }
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+    // SOURCEPORT: Set GL_TEXTURE_MAX_LEVEL to the actual mip count so textureLod()
+    // in the fragment shader clamps correctly.  For opaque textures (level 0 only)
+    // any LOD > 0 clamps to 0.  For transparent textures the full chain is present.
+    {
+        int maxLvl = 0;
+        for (int s = (w > h ? w : h); s > 1; s >>= 1, maxLvl++);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, hasTransparency ? maxLvl : 0);
+    }
+    if (hasTransparency) {
+        // Foliage/alpha-keyed: keep trilinear so averaged alpha coverage suppresses shimmer.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
+    } else {
+        // Opaque: no mip selection — driver LOD bias cannot interfere.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    }
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    gl_SetAnisotropy();
     return tex;
 }
 
@@ -1884,6 +1986,7 @@ static GLuint gl_UploadCompressed(const TextureOverrides::CompressedTex& ct)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,  ct.mipCount - 1);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+    gl_SetAnisotropy();
     return tex;
 }
 
@@ -2205,8 +2308,19 @@ static void gl_SampleSunOcclusion()
   float k = depthK < colorK ? depthK : colorK;
   if (k < 0.2f) k = 0.2f;                     // match D3D minimum floor
   if (OptDayNight == 2) k = 0.3f + k / 2.75f; // night-vision taper
-  DeltaFunc(SkyTraceK, k,
-            (0.07f + (float)fabs(k - SkyTraceK)) * (TimeDt / 512.f));
+  // SOURCEPORT: asymmetric smoothing — adapt UP fast (sun emerges from behind
+  // a hill → re-brighten quickly), adapt DOWN very slowly (the 13×13 depth /
+  // 9×9 colour patch tracks the sun's screen position, which jitters every
+  // frame the camera rotates or bobs; a fast downward response produces a
+  // global brightness pulse on the sun-direction additive halo as you walk).
+  // Real terrain occlusion lasts many frames and still dims eventually.
+  float step;
+  if (k >= SkyTraceK) {
+    step = (0.07f + (float)fabs(k - SkyTraceK)) * (TimeDt / 512.f);
+  } else {
+    step = (0.01f + (float)fabs(k - SkyTraceK) * 0.15f) * (TimeDt / 512.f);
+  }
+  DeltaFunc(SkyTraceK, k, step);
 }
 #endif
 
@@ -3384,7 +3498,7 @@ void RenderObject(int x, int y)
 {
 	if (OMap[y][x]==255) return;
 	if (!MODELS) return;		 	
-	if (ORLCount>2000) return;
+	if (ORLCount>65000) return;
 	ORList[ORLCount].x = x;
 	ORList[ORLCount].y = y;
 	ORLCount++;	
@@ -3411,15 +3525,15 @@ void ProcessMap(int x, int y, int r)
 
    if (OMap[y][x]!=255) BackR+=MObjects[OMap[y][x]].info.BoundR;
 
-   ev[0] = VMap[y-CCY+128][x-CCX+128];
+   ev[0] = VMap[y-CCY+VMAP_CENTER][x-CCX+VMAP_CENTER];
    if (ev[0].v.z>BackR) return;
    
    int t1 = TMap1[y][x];   
    ReverseOn = (FMap[y][x] & fmReverse);   
    TDirection = (FMap[y][x] & 3);
              
-   x = x - CCX + 128;
-   y = y - CCY + 128;
+   x = x - CCX + VMAP_CENTER;
+   y = y - CCY + VMAP_CENTER;
 
    ev[1] = VMap[y][x+1];            
    if (ReverseOn) ev[2] = VMap[y+1][x];          
@@ -3454,8 +3568,8 @@ void ProcessMap(int x, int y, int r)
    if (r>8) DrawTPlane(TRUE);
        else DrawTPlaneClip(TRUE);
      
-   x = x + CCX - 128;
-   y = y + CCY - 128;
+   x = x + CCX - VMAP_CENTER;
+   y = y + CCY - VMAP_CENTER;
 
    if (OMap[y][x]==255) return;   
    
@@ -3472,15 +3586,15 @@ void ProcessMap2(int x, int y, int r)
    if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
 
-   ev[0] = VMap[y-CCY+128][x-CCX+128];            
+   ev[0] = VMap[y-CCY+VMAP_CENTER][x-CCX+VMAP_CENTER];            
    if (ev[0].v.z>BackViewR) return;        
    
    int t1 = TMap2[y][x];         
    TDirection = ((FMap[y][x]>>8) & 3);
    ReverseOn = FALSE;   
              
-   x = x - CCX + 128;
-   y = y - CCY + 128;
+   x = x - CCX + VMAP_CENTER;
+   y = y - CCY + VMAP_CENTER;
 
    ev[1] = VMap[y][x+2];
    if (ReverseOn) ev[2] = VMap[y+2][x];          
@@ -3505,8 +3619,8 @@ void ProcessMap2(int x, int y, int r)
    DrawTPlane(TRUE);
    
      
-   x = x + CCX - 128;
-   y = y + CCY - 128;
+   x = x + CCX - VMAP_CENTER;
+   y = y + CCY - VMAP_CENTER;
 
    RenderObject(x  , y);
    RenderObject(x+1, y);
@@ -3529,14 +3643,14 @@ void ProcessMapW(int x, int y, int r)
    WATERREVERSE = TRUE;
    int t1 = WaterList[ WMap[y][x] ].tindex;
 
-   ev[0] = VMap2[y-CCY+128][x-CCX+128];   
+   ev[0] = VMap2[y-CCY+VMAP_CENTER][x-CCX+VMAP_CENTER];   
    if (ev[0].v.z>BackViewR) return;
    
    ReverseOn = FALSE;
    TDirection = 0;
                 
-   x = x - CCX + 128;
-   y = y - CCY + 128;
+   x = x - CCX + VMAP_CENTER;
+   y = y - CCY + VMAP_CENTER;
    ev[1] = VMap2[y][x+1];               
    ev[2] = VMap2[y+1][x+1];          
            
@@ -3577,15 +3691,15 @@ void ProcessMapW2(int x, int y, int r)
    
    int t1 = WaterList[ WMap[y][x] ].tindex;
 
-   ev[0] = VMap2[y-CCY+128][x-CCX+128];   
+   ev[0] = VMap2[y-CCY+VMAP_CENTER][x-CCX+VMAP_CENTER];   
    if (ev[0].v.z>BackViewR) return;
    
    //WATERREVERSE = TRUE;
    ReverseOn = FALSE;
    TDirection = 0;
                 
-   x = x - CCX + 128;
-   y = y - CCY + 128;
+   x = x - CCX + VMAP_CENTER;
+   y = y - CCY + VMAP_CENTER;
    ev[1] = VMap2[y][x+2];           
    ev[2] = VMap2[y+2][x+2];
            
@@ -3732,32 +3846,43 @@ void RenderWater()
   if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_INVSRCALPHA);
 #endif
 
-  
+
+#ifndef _opengl
   for (int r=ctViewR; r>=ctViewR1; r-=2) {
-     
+
      for (int x=r; x>0; x-=2) {
       ProcessMapW2(CCX-x, CCY+r, r);
       ProcessMapW2(CCX+x, CCY+r, r);
-	  ProcessMapW2(CCX-x, CCY-r, r); 		
-      ProcessMapW2(CCX+x, CCY-r, r); 	
-     }    
-    
-     ProcessMapW2(CCX, CCY-r, r); 	
-     ProcessMapW2(CCX, CCY+r, r); 	
+	  ProcessMapW2(CCX-x, CCY-r, r);
+      ProcessMapW2(CCX+x, CCY-r, r);
+     }
+
+     ProcessMapW2(CCX, CCY-r, r);
+     ProcessMapW2(CCX, CCY+r, r);
 
 	 for (int y=r-2; y>0; y-=2) {
       ProcessMapW2(CCX+r, CCY-y, r);
       ProcessMapW2(CCX+r, CCY+y, r);
-      ProcessMapW2(CCX-r, CCY+y, r); 
+      ProcessMapW2(CCX-r, CCY+y, r);
       ProcessMapW2(CCX-r, CCY-y, r);
      }
      ProcessMapW2(CCX-r, CCY, r);
      ProcessMapW2(CCX+r, CCY, r);
-   } 
+   }
 
    for (int y=-ctViewR1+2; y<ctViewR1; y++)
      for (int x=-ctViewR1+2; x<ctViewR1; x++)
        ProcessMapW(CCX+x, CCY+y, max(abs(x), abs(y)));
+#else
+   // SOURCEPORT: GL path — skip coarse 2×2 water LOD (ProcessMapW2). The
+   // extended view distance made its per-quad 4-corner fmWaterA check drop
+   // 2×2 blocks at water edges, leaving rectangular holes in distant water.
+   // Use fine ProcessMapW for the full ctViewR radius instead — matches the
+   // terrain-LOD-disabled approach in RenderGround above.
+   for (int y=-ctViewR+2; y<ctViewR; y++)
+     for (int x=-ctViewR+2; x<ctViewR; x++)
+       ProcessMapW(CCX+x, CCY+y, max(abs(x), abs(y)));
+#endif
 
 	
 
@@ -4722,16 +4847,19 @@ LNEXT:
    }
 
 #ifdef _opengl
-  // SOURCEPORT: depth read-only for env-map additive overlay — keeps depth test so
-  // the shiny pass is occluded by closer geometry (player arm), but doesn't write
-  // depth so it doesn't corrupt the buffer for subsequent draws.
+  // SOURCEPORT: depth read-only + stencil test for env-map additive overlay.
+  // Stencil test (mode 2) restricts rendering to pixels where the weapon model
+  // was already drawn (stencil=1), preventing the overlay from painting over
+  // terrain behind the weapon (the "headlamp on the ground" artifact).
   if (g_glRenderer) g_glRenderer->SetDepthMask(false);
+  if (g_glRenderer) g_glRenderer->SetStencilMode(2);
 #endif
   d3dFlushBuffer(fproc1, 0);
 #ifdef _d3d
   SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
 #elif defined(_opengl)
   if (g_glRenderer) g_glRenderer->SetDepthMask(true);
+  if (g_glRenderer) g_glRenderer->SetStencilMode(0);
   if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
 #endif
 }
@@ -4861,16 +4989,17 @@ LNEXT:
    }
 
 #ifdef _opengl
-  // SOURCEPORT: depth read-only for phong-map additive overlay — keeps depth test so
-  // the shiny pass is occluded by closer geometry (player arm), but doesn't write
-  // depth so it doesn't corrupt the buffer for subsequent draws.
+  // SOURCEPORT: depth read-only + stencil test for phong-map additive overlay.
+  // Same fix as RenderModelClipEnvMap — restrict to weapon pixels via stencil=1.
   if (g_glRenderer) g_glRenderer->SetDepthMask(false);
+  if (g_glRenderer) g_glRenderer->SetStencilMode(2);
 #endif
   d3dFlushBuffer(fproc1, 0);
 #ifdef _d3d
   SetRenderStates(TRUE, D3DBLEND_INVSRCALPHA);
 #elif defined(_opengl)
   if (g_glRenderer) g_glRenderer->SetDepthMask(true);
+  if (g_glRenderer) g_glRenderer->SetStencilMode(0);
   if (g_glRenderer) g_glRenderer->SetRenderStates(true, BLEND_INVSRCALPHA);
 #endif
 }
@@ -5474,7 +5603,11 @@ endmap:
 
   int xx = mapDotX0 + (int)((CCX>>2) * mapScaleF);
   int yy = mapDotY0 + (int)((CCY>>2) * mapScaleF);
-  int circR = (int)((float)ctViewR / 4.0f * mapScaleF);
+  // SOURCEPORT: radar circle radius was ctViewR/4 which grew with the new
+  // extended-view-distance formula (retail ctViewR=82 → 20px; now 127 → 31px).
+  // Hardcode to the retail-equivalent so the radar looks unchanged regardless
+  // of the View Range slider.
+  int circR = (int)(20.0f * mapScaleF);
 
   if (xx < 0 || xx >= WinW || yy < 0 || yy >= WinH) return;
 
@@ -5522,7 +5655,18 @@ void RenderSun(float x, float y, float z)
 		// SOURCEPORT: dim the fullscreen glare when the sun is occluded by hills,
 		// trees, or other geometry. SkyTraceK comes from gl_SampleSunOcclusion in
 		// GL, and from lpddBack pixel readback in D3D.
+#ifdef _opengl
+		// SOURCEPORT: do NOT multiply by SkyTraceK in GL. The colour-deviation
+		// readback in gl_SampleSunOcclusion lands on different rendered pixels
+		// every frame the camera rotates (sun moves through screen space), so
+		// SkyTraceK dips during motion and recovers when still — producing a
+		// global brightness pulse on every pan that looks like the scene
+		// dimming during motion. Disc/ray attenuation via RenderModelSun's
+		// `200*SkyTraceK` alpha is sufficient for real occlusion; the full-
+		// screen additive tint now stays stable.
+#else
 		SunLight *= SkyTraceK;
+#endif
 	}
 	
      

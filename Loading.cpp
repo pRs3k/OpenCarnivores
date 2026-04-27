@@ -48,12 +48,12 @@ void CreateLoadDIB()
 void UpdateLWindow()
 {
 	lock = TRUE;
-	HBITMAP hbmpOld = SelectObject(hdcCLoad, hbmpLoad);
-    HFONT   hfntOld = SelectObject(hdcCLoad, fnt_Small);		  
+	HBITMAP hbmpOld = (HBITMAP)SelectObject(hdcCLoad, hbmpLoad);
+    HFONT   hfntOld = (HFONT)  SelectObject(hdcCLoad, fnt_Small);
 
 	FillMemory(lpLoadVideoBuf, winw*winh*2, 1);
-		      
-    TextOut(hdcCLoad, 10, winh-16, txt, strlen(txt) );
+
+    TextOut(hdcCLoad, 10, winh-16, txt, (int)strlen(txt) );
 
     BitBlt(hdcLoad,0,0,winw,winh, hdcCLoad,0,0, SRCCOPY);
     MessageBeep(0xFFFFFFFF);
@@ -65,7 +65,7 @@ void UpdateLWindow()
 
 
 
-LONG APIENTRY LoadWndProc( HWND hWnd, UINT message, UINT wParam, LONG lParam)
+LRESULT APIENTRY LoadWndProc( HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
 
 	
@@ -99,7 +99,7 @@ DWORD WINAPI ProcessLoading (LPVOID ptr)
     wc.hInstance = hInst;
     wc.hIcon = wc.hIcon = LoadIcon(hInst,"ACTION");
     wc.hCursor = NULL;
-	wc.hbrBackground = GetStockObject( BLACK_BRUSH );
+	wc.hbrBackground = (HBRUSH)GetStockObject( BLACK_BRUSH );
     wc.lpszMenuName = NULL;
 	wc.lpszClassName = "HuntLoadingWindow";
     if (!RegisterClass(&wc)) return FALSE;
