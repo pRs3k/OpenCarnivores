@@ -252,6 +252,13 @@ void Init() {
     }
     // Let SDL map DS4/DS5/Switch Pro to the Xbox-360-style layout.
     SDL_GameControllerEventState(SDL_ENABLE);
+    // SOURCEPORT: Some SDL backends (DInput, occasionally XInput with no prior
+    // message loop) don't finalise joystick enumeration until the first event
+    // pump. Pump once here so SDL_NumJoysticks() actually sees attached pads;
+    // without this, OpenFirstAvailable bails silently and we rely on a later
+    // CONTROLLERDEVICEADDED event — which menus historically consumed without
+    // routing to Gamepad::HandleEvent.
+    SDL_PumpEvents();
     OpenFirstAvailable();
     if (!g_pad) PrintLog((char*)"[Gamepad] no controller detected (will attach on hot-plug)\n");
 }

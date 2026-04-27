@@ -14,6 +14,7 @@
 #include <AL/efx-presets.h>
 #include <algorithm>
 #include <cmath>
+#include <climits>
 #include <cstring>
 #include <unordered_map>
 #include "hunt.h"
@@ -22,6 +23,7 @@
 // ground height between listener and source. CameraX/Y/Z are world-space
 // floats updated every frame by Game.cpp before SetCameraPos fires.
 extern float GetLandH(float x, float z);
+extern float GetLandOH(int x, int z);
 extern float CameraX, CameraY, CameraZ;
 
 static void Log(const char* msg) { PrintLog(const_cast<char*>(msg)); }
@@ -307,8 +309,15 @@ void SDL_Audio_SetCameraPos(float cx, float cy, float cz, float alpha, float /*b
     // Pick the reverb zone for wherever the listener is now. Internal
     // cache short-circuits if the zone hasn't changed since last frame.
     if (g_reverbSlot) ApplyReverbPreset(SelectZoneForPlayer());
+}
 
-    // Tick ambient crossfades here (called every frame by the game).
+// SOURCEPORT: per-frame tick decoupled from SetCameraPos so menus (which
+// don't move the camera) still fade ambients normally. Called by the
+// platform layer once per frame, regardless of game state.
+void SDL_Audio_Update()
+{
+    if (!g_context) return;
+
     Uint32 now = SDL_GetTicks();
     float dt = (now - g_lastTick) / 1000.f;
     g_lastTick = now;
@@ -353,6 +362,14 @@ static float ComputeTerrainOcclusion(float sx, float sy, float sz)
     float worstPenetration = 0.f;
     const float dist = std::sqrt(dist2 + dy*dy);
 
+    // Object-obstruction term: count samples where a world object (tree,
+    // rock, building) from the map's OMap grid intersects the ray. Cheap —
+    // OMap is a flat byte-per-tile index; object Radius/YLo/YHi live in
+    // MObjects. 255 = empty tile. A dense forest between listener and
+    // source produces strong obstruction; a lone trunk grazes briefly.
+    int obstructed = 0;
+    int prevTileX = INT_MIN, prevTileZ = INT_MIN;  // dedupe adjacent samples
+
     for (int i = 1; i < N; ++i) {
         float t   = (float)i / (float)N;
         float wx  = CameraX + dx * t;
@@ -364,6 +381,35 @@ static float ComputeTerrainOcclusion(float sx, float sy, float sz)
             float pen = gnd - wy;
             if (pen > worstPenetration) worstPenetration = pen;
         }
+
+        // Map-space tile coords. Out-of-bounds just skips — fine near edges.
+        int tx = (int)wx / 256;
+        int tz = (int)wz / 256;
+        if (tx < 0 || tx >= ctMapSize || tz < 0 || tz >= ctMapSize) continue;
+        if (tx == prevTileX && tz == prevTileZ) continue;  // don't double-count adjacent samples inside one tile
+        prevTileX = tx; prevTileZ = tz;
+
+        byte obIdx = OMap[tz][tx];
+        if (obIdx == 255) continue;
+
+        const TObjInfo& info = MObjects[obIdx].info;
+        float landY = GetLandOH(tx, tz);
+
+        // Ray height relative to local ground. Only count as obstruction if
+        // the ray passes through the object's vertical envelope. YLo/YHi are
+        // relative to LandY. A few units of slack catches tall grass / bushes.
+        float rayAboveGround = wy - landY;
+        if (rayAboveGround < info.YLo - 16.f) continue;  // ray beneath object
+        if (rayAboveGround > info.YHi + 16.f) continue;  // ray above canopy
+
+        // Horizontal distance from ray sample to tile centre vs object radius.
+        // Tile centre convention matches GetLandCeilH's ox/oz calculation.
+        float ox = tx * 256.f + 128.f;
+        float oz = tz * 256.f + 128.f;
+        float r  = (float)info.Radius;
+        if (r <= 0.f) continue;
+        float hd2 = (wx - ox)*(wx - ox) + (wz - oz)*(wz - oz);
+        if (hd2 < r * r) ++obstructed;
     }
 
     // Two-term occlusion: fraction of ray blocked, weighted by how deeply the
@@ -372,6 +418,13 @@ static float ComputeTerrainOcclusion(float sx, float sy, float sz)
     float fracBlocked = (float)blocked / (float)(N - 1);
     float depthNorm   = std::min(1.f, worstPenetration / 512.f);
     float occ = fracBlocked * (0.4f + 0.6f * depthNorm);
+
+    // Add object obstruction on top, scaled softer than terrain (foliage /
+    // trunks are porous, not walls). Clamped at 0.6 so even a dense forest
+    // can't silence a roar the way a mountain can.
+    float fracObstructed = (float)obstructed / (float)(N - 1);
+    float obsTerm        = std::min(0.6f, fracObstructed * 0.9f);
+    occ = std::min(1.f, occ + obsTerm * (1.f - occ));
 
     // Long-distance grazing occlusion: even a very shallow blockage at >4000
     // units away should muffle. Boost slightly with distance.
@@ -463,9 +516,10 @@ void SDL_Audio_SetAmbient(int length, short* data, int vol)
     if (data && length > 0) {
         a.buf    = GetOrCreateBuffer(length, data);
         a.target = std::max(0, std::min(256, vol)) / 256.f;
-        // SOURCEPORT: snap to target immediately — fade tick lives in SetCameraPos
-        // which isn't called in menus, so a fade-in would leave menu ambients silent.
-        a.volume = a.target;
+        // Start silent and let SDL_Audio_Update() fade us in — that runs
+        // every frame regardless of game state (menus included) so the
+        // fade-in now actually completes instead of being stuck at 0.
+        a.volume = 0.f;
         a.active = true;
         alSourcef(a.src, AL_GAIN, a.volume);
         alSourcei(a.src, AL_BUFFER, (ALint)a.buf);

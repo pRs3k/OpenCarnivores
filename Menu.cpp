@@ -92,6 +92,14 @@ static bool PollMenuEvents(bool& appQuit) {
             break;
         case SDL_KEYDOWN:
             gMI.scancode = ev.key.keysym.scancode; break;
+        // SOURCEPORT: route hot-plug events through Gamepad so the device
+        // is opened even if SDL didn't enumerate it until after Gamepad::Init
+        // ran (DInput backend, late USB wake, etc.). Without this the event
+        // gets consumed here and g_pad stays null forever.
+        case SDL_CONTROLLERDEVICEADDED:
+        case SDL_CONTROLLERDEVICEREMOVED:
+            Gamepad::HandleEvent(ev);
+            break;
         case SDL_WINDOWEVENT:
             if (ev.window.event == SDL_WINDOWEVENT_RESIZED ||
                 ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -106,6 +114,9 @@ static bool PollMenuEvents(bool& appQuit) {
             break;
         }
     }
+    // Audio tick happens in menus too — crossfades between MENUR ship-hum and
+    // MENUAMB depend on this firing every menu frame.
+    AudioUpdate();
     return true;
 }
 
@@ -1360,6 +1371,12 @@ static void RunOptions(bool& appQuit) {
                     waitIdx = -1;
                 }
                 break;
+            // SOURCEPORT: same rationale as PollMenuEvents — forward hot-plug
+            // so late-enumerating devices reach Gamepad::HandleEvent.
+            case SDL_CONTROLLERDEVICEADDED:
+            case SDL_CONTROLLERDEVICEREMOVED:
+                Gamepad::HandleEvent(ev);
+                break;
             case SDL_WINDOWEVENT:
                 if (ev.window.event == SDL_WINDOWEVENT_RESIZED ||
                     ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -1409,7 +1426,11 @@ static void RunOptions(bool& appQuit) {
                 { "Agressivity", &OptAgres, 1, 255 },   // health multiplier: val/128 × base
                 { "Density",     &OptDens,  1, 255 },   // spawn count: ~5+val/80 dinos
                 { "Sensitivity", &OptSens,  1, 255 },   // detection cone: wider = easier detect
-                { "View range",  &OptViewR, 1, 255 },   // fog range: ctViewR = 42+(val/8)*2
+                // SOURCEPORT: range kept at retail 1..255 for save-file
+                // compatibility. ApplyViewRange() uses a non-linear curve so
+                // slider mid (128) → ctViewR≈96 (slightly > retail 82), and
+                // slider max (255) → ctViewR 250 (enlarged VMap[512][512] cap).
+                { "View range",  &OptViewR, 1, 255 },
             };
             for (auto& s : sliders) {
                 MTMed(s.lbl, ox, y, 0x00AC6D24);

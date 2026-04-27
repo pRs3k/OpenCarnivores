@@ -595,6 +595,7 @@ void LoadModelEx(TModel* &mptr, char* FName);
 void LoadModel(TModel*&);
 void LoadResources();
 void ReInitGame();
+void ApplyViewRange();  // SOURCEPORT: re-derive ctViewR from OptViewR
 
 
 void SaveScreenShot();
@@ -772,8 +773,17 @@ _EXTORNOT   DWORD Mask1,Mask2;
 _EXTORNOT   DWORD HeapAllocated, HeapReleased;
 
 
-_EXTORNOT   EPoint VMap[256][256];
-_EXTORNOT   EPoint VMap2[256][256];
+// SOURCEPORT: Per-frame, camera-centred terrain vertex cache. The retail
+// engine hardcoded a 256×256 grid with a +128 centre offset, capping the
+// usable view radius at ~124 tiles (`ctViewR`). Sizing the arrays up to
+// VMAP_DIM and threading a symbolic VMAP_CENTER through every indexing
+// site lets the "View range" slider push draw distance well past the
+// retail ceiling. VMAP_DIM=512 → ctViewR up to ~252 (≈64k world units).
+// Memory cost per frame: 512*512*sizeof(EPoint) ≈ 8 MB per array.
+#define VMAP_DIM    512
+#define VMAP_CENTER (VMAP_DIM/2)
+_EXTORNOT   EPoint VMap[VMAP_DIM][VMAP_DIM];
+_EXTORNOT   EPoint VMap2[VMAP_DIM][VMAP_DIM];
 _EXTORNOT   EPoint ev[3];
 
 _EXTORNOT   ClipPoint cp[16];
@@ -924,6 +934,7 @@ void  AddVoice3d (int, short int*, float, float, float);
 void SetAmbient3d(int, short int*, float, float, float);
 void SetAmbient(int, short int*, int);
 void AudioSetCameraPos(float, float, float, float, float);
+void AudioUpdate();
 void InitAudioSystem(HWND, HANDLE, int);
 void Audio_Restore();
 void AudioStop();

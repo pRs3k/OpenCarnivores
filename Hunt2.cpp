@@ -10,6 +10,7 @@
 #include "VFS.h"
 #include "Gamepad.h"
 #include "Scripting.h"
+#include "XR.h"
 
 // SOURCEPORT: SDL2 platform state
 // Under OpenGL, keyboard state is maintained via SDL events;
@@ -190,13 +191,13 @@ void PreCashGroundModel()
 		  }
 
           rv = RotateVector(rv);
-		  VMap2[128+y][128+x].v = rv;
+		  VMap2[VMAP_CENTER+y][VMAP_CENTER+x].v = rv;
 	      
 		  if (fabs(rv.x * FOVK) > -rv.z + 1524) {
-		   VMap2[128+y][128+x].DFlags = 128;
+		   VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = 128;
 		  } else {
 			NeedWater = TRUE;
-			VMap2[128+y][128+x].Light = 168-(int)(wdelta*24);
+			VMap2[VMAP_CENTER+y][VMAP_CENTER+x].Light = 168-(int)(wdelta*24);
 			
 			float Alpha;
 			if (UNDERWATER) {				
@@ -216,30 +217,30 @@ void PreCashGroundModel()
 			 if (Alpha>255) Alpha=255.f;
 			} else Alpha = 255.f;
 
-			VMap2[128+y][128+x].ALPHA=(int)Alpha;
-			VMap2[128+y][128+x].Fog = 0;
+			VMap2[VMAP_CENTER+y][VMAP_CENTER+x].ALPHA=(int)Alpha;
+			VMap2[VMAP_CENTER+y][VMAP_CENTER+x].Fog = 0;
 
-			if (rv.z>-256.0) VMap2[128+y][128+x].DFlags=128; else {
+			if (rv.z>-256.0) VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags=128; else {
 #ifdef _soft
-	          VMap2[128+y][128+x].scrx = VideoCX - (int)(rv.x / rv.z * CameraW);
-	          VMap2[128+y][128+x].scry = VideoCY + (int)(rv.y / rv.z * CameraH);
+	          VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx = VideoCX - (int)(rv.x / rv.z * CameraW);
+	          VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry = VideoCY + (int)(rv.y / rv.z * CameraH);
 
 			  int DF = 0;
-              if (VMap2[128+y][128+x].scrx < 0)     DF+=1;
-	          if (VMap2[128+y][128+x].scrx > WinEX) DF+=2;
-	          if (VMap2[128+y][128+x].scry < 0)     DF+=4;
-	          if (VMap2[128+y][128+x].scry > WinEY) DF+=8;
+              if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx < 0)     DF+=1;
+	          if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx > WinEX) DF+=2;
+	          if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry < 0)     DF+=4;
+	          if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry > WinEY) DF+=8;
 #else
-			  VMap2[128+y][128+x].scrx = VideoCX16 - (int)(rv.x / rv.z * CameraW16);
-	          VMap2[128+y][128+x].scry = VideoCY16 + (int)(rv.y / rv.z * CameraH16);
+			  VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx = VideoCX16 - (int)(rv.x / rv.z * CameraW16);
+	          VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry = VideoCY16 + (int)(rv.y / rv.z * CameraH16);
 
 			  int DF = 0;
-              if (VMap2[128+y][128+x].scrx < 0)        DF+=1;
-	          if (VMap2[128+y][128+x].scrx > WinEX*16) DF+=2;
-	          if (VMap2[128+y][128+x].scry < 0)        DF+=4;
-	          if (VMap2[128+y][128+x].scry > WinEY*16) DF+=8;
+              if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx < 0)        DF+=1;
+	          if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx > WinEX*16) DF+=2;
+	          if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry < 0)        DF+=4;
+	          if (VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry > WinEY*16) DF+=8;
 #endif
-			  VMap2[128+y][128+x].DFlags = DF;
+			  VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = DF;
 
 			}
 		  }			  
@@ -277,8 +278,8 @@ void PreCashGroundModel()
 
 	  
       if (fabs(rv.x * FOVK) > -rv.z + 1600) {
-		  VMap[128+y][128+x].v = rv;   
-		  VMap[128+y][128+x].DFlags = 128;
+		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = rv;   
+		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = 128;
 		  continue;
 	  }
       
@@ -286,13 +287,13 @@ void PreCashGroundModel()
   	  if (HARD3D)
 #ifndef _opengl
 		if (  ((FMap[yy][xx] & fmWater)==0) || UNDERWATER)
-		  VMap[128+y][128+x].Fog = CalcFogLevel(v[0]); else
-		  VMap[128+y][128+x].Fog = 0;
+		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].Fog = CalcFogLevel(v[0]); else
+		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].Fog = 0;
 #else
           {} // GL: leave Fog at 0
 #endif
 
-      VMap[128+y][128+x].ALPHA = 255;
+      VMap[VMAP_CENTER+y][VMAP_CENTER+x].ALPHA = 255;
 
       v[0]=rv;	  
 
@@ -300,58 +301,65 @@ void PreCashGroundModel()
 	   if (FOGENABLE)
 	 	 if (FogsMap[yy>>1][xx>>1]) FogFound = TRUE;      
       	  
-	  VMap[128+y][128+x].v = v[0];      
+	  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = v[0];      
             
       int  DF = 0;
       int  db = 0;
 
-      if (v[0].z<256) {
+      // SOURCEPORT: original guard `if (v[0].z<256)` skipped writing Light
+      // for tiles rotated behind/beside the camera, leaving whatever was in
+      // VMap from a previous frame. As the camera panned, tiles crossed the
+      // z<256 boundary and their Light would flip between fresh and stale —
+      // visible as a "shine strobe" on the ground while moving the mouse
+      // slowly. Write Light unconditionally; tiles that are truly off-screen
+      // get culled by DFlags anyway.
+      {
        if (Clouds) {
 	    int shmx = (xx + SKYDT) & 127;
 	    int shmy = (yy + SKYDT) & 127;
-	   
+
 	    int db1 = SkyMap[shmy * 128 + shmx ];
 	    int db2 = SkyMap[shmy * 128 + ((shmx+1) & 127) ];
 	    int db3 = SkyMap[((shmy+1) & 127) * 128 + shmx ];
 	    int db4 = SkyMap[((shmy+1) & 127) * 128 + ((shmx+1) & 127) ];
 	    db = (db1 * (256 - kx) + db2 * kx) * (256-ky) +
-	         (db3 * (256 - kx) + db4 * kx) * ky;     
+	         (db3 * (256 - kx) + db4 * kx) * ky;
         db>>=17;
 	    db = db - 40;
 	    if (db<0) db=0;
 	    if (db>48) db=48;
-	   } 
-      
+	   }
+
        int clt = LMap[yy][xx];
 	   clt= max(64, clt-db);
-       VMap[128+y][128+x].Light = clt;	   
-      }	  
+       VMap[VMAP_CENTER+y][VMAP_CENTER+x].Light = clt;
+      }
 
 	  
 
 	  if (v[0].z>-256.0) DF+=128; else {
 
 #ifdef _soft
-	   VMap[128+y][128+x].scrx = VideoCX - (int)(v[0].x / v[0].z * CameraW);
-	   VMap[128+y][128+x].scry = VideoCY + (int)(v[0].y / v[0].z * CameraH);
+	   VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx = VideoCX - (int)(v[0].x / v[0].z * CameraW);
+	   VMap[VMAP_CENTER+y][VMAP_CENTER+x].scry = VideoCY + (int)(v[0].y / v[0].z * CameraH);
 
-	   if (VMap[128+y][128+x].scrx < 0)        DF+=1;
-	   if (VMap[128+y][128+x].scrx > WinEX)    DF+=2;
-	   if (VMap[128+y][128+x].scry < 0)        DF+=4;
-	   if (VMap[128+y][128+x].scry > WinEY)    DF+=8;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx < 0)        DF+=1;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx > WinEX)    DF+=2;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scry < 0)        DF+=4;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scry > WinEY)    DF+=8;
 #else
-	   VMap[128+y][128+x].scrx = VideoCX16 - (int)(v[0].x / v[0].z * CameraW16);
-	   VMap[128+y][128+x].scry = VideoCY16 + (int)(v[0].y / v[0].z * CameraH16);
+	   VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx = VideoCX16 - (int)(v[0].x / v[0].z * CameraW16);
+	   VMap[VMAP_CENTER+y][VMAP_CENTER+x].scry = VideoCY16 + (int)(v[0].y / v[0].z * CameraH16);
 
-	   if (VMap[128+y][128+x].scrx < 0)        DF+=1;
-	   if (VMap[128+y][128+x].scrx > WinEX*16) DF+=2;
-	   if (VMap[128+y][128+x].scry < 0)        DF+=4;
-	   if (VMap[128+y][128+x].scry > WinEY*16) DF+=8;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx < 0)        DF+=1;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx > WinEX*16) DF+=2;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scry < 0)        DF+=4;
+	   if (VMap[VMAP_CENTER+y][VMAP_CENTER+x].scry > WinEY*16) DF+=8;
 #endif
 
 	  }
 	   
-      VMap[128+y][128+x].DFlags = DF;
+      VMap[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = DF;
 	}
 
 	FOGON = FogFound || UNDERWATER;
@@ -373,9 +381,9 @@ void AddShadowCircle(int x, int y, int R, int D)
      int ty = (cy+yy)*256;
      int r = (int)sqrt( (tx-x)*(tx-x) + (ty-y)*(ty-y) );
      if (r>R) continue;
-     VMap[cy+yy - CCY + 128][cx+xx - CCX + 128].Light-= D * (R-r) / R;     
-	 if (VMap[cy+yy - CCY + 128][cx+xx - CCX + 128].Light < 32)
-		 VMap[cy+yy - CCY + 128][cx+xx - CCX + 128].Light = 32;
+     VMap[cy+yy - CCY + VMAP_CENTER][cx+xx - CCX + VMAP_CENTER].Light-= D * (R-r) / R;     
+	 if (VMap[cy+yy - CCY + VMAP_CENTER][cx+xx - CCX + VMAP_CENTER].Light < 32)
+		 VMap[cy+yy - CCY + VMAP_CENTER][cx+xx - CCX + VMAP_CENTER].Light = 32;
    }
 }
 
@@ -635,8 +643,18 @@ SKIPWIND:
    // The z-buffer is clean here (cleared at line 468, compass/wind didn't write to it).
    Hardware_ZBuffer(TRUE);
    d3dSetHUDMode(TRUE);
+#ifdef _opengl
+   // SOURCEPORT: mark weapon pixels in stencil so PhongMap/EnvMap overlays are
+   // restricted to them. Without this, the overlays' high depth values pass
+   // GL_GEQUAL against far terrain, painting the specular texture on the ground.
+   extern RendererGL* g_glRenderer;
+   if (g_glRenderer) g_glRenderer->SetStencilMode(1); // write stencil=1 at weapon pixels
+#endif
    RenderNearModel(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, wpnlight,
                    -wpnDAlpha, -wpnDBeta + wpnb);
+#ifdef _opengl
+   if (g_glRenderer) g_glRenderer->SetStencilMode(0); // stop marking
+#endif
    d3dSetHUDMode(FALSE);
 
 
@@ -647,9 +665,9 @@ SKIPWIND:
     RenderModelClipPhongMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
    }
 
-   if (ENVMAP) {       	   
+   if (ENVMAP) {
 	   CalcEnvMapping(wptr->chinfo[CurrentWeapon].mptr, wptr->normals);
-	   RenderModelClipEnvMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);	   
+	   RenderModelClipEnvMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
    }
 #endif
   
@@ -745,7 +763,10 @@ void ChangeViewR(int d1, int d2, int d3)
   ctViewR1+=d2;
   ctViewRM+=d3;
   if (ctViewR<20) ctViewR = 20;
-  if (ctViewR>122) ctViewR = 122;
+  // SOURCEPORT: raised from 122. VMap/VMap2 are now VMAP_DIM (512) squared
+  // with VMAP_CENTER offset 256, so the safe max index is VMAP_DIM-1 =
+  // (ctViewR+3) + VMAP_CENTER → ctViewR ≤ 252. Clamp to 250 for slack.
+  if (ctViewR>250) ctViewR = 250;
 
   if (ctViewR1 < 12) ctViewR1=12;
   if (ctViewR1 > ctViewR-10) ctViewR1=ctViewR-10;
@@ -1449,8 +1470,7 @@ SKIPYMOVE:
     
   float _s = stepdy;
 
-  if (SWIM) stepdy = (float)sin((float)RealTime / 360) * 20;
-       else stepdy = (float)min(1.f,fabs(VSpeed) + (float)fabs(SSpeed)) * (float)sin((float)RealTime / 80.f) * 22.f;
+  stepdy = (float)sin(RealTime/80.f) * 22 * (float)fabs(VSpeed);
   float d = stepdy - _s;
 
   // SOURCEPORT: original derivative sign-change test (d<0 && stepdd>=0) jitters at
@@ -1651,6 +1671,53 @@ SKIPYMOVE:
 
 
 
+// SOURCEPORT: fixed-step simulation decoupled from render frame rate.
+//
+// Original loop ran ProcessControls / AnimateCharacters / AnimateProcesses
+// once per rendered frame with everything scaled by wall-clock TimeDt. That
+// made AI / physics / anim phasing frame-rate dependent — at 240 Hz the
+// integrator takes 16× more, 16× smaller steps than at 60 Hz and tiny
+// float-rounding differences accumulate.
+//
+// Fix: accumulate wall-clock elapsed into g_simAccumMs, run the sim in
+// fixed FIXED_DT_MS ticks (TimeDt = FIXED_DT_MS per step), render once per
+// outer frame at whatever the display refresh is. Residue / FIXED_DT_MS
+// drives a camera-pose lerp between the last two sim snapshots so visual
+// motion stays smooth across render frames that don't align with sim ticks
+// — this is the VR-friendly part. MAX_SUBSTEPS caps sim-per-frame to stop
+// a long stall (breakpoint, disk thrash) from spiralling.
+static int       g_simAccumMs   = 0;
+static int       g_simLastMs    = 0;    // wall-clock timestamp of previous frame
+static const int FIXED_DT_MS    = 16;   // ~62.5 Hz sim
+static const int MAX_SUBSTEPS   = 5;    // 80 ms cap per render frame
+
+static float g_prevCamX = 0.f, g_prevCamY = 0.f, g_prevCamZ = 0.f;
+static float g_prevCamA = 0.f, g_prevCamB = 0.f;
+static bool  g_prevCamValid = false;
+
+static void TickSimulation(int dtMs)
+{
+    // Fixed-dt replacement for ProcessSyncro — the sim clock advances by
+    // the configured step regardless of wall clock, so anything that reads
+    // RealTime (anim phasing via sin(RealTime/…), srand seed, etc.) stays
+    // deterministic across frame rates.
+    TimeDt   = dtMs;
+    RealTime = SLOW ? RealTime + dtMs/4 : RealTime + dtMs;
+    srand((unsigned)RealTime);
+    PrevTime = RealTime;
+    Takt++;
+    if (!PAUSE && MyHealth) {
+        MyHealth += dtMs * 4;
+        if (MyHealth > MAX_HEALTH) MyHealth = MAX_HEALTH;
+    }
+
+    if (!PAUSE || !MyHealth) {
+        ProcessControls();
+        AnimateCharacters();
+        AnimateProcesses();
+    }
+}
+
 void ProcessGame()
 {
 	if (RestartMode) {
@@ -1659,10 +1726,17 @@ void ProcessGame()
 		NeedRVM = TRUE;
 	}
 
-    if (!_GameState) {				
-		PrintLog("Entered game\n");		        
-		ReInitGame();						
-		while (ShowCursor(FALSE)>=0);        
+    if (!_GameState) {
+		PrintLog("Entered game\n");
+		ReInitGame();
+		while (ShowCursor(FALSE)>=0);
+		// Seed sim timers so the first frame doesn't see a huge accumulator
+		// built from whatever stale wall-clock PrevTime had sitting around.
+		RealTime       = (int)timeGetTime();
+		PrevTime       = RealTime;
+		g_simLastMs    = (int)timeGetTime();
+		g_simAccumMs   = 0;
+		g_prevCamValid = false;
 	}
 
     _GameState = 1;
@@ -1677,21 +1751,78 @@ void ProcessGame()
 		NeedRVM = FALSE;
 	}
 	
-    ProcessSyncro();
+    // Drive fixed-step sim from the wall clock. Peel whole FIXED_DT_MS
+    // slices off the accumulator; leftover residue drives the render
+    // pose lerp below so visual motion stays smooth on render frames
+    // that don't line up with sim ticks.
+    int nowMs   = (int)timeGetTime();
+    int frameDt = (g_simLastMs == 0) ? 0 : (nowMs - g_simLastMs);
+    if (frameDt < 0)   frameDt = 0;        // timer wrap
+    if (frameDt > 250) frameDt = 250;      // post-stall clamp
+    g_simLastMs   = nowMs;
+    g_simAccumMs += frameDt;
 
-    if (!PAUSE || !MyHealth) {
-	  ProcessControls();
-	  AudioSetCameraPos(CameraX, CameraY, CameraZ, CameraAlpha, CameraBeta);
-	  Audio_UploadGeometry();
-	  AnimateCharacters();
-      AnimateProcesses();
-	}
-		    
+    int steps = 0;
+    while (g_simAccumMs >= FIXED_DT_MS && steps < MAX_SUBSTEPS) {
+        // Snapshot pre-step camera pose; render lerps from this to
+        // the post-step pose using leftover accumulator as alpha.
+        g_prevCamX = CameraX; g_prevCamY = CameraY; g_prevCamZ = CameraZ;
+        g_prevCamA = CameraAlpha; g_prevCamB = CameraBeta;
+        g_prevCamValid = true;
+
+        TickSimulation(FIXED_DT_MS);
+
+        g_simAccumMs -= FIXED_DT_MS;
+        ++steps;
+    }
+    if (steps >= MAX_SUBSTEPS) g_simAccumMs = 0;  // drop residue to avoid death spiral
+
     if (DEBUG || ObservMode || TrophyMode) 
 		if (MyHealth) MyHealth = MAX_HEALTH;
 	if (DEBUG) ShotsLeft[CurrentWeapon] = WeapInfo[CurrentWeapon].Shots;
-    
+
+    // Interpolated render pose. The real Camera* is restored right
+    // after DrawScene so the next TickSimulation integrates from the
+    // authoritative (un-interpolated) state.
+    float saveX = CameraX, saveY = CameraY, saveZ = CameraZ;
+    float saveA = CameraAlpha, saveB = CameraBeta;
+    if (g_prevCamValid && steps > 0) {
+        float alpha = (float)g_simAccumMs / (float)FIXED_DT_MS;
+        if (alpha < 0.f) alpha = 0.f;
+        if (alpha > 1.f) alpha = 1.f;
+        CameraX = g_prevCamX + (saveX - g_prevCamX) * alpha;
+        CameraY = g_prevCamY + (saveY - g_prevCamY) * alpha;
+        CameraZ = g_prevCamZ + (saveZ - g_prevCamZ) * alpha;
+        // Wrap-safe angular lerp so the +/-pi seam doesn't whip the camera.
+        float da = saveA - g_prevCamA;
+        while (da >  3.14159265f) da -= 2.f * 3.14159265f;
+        while (da < -3.14159265f) da += 2.f * 3.14159265f;
+        CameraAlpha = g_prevCamA + da * alpha;
+        CameraBeta  = g_prevCamB + (saveB - g_prevCamB) * alpha;
+    }
+
+    // Audio listener + reverb zone follow the render camera so that
+    // occlusion and reverb track what the player sees rather than the
+    // discrete sim pose.
+    AudioSetCameraPos(CameraX, CameraY, CameraZ, CameraAlpha, CameraBeta);
+    Audio_UploadGeometry();
+
+    // SOURCEPORT: render-path code (DrawPostObjects' weapon state machine,
+    // ChCallTime/TrophyTime countdowns, BinocularPower zoom ramp, etc.)
+    // reads TimeDt expecting a per-frame wall-clock delta — matching the
+    // original ProcessSyncro semantics. After the fixed-step loop TimeDt
+    // is stuck at FIXED_DT_MS, so at 144 Hz those timers would tick
+    // 144×16 = 2304 ms per real second (2.3× too fast). Overwrite TimeDt
+    // with the actual render-frame delta so HUD/weapon timing stays at
+    // wall-clock rate while the sim itself remains deterministic.
+    TimeDt = frameDt;
+
 	DrawScene();
+
+    // Restore authoritative sim state so the next ProcessControls /
+    // physics tick starts from the un-interpolated pose.
+    CameraX = saveX; CameraY = saveY; CameraZ = saveZ;
+    CameraAlpha = saveA; CameraBeta = saveB;
 
     drawSceneStage = "DrawHMap"; // SOURCEPORT: debug
 	if (!TrophyMode)
@@ -1864,6 +1995,13 @@ int main(int argc, char* argv[])
     // g_sdlMouseDX/DY that keyboard/mouse feed into.
     Gamepad::Init();
 
+    // SOURCEPORT: OpenXR loader probe. Step 1 of HMD support — just checks
+    // whether an OpenXR runtime (Meta Quest Link, SteamVR, WMR, Monado) is
+    // installed. No-op if none present; game runs flat-screen. Later steps
+    // will create the instance, session, swapchains, and wire the stereo
+    // render path + controller input.
+    XR::Init();
+
     // SOURCEPORT: Lua scripting layer. Loads every scripts/*.lua file and
     // arms the OnSpawn/OnDamage/OnFire hooks. Safe if scripts/ is absent.
     Scripting::Init();
@@ -2017,6 +2155,15 @@ int main(int argc, char* argv[])
                     if (vk == KeyMap.fkCCall)  ChangeCall();
                     if (vk == KeyMap.fkRun)    ToggleRunMode();
                     if (vk == 0x09 && !TrophyMode) ToggleMapMode(); // VK_TAB — always map
+                    // SOURCEPORT: VR-comfort snap-turn. Rising-edge on Q/E rotates
+                    // PlayerAlpha by a fixed step instead of smooth-turning — standard
+                    // VR nausea mitigation. Works in flatscreen too; HMD build will
+                    // bind these to controller thumbstick-click-left/right.
+                    if (!TrophyMode && !PAUSE && !EXITMODE) {
+                        const float kSnapTurnRad = 3.14159265f / 6.f; // 30°
+                        if (vk == 'Q') PlayerAlpha -= kSnapTurnRad;
+                        if (vk == 'E') PlayerAlpha += kSnapTurnRad;
+                    }
                     if (vk >= '1' && vk <= '6') {
                         int w = vk - '1';
                         if (!Weapon.FTime) {
@@ -2046,6 +2193,29 @@ int main(int argc, char* argv[])
                             LoadResources();   // calls ReleaseResources() then reloads map
                             _GameState = 0;    // triggers ReInitGame() on next ProcessGame()
                         }
+                    }
+                    if (vk == 0x77) { // VK_F8 — cycle PBR debug mode
+                        extern RendererGL* g_glRenderer;
+                        static int s_pbrDebugMode = 0;
+                        s_pbrDebugMode = (s_pbrDebugMode + 1) % 14;
+                        if (g_glRenderer) g_glRenderer->SetDebugMode(s_pbrDebugMode);
+                        static char* kModeNames[] = {
+                            (char*)"DEBUG off: normal rendering",
+                            (char*)"DEBUG 1: PBR disabled",
+                            (char*)"DEBUG 2: PBR pixels magenta",
+                            (char*)"DEBUG 3: vertex color only",
+                            (char*)"DEBUG 4: raw texel (biased LOD)",
+                            (char*)"DEBUG 5: solid gray (geometry test)",
+                            (char*)"DEBUG 6: force mip0 texture",
+                            (char*)"DEBUG 7: LOD heatmap (blue=low red=high)",
+                            (char*)"DEBUG 8: UV fract RG",
+                            (char*)"DEBUG 9: no alpha test - gone=coverage cause",
+                            (char*)"DEBUG 10: terrain texture / foliage=gray",
+                            (char*)"DEBUG 11: UV fract x100 (sub-texel drift)",
+                            (char*)"DEBUG 12: vFog grayscale - circle=fog is cause",
+                            (char*)"DEBUG 13: fog disabled - gone=fog is cause"
+                        };
+                        AddMessage(kModeNames[s_pbrDebugMode]);
                     }
                     if (vk == 0x78) { // VK_F9
                         ShutDown3DHardware(); AudioStop(); DoHalt("");
@@ -2082,6 +2252,15 @@ int main(int argc, char* argv[])
                 // SOURCEPORT: dev hot reload — polls registered files (shaders,
                 // _res.txt, texture overrides) ~3×/sec, fires callbacks on change.
                 HotReload::Tick();
+                // Per-frame audio tick (ambient crossfade advance, etc.).
+                // Must fire every frame regardless of pause / window-focus
+                // state so fades don't freeze.
+                AudioUpdate();
+                // SOURCEPORT: OpenXR event pump. Lazily creates the GL-bound
+                // session the first time it runs with a current GL context,
+                // then drives xrBeginSession / xrEndSession in response to
+                // runtime state changes. No-op when VR is unavailable.
+                XR::PollEvents();
                 if (blActive) ProcessGame();
                 else SDL_Delay(100);
                 // SOURCEPORT: ExitTime expiry sets this instead of DoHalt
@@ -2102,6 +2281,7 @@ int main(int argc, char* argv[])
 
     AudioStop();
     Audio_Shutdown();
+    XR::Shutdown();
     ShutDown3DHardware();
     ShutDownEngine();
     PrintLog("Game normal shutdown.\n");

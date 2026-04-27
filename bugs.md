@@ -14,10 +14,37 @@ UI / Text / Menus
 
     Should dinosaurs killed in water sink to the ground?
 
-    brachiosaurus stands ontop of the water instead of on the ground under the water (fixed just need to see one to verify)
+    Brachiosaurus stands ontop of the water instead of on the ground under the water (fixed just need to see one to verify)
 
-    set adjustable render distance
+    Set adjustable render distance
 
-    add health bar/stamina/fall damage?
+    Add health bar/stamina/fall damage?
 
     For the menu to exit the area we need to consider A to be Y, B to be N, and Y to be R.
+
+    Controllers don't work at all now
+
+    The option menu for controller bindings needs to shift right. The "ESC to clear" and "reset" text needs to be more out of the way like in the bottom right corner, or to the right of each row after the player clicks an action to bind.
+
+    Whenever a dino is bleeding, the blood particles are showing at much further distances than the test of the world models giving them the appearance of floating off into the distance
+
+    Texture sharpness is still a little too low
+
+    Should tranquilizers cause dinosaurs to bleed?
+
+    Need to test shaders actually work (which requires one to be made first)
+
+    Run mode on by default?
+
+    Texture squares on the ground still have a very faint line showing between them (not stitching perfectly)
+
+    Why do dinosaurs run away in observer mode? What is the actual purpose if you can't have a gun?
+
+    Dinos should not be able to detect players with line of sign if they are behind an object
+
+    Crossbow should not cause dinos to be scared due to noise
+
+    Dinos should be less inclined to just swim straight out into the ocean when fleeing unless it's to another land mass
+
+    Dead dinos should not return calls
+

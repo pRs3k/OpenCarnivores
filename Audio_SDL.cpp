@@ -207,6 +207,11 @@ void SDL_Audio_SetCameraPos(float cx, float cy, float cz, float alpha, float /*b
     g_sa   = sinf(alpha);
 }
 
+// Legacy SDL mixer does ambient crossfading inside its audio callback thread,
+// so the public Update() hook is a no-op here. Kept for API parity with the
+// OpenAL backend.
+void SDL_Audio_Update() {}
+
 void SDL_Audio_AddVoice3dv(int length, short* data, float x, float y, float z, int vol)
 {
     if (!g_dev || !data || length <= 0) return;
