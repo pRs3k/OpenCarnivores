@@ -966,6 +966,7 @@ void CopyHARDToDIB();
 void Hardware_ZBuffer(BOOL zb);
 void d3dSetHUDMode(BOOL enable);
 void d3dSetDepthFunc(BOOL strict);
+void d3dUpdateProjection(const float* mat16);  // SOURCEPORT: VR per-eye projection override
 
 
 //=========== loading =============

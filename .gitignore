@@ -52,3 +52,4 @@ Debug/
 # The mods.cfg is per-install and shouldn't be shared across repo clones.
 mods/
 mods.cfg
+OpenCarnivores/

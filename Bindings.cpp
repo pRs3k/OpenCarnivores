@@ -4,6 +4,7 @@
 
 #include "Bindings.h"
 #include "Gamepad.h"
+#include "XR.h"
 #include "Hunt.h"
 
 #include <cstdio>
@@ -13,31 +14,32 @@
 
 namespace {
 
-struct Action { const char* name; int* vk; int* pad; };
+struct Action { const char* name; int* vk; int* pad; int* vr; };
 
-// Single source of truth for action→field mapping, used by both the Options
-// UI and the config file. Keyboard VK is stored under "Name"; the gamepad
-// button is stored under "Name.pad". "-1" means unbound on the pad.
+// Single source of truth for action→field mapping.
+// "Name"     = keyboard VK
+// "Name.pad" = gamepad button (-1 unbound)
+// "Name.vr"  = VR controller button (-1 unbound)
 Action* Table() {
     static Action tab[] = {
-        { "Forward",    &KeyMap.fkForward,  &PadMap.fkForward  },
-        { "Backward",   &KeyMap.fkBackward, &PadMap.fkBackward },
-        { "TurnUp",     &KeyMap.fkUp,       &PadMap.fkUp       },
-        { "TurnDown",   &KeyMap.fkDown,     &PadMap.fkDown     },
-        { "TurnLeft",   &KeyMap.fkLeft,     &PadMap.fkLeft     },
-        { "TurnRight",  &KeyMap.fkRight,    &PadMap.fkRight    },
-        { "Fire",       &KeyMap.fkFire,     &PadMap.fkFire     },
-        { "GetWeapon",  &KeyMap.fkShow,     &PadMap.fkShow     },
-        { "StepLeft",   &KeyMap.fkSLeft,    &PadMap.fkSLeft    },
-        { "StepRight",  &KeyMap.fkSRight,   &PadMap.fkSRight   },
-        { "Strafe",     &KeyMap.fkStrafe,   &PadMap.fkStrafe   },
-        { "Jump",       &KeyMap.fkJump,     &PadMap.fkJump     },
-        { "Run",        &KeyMap.fkRun,      &PadMap.fkRun      },
-        { "Crouch",     &KeyMap.fkCrouch,   &PadMap.fkCrouch   },
-        { "Call",       &KeyMap.fkCall,     &PadMap.fkCall     },
-        { "ChangeCall", &KeyMap.fkCCall,    &PadMap.fkCCall    },
-        { "Binoculars", &KeyMap.fkBinoc,    &PadMap.fkBinoc    },
-        { nullptr, nullptr, nullptr }
+        { "Forward",    &KeyMap.fkForward,  &PadMap.fkForward,  &VRMap.fkForward  },
+        { "Backward",   &KeyMap.fkBackward, &PadMap.fkBackward, &VRMap.fkBackward },
+        { "TurnUp",     &KeyMap.fkUp,       &PadMap.fkUp,       &VRMap.fkUp       },
+        { "TurnDown",   &KeyMap.fkDown,     &PadMap.fkDown,     &VRMap.fkDown     },
+        { "TurnLeft",   &KeyMap.fkLeft,     &PadMap.fkLeft,     &VRMap.fkLeft     },
+        { "TurnRight",  &KeyMap.fkRight,    &PadMap.fkRight,    &VRMap.fkRight    },
+        { "Fire",       &KeyMap.fkFire,     &PadMap.fkFire,     &VRMap.fkFire     },
+        { "GetWeapon",  &KeyMap.fkShow,     &PadMap.fkShow,     &VRMap.fkShow     },
+        { "StepLeft",   &KeyMap.fkSLeft,    &PadMap.fkSLeft,    &VRMap.fkSLeft    },
+        { "StepRight",  &KeyMap.fkSRight,   &PadMap.fkSRight,   &VRMap.fkSRight   },
+        { "Strafe",     &KeyMap.fkStrafe,   &PadMap.fkStrafe,   &VRMap.fkStrafe   },
+        { "Jump",       &KeyMap.fkJump,     &PadMap.fkJump,     &VRMap.fkJump     },
+        { "Run",        &KeyMap.fkRun,      &PadMap.fkRun,      &VRMap.fkRun      },
+        { "Crouch",     &KeyMap.fkCrouch,   &PadMap.fkCrouch,   &VRMap.fkCrouch   },
+        { "Call",       &KeyMap.fkCall,     &PadMap.fkCall,     &VRMap.fkCall     },
+        { "ChangeCall", &KeyMap.fkCCall,    &PadMap.fkCCall,    &VRMap.fkCCall    },
+        { "Binoculars", &KeyMap.fkBinoc,    &PadMap.fkBinoc,    &VRMap.fkBinoc    },
+        { nullptr, nullptr, nullptr, nullptr }
     };
     return tab;
 }
@@ -51,16 +53,13 @@ void RTrim(char* s) {
                      s[n-1] == ' '  || s[n-1] == '\t')) s[--n] = 0;
 }
 
-// Strip a trailing ".pad" suffix if present; returns true if it was a pad
-// line. Modifies the key buffer in place.
-bool IsPadKey(char* key) {
+// Detect and strip a trailing ".pad" or ".vr" suffix.
+// Returns 1 for pad, 2 for vr, 0 for plain key.  Modifies key in place.
+int GetKeySuffix(char* key) {
     int n = (int)std::strlen(key);
-    const int kSuf = 4;   // ".pad"
-    if (n > kSuf && std::strcmp(key + n - kSuf, ".pad") == 0) {
-        key[n - kSuf] = 0;
-        return true;
-    }
-    return false;
+    if (n > 4 && std::strcmp(key + n - 4, ".pad") == 0) { key[n-4] = 0; return 1; }
+    if (n > 3 && std::strcmp(key + n - 3, ".vr")  == 0) { key[n-3] = 0; return 2; }
+    return 0;
 }
 
 } // anon
@@ -89,6 +88,8 @@ void ResetToDefaults() {
     KeyMap.fkBinoc    = 'B';
     // Gamepad: Xbox layout; Gamepad.cpp owns the button map.
     InitPadMap();
+    // VR: Quest Touch Plus layout; XR.cpp owns the button map.
+    XR::InitVRMap();
 }
 
 void Load() {
@@ -114,38 +115,37 @@ void Load() {
         while (kn > 0 && (key[kn-1] == ' ' || key[kn-1] == '\t')) key[--kn] = 0;
         while (*val == ' ' || *val == '\t') ++val;
 
-        bool isPad = IsPadKey(key);
+        int suffix = GetKeySuffix(key);  // 0=key, 1=pad, 2=vr
         int v = std::atoi(val);
 
         bool matched = false;
         for (Action* a = Table(); a->name; ++a) {
             if (std::strcmp(a->name, key) == 0) {
-                if (isPad) {
-                    // Pad: -1 (unbound), 0..SDL_CONTROLLER_BUTTON_MAX-1 (real
-                    // buttons), or PAD_VBTN_FIRST..PAD_VBTN_LAST (virtual
-                    // buttons for triggers / stick directions). Anything
-                    // else is skipped so a stale config can't install a
-                    // nonsense binding.
+                if (suffix == 1) {
                     bool ok = (v == -1) ||
                               (v >= 0 && v < SDL_CONTROLLER_BUTTON_MAX) ||
                               (v >= PAD_VBTN_FIRST && v <= PAD_VBTN_LAST);
                     if (ok) { *a->pad = v; ++loaded; }
                     else    { ++skipped; }
+                } else if (suffix == 2) {
+                    bool ok = (v == -1) ||
+                              (v >= VR_BTN_FIRST && v <= VR_BTN_LAST);
+                    if (ok) { *a->vr = v; ++loaded; }
+                    else    { ++skipped; }
                 } else {
-                    if (v > 0 && v < 256) {
-                        *a->vk = v;
-                        ++loaded;
-                    } else ++skipped;
+                    if (v > 0 && v < 256) { *a->vk = v; ++loaded; }
+                    else ++skipped;
                 }
                 matched = true;
                 break;
             }
         }
         if (!matched) {
+            static const char* kSuf[] = { "", ".pad", ".vr" };
             char msg[192];
             std::snprintf(msg, sizeof(msg),
                 "[Bindings] unknown action '%s%s' — ignored\n",
-                key, isPad ? ".pad" : "");
+                key, kSuf[suffix < 3 ? suffix : 0]);
             Log(msg);
             ++skipped;
         }
@@ -164,12 +164,14 @@ void Save() {
         return;
     }
     std::fprintf(f, "# OpenCarnivores input bindings.\n");
-    std::fprintf(f, "# Keyboard: action=<Win32 VK decimal>. Gamepad: action.pad=<SDL button index, -1 unbound>.\n");
+    std::fprintf(f, "# action=<VK>  action.pad=<SDL btn, -1 unbound>  action.vr=<VR_BTN_*, -1 unbound>\n");
     std::fprintf(f, "# Edit via the in-game Options > Controls panel.\n");
     for (Action* a = Table(); a->name; ++a)
         std::fprintf(f, "%s=%d\n",     a->name, *a->vk);
     for (Action* a = Table(); a->name; ++a)
         std::fprintf(f, "%s.pad=%d\n", a->name, *a->pad);
+    for (Action* a = Table(); a->name; ++a)
+        std::fprintf(f, "%s.vr=%d\n",  a->name, *a->vr);
     std::fclose(f);
     Log("[Bindings] saved controls.cfg\n");
 }

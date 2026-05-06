@@ -7,6 +7,7 @@
 #include "Hunt.h"
 #include <SDL.h>
 #include "renderer/RendererGL.h"
+#include "XR.h"
 #include <vector>
 #include <string>
 #include <cstdio>
@@ -317,12 +318,193 @@ static int DrawMultiline(const char* s, int x, int y, int lineH, uint32_t col = 
 
 // ─── Frame wrap ──────────────────────────────────────────────────────────────
 
+// Tracks whether we're at the very start of a menu session so we can
+// reposition the world-locked quad in front of the player on entry.
+static bool s_menuFirstFrame = true;
+
+// Controller cursor position (screen/drawable coords) updated each frame in
+// MenuBegin() when the controller ray hits the menu quad.
+static bool  s_ctrlCursorValid = false;
+static float s_ctrlCursorX     = 0.f;
+static float s_ctrlCursorY     = 0.f;
+
 static void MenuBegin() {
+    // SOURCEPORT: keep the XR compositor alive during menus.
+    XR::PollEvents();
+    XR::BeginFrame();
     g_glRenderer->BeginFrame();
     g_glRenderer->ClearBuffers();
+
+    // Re-anchor the quad pose on the first frame of a new menu session.
+    if (s_menuFirstFrame && XR::StereoActive()) {
+        XR::ResetMenuQuadPose();
+        s_menuFirstFrame = false;
+    }
+
+    // One-time diagnostic: log action-system state when VR is first active.
+    {
+        static bool s_diagDone = false;
+        if (!s_diagDone && XR::StereoActive()) {
+            s_diagDone = true;
+            PrintLog(XR::ActionsReady()
+                ? (char*)"[VR] Action system ready — controller aim should work\n"
+                : (char*)"[VR] Action system NOT ready — using head-gaze only\n");
+        }
+    }
+
+    // SOURCEPORT: drive the menu cursor from VR input when in stereo mode.
+    // Priority: (1) controller aim ray (OpenXR action system), falling back to
+    // (2) head-gaze ray (uses already-working view poses — always available).
+    // Click sources: (a) XR trigger via XInput, (b) SDL gamepad trigger/A.
+    s_ctrlCursorValid = false;
+    if (XR::StereoActive()) {
+        float sx = 0.f, sy = 0.f;
+        bool  havePos      = false;
+        bool  justPressed  = false;
+        bool  justReleased = false;
+
+        // ── Try controller aim ────────────────────────────────────────────────
+        for (int hand = 0; hand < 2; ++hand) {
+            bool pressed, jp, jr;
+            if (XR::GetControllerMenuCursor(hand, sx, sy, pressed, jp, jr)) {
+                havePos      = true;
+                justPressed  = jp;
+                justReleased = jr;
+                break;
+            }
+        }
+
+        // ── Fallback: head-gaze ───────────────────────────────────────────────
+        if (!havePos)
+            havePos = XR::GetHeadGazeCursor(sx, sy);
+
+        if (havePos) {
+            s_ctrlCursorValid = true;
+            s_ctrlCursorX     = sx;
+            s_ctrlCursorY     = sy;
+            gMI.x = (int)sx;
+            gMI.y = (int)sy;
+            if (justPressed)  { gMI.lClick = true; gMI.lHeld = true;  }
+            if (justReleased) {                     gMI.lHeld = false; }
+        }
+
+        // ── Click detection: XInput → SDL gamepad → XR trigger ───────────────
+        // XInput is polled directly (no SDL, no window focus required) so Quest
+        // controllers via PC Link are always seen even when the SDL window is
+        // unfocused.  SDL gamepad and XR trigger are checked as fallbacks.
+        {
+            // Lazy-load XInput so the exe still runs without a VR runtime.
+            static bool                     s_xiLoaded = false;
+            static HMODULE                  s_xiDll    = nullptr;
+            typedef DWORD (WINAPI *PFN_XI)(DWORD, void*);
+            static PFN_XI                   s_xiGet    = nullptr;
+            if (!s_xiLoaded) {
+                s_xiLoaded = true;
+                s_xiDll = LoadLibraryA("xinput1_4.dll");
+                if (!s_xiDll) s_xiDll = LoadLibraryA("xinput9_1_0.dll");
+                if (s_xiDll) s_xiGet = (PFN_XI)GetProcAddress(s_xiDll, "XInputGetState");
+                PrintLog(s_xiGet ? (char*)"[VR] XInput loaded OK\n"
+                                 : (char*)"[VR] XInput not available\n");
+            }
+
+            // XINPUT_GAMEPAD layout (verified against xinput.h):
+            //   DWORD  dwPacketNumber
+            //   WORD   wButtons        — 0x1000=A, 0x2000=B, 0x4000=X, 0x8000=Y
+            //   BYTE   bLeftTrigger    — 0-255
+            //   BYTE   bRightTrigger   — 0-255
+            //   SHORT  sThumbLX/LY/RX/RY
+            struct XiState {
+                DWORD  packet;
+                WORD   buttons;
+                BYTE   ltrig, rtrig;
+                SHORT  lx, ly, rx, ry;
+            };
+
+            static bool s_clickPrev = false;
+            bool click = false;
+
+            // Try all 4 XInput slots (Quest may appear on any slot).
+            if (s_xiGet) {
+                for (DWORD i = 0; i < 4 && !click; ++i) {
+                    XiState st = {};
+                    if (s_xiGet(i, &st) == 0 /* ERROR_SUCCESS */) {
+                        click = (st.ltrig  > 100)
+                             || (st.rtrig  > 100)
+                             || (st.buttons & 0x1000)  // A
+                             || (st.buttons & 0x2000)  // B
+                             || (st.buttons & 0x4000)  // X
+                             || (st.buttons & 0x8000); // Y
+                    }
+                }
+            }
+
+            // SDL gamepad fallback (works if SDL already opened the controller).
+            if (!click) {
+                SDL_GameController* pad = Gamepad::GetPad();
+                if (pad) {
+                    click = (SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT)  > 16000)
+                         || (SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000)
+                         || (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A) != 0);
+                }
+            }
+
+            if (click  && !s_clickPrev) { gMI.lClick = true; gMI.lHeld = true;  }
+            if (!click &&  s_clickPrev) {                     gMI.lHeld = false; }
+            s_clickPrev = click;
+        }
+    }
 }
 static void MenuEnd() {
+    // SOURCEPORT: blit the menu into a world-locked XrCompositionLayerQuad.
+    // The quad is placed in front of wherever the player was looking when the
+    // menu opened, and stays fixed even as the player looks around.
+    if (XR::StereoActive()) {
+        unsigned int menuFbo = XR::AcquireMenuImage();
+        if (menuFbo) {
+            int srcW = WinW, srcH = WinH;
+            int dstW = (int)XR::MenuImageWidth(), dstH = (int)XR::MenuImageHeight();
+            // Scale to fit width; black bars top/bottom if aspect ratios differ.
+            int blitH = srcH * dstW / srcW;
+            int blitY0 = (dstH - blitH) / 2;
+
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)menuFbo);
+            glClearColor(0.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)menuFbo);
+            glBlitFramebuffer(0, 0, srcW, srcH,
+                              0, blitY0, dstW, blitY0 + blitH,
+                              GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+            // Draw controller cursor dot over the blit.
+            if (s_ctrlCursorValid) {
+                // Map screen coords (0..WinW, 0..WinH, Y down) → menu texture
+                // coords (0..dstW, 0..dstH, Y up for GL).
+                int cx = (int)(s_ctrlCursorX * dstW / WinW);
+                // s_ctrlCursorY is Y-down; OpenGL FBO origin is Y-up.
+                int cy_down = blitY0 + (int)(s_ctrlCursorY * blitH / WinH);
+                int cy = dstH - cy_down;  // flip to GL Y-up
+
+                glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)menuFbo);
+                glEnable(GL_SCISSOR_TEST);
+                const int OR = 9, IR = 6;  // outer/inner radius (menu-texture px)
+                // Black border ring
+                glScissor(cx - OR, cy - OR, OR * 2, OR * 2);
+                glClearColor(0.f, 0.f, 0.f, 1.f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                // White filled centre
+                glScissor(cx - IR, cy - IR, IR * 2, IR * 2);
+                glClearColor(1.f, 1.f, 1.f, 1.f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                glDisable(GL_SCISSOR_TEST);
+            }
+
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            XR::ReleaseMenuImage();
+        }
+    }
     g_glRenderer->EndFrame();
+    XR::EndFrame();
 }
 
 // ─── Save file helpers ────────────────────────────────────────────────────────
@@ -1274,32 +1456,30 @@ static void RunOptions(bool& appQuit) {
     };
 
     // Key rebinding state: waitIdx = index into bindings[] being rebound (-1 = none)
-    // waitIsPad picks which column (keyboard VK vs gamepad button) the capture
-    // writes to. Capture accepts either kind of input but only fills the slot
-    // the user clicked on, so pad and key can be assigned independently.
-    struct Binding { const char* name; int* vk; int* pad; };
+    // waitCol: 0=keyboard, 1=gamepad, 2=VR controller
+    struct Binding { const char* name; int* vk; int* pad; int* vr; };
     Binding bindings[] = {
-        { "Forward",     &KeyMap.fkForward,  &PadMap.fkForward  },
-        { "Backward",    &KeyMap.fkBackward, &PadMap.fkBackward },
-        { "Turn Up",     &KeyMap.fkUp,       &PadMap.fkUp       },
-        { "Turn Down",   &KeyMap.fkDown,     &PadMap.fkDown     },
-        { "Turn Left",   &KeyMap.fkLeft,     &PadMap.fkLeft     },
-        { "Turn Right", &KeyMap.fkRight,     &PadMap.fkRight    },
-        { "Fire",        &KeyMap.fkFire,     &PadMap.fkFire     },
-        { "Get weapon",  &KeyMap.fkShow,     &PadMap.fkShow     },
-        { "Step Left",   &KeyMap.fkSLeft,    &PadMap.fkSLeft    },
-        { "Step Right",  &KeyMap.fkSRight,   &PadMap.fkSRight   },
-        { "Strafe",      &KeyMap.fkStrafe,   &PadMap.fkStrafe   },
-        { "Jump",        &KeyMap.fkJump,     &PadMap.fkJump     },
-        { "Run",         &KeyMap.fkRun,      &PadMap.fkRun      },
-        { "Crouch",      &KeyMap.fkCrouch,   &PadMap.fkCrouch   },
-        { "Call",        &KeyMap.fkCall,     &PadMap.fkCall     },
-        { "Change Call", &KeyMap.fkCCall,    &PadMap.fkCCall    },
-        { "Binoculars",  &KeyMap.fkBinoc,    &PadMap.fkBinoc    },
+        { "Forward",     &KeyMap.fkForward,  &PadMap.fkForward,  &VRMap.fkForward  },
+        { "Backward",    &KeyMap.fkBackward, &PadMap.fkBackward, &VRMap.fkBackward },
+        { "Turn Up",     &KeyMap.fkUp,       &PadMap.fkUp,       &VRMap.fkUp       },
+        { "Turn Down",   &KeyMap.fkDown,     &PadMap.fkDown,     &VRMap.fkDown     },
+        { "Turn Left",   &KeyMap.fkLeft,     &PadMap.fkLeft,     &VRMap.fkLeft     },
+        { "Turn Right",  &KeyMap.fkRight,    &PadMap.fkRight,    &VRMap.fkRight    },
+        { "Fire",        &KeyMap.fkFire,     &PadMap.fkFire,     &VRMap.fkFire     },
+        { "Get weapon",  &KeyMap.fkShow,     &PadMap.fkShow,     &VRMap.fkShow     },
+        { "Step Left",   &KeyMap.fkSLeft,    &PadMap.fkSLeft,    &VRMap.fkSLeft    },
+        { "Step Right",  &KeyMap.fkSRight,   &PadMap.fkSRight,   &VRMap.fkSRight   },
+        { "Strafe",      &KeyMap.fkStrafe,   &PadMap.fkStrafe,   &VRMap.fkStrafe   },
+        { "Jump",        &KeyMap.fkJump,     &PadMap.fkJump,     &VRMap.fkJump     },
+        { "Run",         &KeyMap.fkRun,      &PadMap.fkRun,      &VRMap.fkRun      },
+        { "Crouch",      &KeyMap.fkCrouch,   &PadMap.fkCrouch,   &VRMap.fkCrouch   },
+        { "Call",        &KeyMap.fkCall,     &PadMap.fkCall,     &VRMap.fkCall     },
+        { "Change Call", &KeyMap.fkCCall,    &PadMap.fkCCall,    &VRMap.fkCCall    },
+        { "Binoculars",  &KeyMap.fkBinoc,    &PadMap.fkBinoc,    &VRMap.fkBinoc    },
     };
     const int kNumBindings = (int)(sizeof(bindings)/sizeof(bindings[0]));
-    int waitIdx = -1;      // index of binding waiting for input
-    bool waitIsPad = false;
+    int  waitIdx = -1;   // index of binding waiting for input
+    int  waitCol = 0;    // 0=key, 1=pad, 2=vr
 
     // Convert SDL scancode → Windows VK (for rebinding)
     auto ScancodeToVK = [](SDL_Scancode sc) -> int {
@@ -1330,8 +1510,8 @@ static void RunOptions(bool& appQuit) {
                 ScaleMouse(ev.button.x, ev.button.y);
                 if (ev.button.button == SDL_BUTTON_LEFT)  { gMI.lClick = true; gMI.lHeld = true; }
                 if (ev.button.button == SDL_BUTTON_RIGHT) gMI.rClick = true;
-                // While waiting for a key (not pad): mouse buttons count too.
-                if (waitIdx >= 0 && !waitIsPad) {
+                // While waiting for a key (not pad/vr): mouse buttons count too.
+                if (waitIdx >= 0 && waitCol == 0) {
                     int vk = (ev.button.button == SDL_BUTTON_LEFT)  ? VK_LBUTTON :
                              (ev.button.button == SDL_BUTTON_RIGHT) ? VK_RBUTTON : 0;
                     if (vk) { *bindings[waitIdx].vk = vk; waitIdx = -1; gMI.lClick = false; gMI.lHeld = false; }
@@ -1342,31 +1522,24 @@ static void RunOptions(bool& appQuit) {
                 break;
             case SDL_KEYDOWN:
                 if (waitIdx >= 0) {
-                    // ESC clears the binding (unbind). Works for either
-                    // column — the key slot is zeroed, the pad slot is set
-                    // to -1, and the capture ends.
+                    // ESC clears the binding. Key slot zeroed; pad/vr set to -1.
                     if (ev.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
-                        if (waitIsPad) *bindings[waitIdx].pad = -1;
-                        else           *bindings[waitIdx].vk  = 0;
+                        if      (waitCol == 1) *bindings[waitIdx].pad = -1;
+                        else if (waitCol == 2) *bindings[waitIdx].vr  = -1;
+                        else                   *bindings[waitIdx].vk  =  0;
                         waitIdx = -1;
-                    } else if (!waitIsPad) {
+                    } else if (waitCol == 0) {
                         int vk = ScancodeToVK(ev.key.keysym.scancode);
                         if (vk) { *bindings[waitIdx].vk = vk; waitIdx = -1; }
                     }
-                    // Keyboard input while waiting on the pad column is
-                    // ignored (except ESC above) — user clicked the pad
-                    // slot, they're expected to press a controller input.
+                    // Keyboard input while waiting on pad or VR column is ignored
+                    // (except ESC) — user must press the appropriate device input.
                 } else {
                     gMI.scancode = ev.key.keysym.scancode;
                 }
                 break;
             case SDL_CONTROLLERBUTTONDOWN:
-                // Pad rebind capture: any controller button (A/B/X/Y, bumpers,
-                // dpad, stick clicks) is accepted while waiting on the pad
-                // column. Triggers and stick directions are polled below via
-                // Gamepad::PollPadAxisEdge since SDL reports them as axes,
-                // not buttons.
-                if (waitIdx >= 0 && waitIsPad) {
+                if (waitIdx >= 0 && waitCol == 1) {
                     *bindings[waitIdx].pad = ev.cbutton.button;
                     waitIdx = -1;
                 }
@@ -1394,12 +1567,19 @@ static void RunOptions(bool& appQuit) {
         if (appQuit) break;
         if (waitIdx < 0 && gMI.scancode == SDL_SCANCODE_ESCAPE) break;
 
-        // Pad axis rebind capture: SDL delivers triggers + stick directions
-        // as AXISMOTION events, not buttons, so we sample them directly.
-        // PollPadAxisEdge returns 0 when no axis crossed threshold this frame.
-        if (waitIdx >= 0 && waitIsPad) {
+        // Pad axis/button capture (waitCol==1).
+        if (waitIdx >= 0 && waitCol == 1) {
             int vbtn = PollPadAxisEdge();
+            if (!vbtn) {
+                int btn = PollPadButtonEdge();
+                if (btn) vbtn = btn + 1000;
+            }
             if (vbtn) { *bindings[waitIdx].pad = vbtn; waitIdx = -1; }
+        }
+        // VR button capture (waitCol==2).
+        if (waitIdx >= 0 && waitCol == 2) {
+            int vrBtn = XR::PollVRBtnEdge();
+            if (vrBtn) { *bindings[waitIdx].vr = vrBtn; waitIdx = -1; }
         }
 
         int hov = CompositeMenu(ms);
@@ -1604,52 +1784,63 @@ static void RunOptions(bool& appQuit) {
             }
         }
 
-        // ── CONTROLS panel ────────────────────────────────────────────────
-        // Three columns: action name | key | pad button. Click either of the
-        // two rightmost columns to rebind; ESC cancels an active rebind.
+        // ── CONTROLS panel ─────────────────────────────────────────────────
+        // Four columns: action name | keyboard | gamepad | VR controller.
+        // Click any value column to rebind; ESC cancels an active rebind.
         {
             char kbuf[32];
-            int ox   = WinW * 420 / 800;   // action label left edge
-            int kx   = WinW * 510 / 800;   // key name column
-            int px   = WinW * 640 / 800;   // pad button column
-            int colW = WinW *  95 / 800;
+            int ox   = WinW * 410 / 800;   // action label left edge
+            int kx   = WinW * 495 / 800;   // keyboard column
+            int px   = WinW * 578 / 800;   // gamepad column
+            int vx   = WinW * 661 / 800;   // VR controller column
+            int colW = WinW *  78 / 800;   // clickable width per column
             int y    = WinH * 80 / 600;
             int lnH2 = WinH * 24 / 600;
 
             for (int i = 0; i < kNumBindings; i++) {
-                bool waitingKey = (waitIdx == i && !waitIsPad);
-                bool waitingPad = (waitIdx == i &&  waitIsPad);
+                bool waitingKey = (waitIdx == i && waitCol == 0);
+                bool waitingPad = (waitIdx == i && waitCol == 1);
+                bool waitingVR  = (waitIdx == i && waitCol == 2);
                 bool hotKey = waitIdx < 0 && gMI.x >= kx && gMI.x < kx+colW &&
                               gMI.y >= y && gMI.y < y+lnH2;
                 bool hotPad = waitIdx < 0 && gMI.x >= px && gMI.x < px+colW &&
                               gMI.y >= y && gMI.y < y+lnH2;
+                bool hotVR  = waitIdx < 0 && gMI.x >= vx && gMI.x < vx+colW &&
+                              gMI.y >= y && gMI.y < y+lnH2;
 
                 MTMed(bindings[i].name, ox, y,
-                      (waitingKey || waitingPad) ? 0x00FFFFFF : 0x00AC6D24);
+                      (waitingKey || waitingPad || waitingVR) ? 0x00FFFFFF : 0x00AC6D24);
 
-                // Key column
+                // Keyboard column
                 if (waitingKey) {
                     MT("Press key...", kx, y, 0x00FFFF00);
                 } else {
                     VKStr(*bindings[i].vk, kbuf, sizeof(kbuf));
                     MT(kbuf, kx, y, hotKey ? 0x00FFFF40 : 0x00C0C0C0);
-                    if (hotKey && gMI.lClick) { waitIdx = i; waitIsPad = false; gMI.lClick = false; }
+                    if (hotKey && gMI.lClick) { waitIdx = i; waitCol = 0; gMI.lClick = false; }
                 }
-                // Pad column
+                // Gamepad column
                 if (waitingPad) {
                     MT("Press pad...", px, y, 0x00FFFF00);
                 } else {
                     MT(PadBtnName(*bindings[i].pad), px, y, hotPad ? 0x00FFFF40 : 0x00C0C0C0);
-                    if (hotPad && gMI.lClick) { waitIdx = i; waitIsPad = true; gMI.lClick = false; }
+                    if (hotPad && gMI.lClick) { waitIdx = i; waitCol = 1; gMI.lClick = false; }
+                }
+                // VR controller column
+                if (waitingVR) {
+                    MT("Press VR...", vx, y, 0x00FFFF00);
+                } else {
+                    MT(XR::VRBtnName(*bindings[i].vr), vx, y, hotVR ? 0x00FFFF40 : 0x00C0C0C0);
+                    if (hotVR && gMI.lClick) { waitIdx = i; waitCol = 2; gMI.lClick = false; XR::PollVRBtnEdge(); }
                 }
                 y += lnH2;
                 if (y > WinH * 530 / 600) break;
             }
 
-            // Hint line + Reset button (only meaningful when waiting / between rebinds)
+            // Hint line + Reset button
             {
                 MT("ESC: clear binding", ox, y, 0x00888888);
-                int bx = px, bw = colW;
+                int bx = vx, bw = colW;
                 bool hotR = waitIdx < 0 && gMI.x >= bx && gMI.x < bx+bw &&
                             gMI.y >= y && gMI.y < y+lnH2;
                 MT("Reset", bx, y, hotR ? 0x00FFFF40 : 0x00C0C0C0);
@@ -2256,6 +2447,10 @@ bool RunMenus(bool& appQuit, bool skipToHunt, bool skipPlayerSelect) {
     // SOURCEPORT: Reset ambient-active tracking so MENUAMB restarts correctly after
     // returning from a hunt (AudioStop was called, clearing the ambient slot).
     gMenuAmbActive = nullptr;
+
+    // SOURCEPORT: Trigger quad-pose re-anchor on the first menu frame so the
+    // world-locked menu appears in front of the player's current gaze.
+    s_menuFirstFrame = true;
 
     // Play ship-hum during player-select (MENUR) — the only screen that uses it.
     // MENUAMB takes over once the player reaches MENUM/MENU2/OPT.

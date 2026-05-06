@@ -569,13 +569,23 @@ void InitClips2()
 
 
 void InitClips()
-{   
+{
 //	float XFOV = atan(CameraW , VideoCX); //1.6
 //	float YFOV = atan(CameraH , VideoCY);
 	float xx = (VideoCX+1) / (CameraW);
-	float yy = (VideoCY+2) / (CameraH);
-	float LX = sqrtf(1.0f + xx * xx);
-	float LY = sqrtf(1.0f + yy * yy);
+	// SOURCEPORT: use separate top/bottom tangents so clip planes match the
+	// actual screen edges under an asymmetric VR principal point.
+	// In symmetric 4:3: VideoCY == WinH/2, so yy_top == yy_bot and behaviour
+	// is identical to the original single-yy code.
+	// In VR (e.g. Quest 3 tD > tU): yy_top = tU < tD = yy_bot.
+	// ClipB (bottom plane) must use yy_bot; using yy_top instead clips terrain
+	// at scry > 2*VideoCY (~90% of WinH) rather than at WinH, leaving a grey
+	// strip at the bottom of the eye FBO.
+	float yy_top = (VideoCY+2)          / (CameraH);  // top-edge tangent  ≈ tU
+	float yy_bot = (WinH - VideoCY + 2) / (CameraH);  // bottom-edge tangent ≈ tD
+	float LX     = sqrtf(1.0f + xx      * xx);
+	float LY_top = sqrtf(1.0f + yy_top  * yy_top);
+	float LY_bot = sqrtf(1.0f + yy_bot  * yy_bot);
 
    ClipA.v1.x = - (float)xx / LX;
    ClipA.v1.y = 0;
@@ -591,14 +601,14 @@ void InitClips()
 
 
    ClipB.v1.x = 0;
-   ClipB.v1.y =   (float)yy / LY;
-   ClipB.v1.z =   (float)1  / LY;
+   ClipB.v1.y =   (float)yy_bot / LY_bot;
+   ClipB.v1.z =   (float)1      / LY_bot;
    ClipB.v2.x = 1; ClipB.v2.y = 0; ClipB.v2.z = 0;
    MulVectorsVect(ClipB.v1, ClipB.v2, ClipB.nv);
 
    ClipD.v1.x = 0;
-   ClipD.v1.y = - (float)yy / LY;
-   ClipD.v1.z =   (float)1  / LY;
+   ClipD.v1.y = - (float)yy_top / LY_top;
+   ClipD.v1.z =   (float)1      / LY_top;
    ClipD.v2.x =-1; ClipD.v2.y = 0; ClipD.v2.z = 0;
    MulVectorsVect(ClipD.v1, ClipD.v2, ClipD.nv);
 

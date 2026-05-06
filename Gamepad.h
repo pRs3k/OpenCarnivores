@@ -36,6 +36,10 @@ void Sample(float dtMs);
 
 bool Connected();
 
+// Returns the currently open SDL_GameController handle, or nullptr.
+// Allows callers (e.g. the VR menu cursor) to query axis/button state directly.
+SDL_GameController* GetPad();
+
 } // namespace Gamepad
 
 // Virtual button indices for the analog inputs, so triggers and stick
@@ -80,3 +84,8 @@ const char* PadBtnName(int btn);
 // previous call, or 0 if none. State is kept internally so successive calls
 // require the axis to settle back below threshold before firing again.
 int PollPadAxisEdge();
+
+// Rebind-UI helper. Returns the SDL_GameControllerButton value (1-based) of
+// the first physical button newly pressed since the last call, or 0 if none.
+// Distinct state table from the hunt-loop so binding capture is independent.
+int PollPadButtonEdge();
