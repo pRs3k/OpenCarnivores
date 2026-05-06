@@ -180,6 +180,16 @@ void d3dSetHUDMode(BOOL enable)
     if (g_glRenderer) g_glRenderer->SetHUDMode(enable != FALSE);
 #endif
 }
+
+// SOURCEPORT: push a caller-supplied 4×4 column-major projection matrix to the
+// GL shader. Used by the VR stereo path to switch between per-eye projections
+// and the flat-screen projection without triggering BeginFrame's viewport cache.
+void d3dUpdateProjection(const float* mat16)
+{
+#ifdef _opengl
+    if (g_glRenderer) g_glRenderer->UpdateProjection(mat16);
+#endif
+}
 bool d3dIsHUDMode() { return s_hudMode; }
 
 void d3dSetDepthFunc(BOOL strict)
@@ -1513,7 +1523,7 @@ void Activate3DHardware()
     // SOURCEPORT: initial clear so first frame doesn't flash black
     d3dClearBuffers();
     g_glRenderer->BeginFrame();
-    PrintLog("=== OpenGL 3.3 started ===\n");
+    PrintLog("=== OpenGL 4.1 started ===\n");
 #endif
 
 	if (OptText==0) LOWRESTX = TRUE;
@@ -2157,14 +2167,27 @@ void AddSkySum(WORD C)
 
 
 #ifdef _opengl
-// SOURCEPORT: sun-flare occlusion sampling for the GL path. The original D3D
-// engine lock()'d the backbuffer inside GetSkyK and compared 9 colour samples
-// against the sky colour to decide if the sun was blocked. In GL we defer the
-// readback to end-of-frame (after all opaque geometry has written depth) and
-// drive the same SkyTraceK smoother. See gl_SampleSunOcclusion() in ShowVideo.
-static int  g_sunSampleX     = 0;
-static int  g_sunSampleY     = 0;
-static bool g_sunSampleValid = false;
+// SOURCEPORT: sun-flare occlusion sampling for the GL path.
+//
+// Two readbacks, matching D3D timing:
+//   1. COLOUR readback — inside GetSkyK, called from RenderSun BEFORE the sun
+//      model draws.  Sky and clouds are already in the framebuffer; the sun disc
+//      is not yet.  This mirrors the D3D path where Lock() reads the backbuffer
+//      before the Execute() buffer that renders the sun model.
+//      Detects cloud occlusion (cloud RGB ≠ SkyTR/G/B) without false-positives
+//      from the bright disc itself.
+//   2. DEPTH readback — in gl_SampleSunOcclusion at end-of-frame, after all
+//      opaque geometry (terrain, trees, dinos) has written depth.  Detects solid
+//      geometry occlusion that the colour test cannot (geometry writes depth but
+//      not sky-level colour deviation).
+//
+// Previously both were done in gl_SampleSunOcclusion.  When looking exactly at
+// the sun centre the disc filled the colour patch → high deviation → colorK≈0
+// → SkyTraceK→0.2 → sun model alpha=40 → flare invisible.
+static int   g_sunSampleX     = 0;
+static int   g_sunSampleY     = 0;
+static bool  g_sunSampleValid = false;
+static float g_sunColorK      = 1.0f;   // set by GetSkyK, consumed by gl_SampleSunOcclusion
 #endif
 
 
@@ -2173,13 +2196,35 @@ float GetSkyK(int x, int y)
   if (x<10 || y<10 || x>WinW-10 || y>WinH-10) return 0.5;
 
 #ifdef _opengl
-  // SOURCEPORT: record sun screen position for end-of-frame depth readback.
-  // The readback updates SkyTraceK with one frame of latency; DeltaFunc smooths
-  // it naturally, matching the D3D behaviour where Lock() reads the previous
-  // frame's contents anyway.
+  // SOURCEPORT: colour readback happens HERE (before the sun model draws).
+  // Sky and clouds are in the framebuffer at this point; the sun disc is not.
+  // This matches D3D where Lock() reads before Execute() renders the sun.
+  // Result is stored in g_sunColorK for gl_SampleSunOcclusion to combine with
+  // the end-of-frame depth test.
   g_sunSampleX     = x;
   g_sunSampleY     = y;
   g_sunSampleValid = true;
+  {
+      const int CR = 4;
+      const int CW = 2 * CR + 1;
+      const int cglx = x - CR;
+      const int cgly = WinH - (y + CR) - 1;
+      if (cglx >= 0 && cgly >= 0 && cglx + CW <= WinW && cgly + CW <= WinH) {
+          uint8_t rgb[CW * CW * 3];
+          glReadPixels(cglx, cgly, CW, CW, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+          long sumR = 0, sumG = 0, sumB = 0;
+          const int n = CW * CW;
+          for (int i = 0; i < n; ++i) {
+              sumR += rgb[i*3+0] - (int)SkyTR;
+              sumG += rgb[i*3+1] - (int)SkyTG;
+              sumB += rgb[i*3+2] - (int)SkyTB;
+          }
+          float dev = (float)std::sqrt((double)(sumR*sumR + sumG*sumG + sumB*sumB)) / n;
+          if (dev > 80.f) dev = 80.f;
+          g_sunColorK = 1.f - dev / 80.f;
+      }
+      // else: near screen edge, leave g_sunColorK at its previous value
+  }
   return SkyTraceK;
 #else // _d3d
   SkySumR = 0;
@@ -2279,31 +2324,10 @@ static void gl_SampleSunOcclusion()
     if (depth[i] < 0.001f) ++skyCount;        // still at clear depth → sky
   float depthK = (float)skyCount / (float)(W * W);
 
-  // SOURCEPORT: the sky-plane cloud layer is drawn with depth writes disabled
-  // (see "Terrain banding" note in CLAUDE.md), so clouds leave depth=0 — the
-  // depth fraction alone reports "pure sky" right through a cumulus deck.
-  // Replicate the original D3D 9-sample colour test to catch that: compare
-  // the framebuffer RGB around the sun against the expected clear-sky colour
-  // (SkyTR/G/B, updated each frame by RenderSkyPlane). A cloud over the sun
-  // reads bright white → high deviation → colourK drops and occludes the
-  // flare. Combine with the depth test via min() so terrain OR clouds can
-  // occlude independently.
-  const int CR = 4;
-  const int CW = 2 * CR + 1;
-  uint8_t rgb[CW * CW * 3];
-  const int cglx = cx - CR;
-  const int cgly = WinH - (cy + CR) - 1;
-  glReadPixels(cglx, cgly, CW, CW, GL_RGB, GL_UNSIGNED_BYTE, rgb);
-  long sumR = 0, sumG = 0, sumB = 0;
-  const int n = CW * CW;
-  for (int i = 0; i < n; ++i) {
-    sumR += rgb[i*3+0] - (int)SkyTR;
-    sumG += rgb[i*3+1] - (int)SkyTG;
-    sumB += rgb[i*3+2] - (int)SkyTB;
-  }
-  float dev = (float)std::sqrt((double)(sumR*sumR + sumG*sumG + sumB*sumB)) / n;
-  if (dev > 80.f) dev = 80.f;
-  float colorK = 1.f - dev / 80.f;
+  // SOURCEPORT: colour occlusion (cloud detection) is now computed in GetSkyK,
+  // BEFORE the sun model draws.  g_sunColorK is set there and reused here.
+  // See the two-readback design note above gl_sunSampleX.
+  float colorK = g_sunColorK;
 
   float k = depthK < colorK ? depthK : colorK;
   if (k < 0.2f) k = 0.2f;                     // match D3D minimum floor
@@ -2374,14 +2398,32 @@ void ShowVideo()
 #elif defined(_opengl)
   // SOURCEPORT: sample sun-flare occlusion from the depth buffer before the
   // swap — all opaque geometry has written depth by this point.
+  extern bool XR_StereoActiveForLog();
+  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:SunOcc\n"); }
   gl_SampleSunOcclusion();
-  // SOURCEPORT: present frame via SDL, then clear for next frame
+  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:EndFrame\n"); }
+  // SOURCEPORT: Present the companion window before clearing the framebuffer.
+  // Eye swapchain images are already released (xrReleaseSwapchainImage was
+  // called per-eye during the stereo loop) so the default FB is safe to
+  // present at any time.  xrEndFrame runs after this in the main loop and
+  // submits the already-released swapchain images to the compositor.
   g_glRenderer->EndFrame();
+  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:Clear\n"); }
   d3dClearBuffers();
+  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:BeginFrame\n"); }
   g_glRenderer->BeginFrame();
+  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:Done\n"); }
 #endif
 }
 
+// SOURCEPORT: called from the main loop after XR::EndFrame() to present the
+// companion window once the XR compositor has finished with the eye textures.
+void gl_SwapWindow()
+{
+#ifdef _opengl
+    if (g_glRenderer) g_glRenderer->EndFrame();
+#endif
+}
 
 
 void CopyBackToDIB()
@@ -5253,10 +5295,11 @@ void RenderElements()
 			rpos.z = el->pos.z - CameraZ;
 			float r = el->R;
 
-			rpos = RotateVector(rpos);	  
+			rpos = RotateVector(rpos);
             if (rpos.z > -64) continue;
-            if ( fabs(rpos.x) > -rpos.z) continue;            
-            if ( fabs(rpos.y) > -rpos.z) continue;            
+            if (rpos.z < -(ctViewR * 256.f)) continue;   // SOURCEPORT: far-distance cull
+            if ( fabs(rpos.x) > -rpos.z) continue;
+            if ( fabs(rpos.y) > -rpos.z) continue;
 
 			if (!fproc1) d3dStartBuffer();
 
@@ -5283,10 +5326,11 @@ void RenderElements()
 		rpos.y = rpos.y - CameraY;
 	    rpos.z = rpos.z - CameraZ;
 
-		rpos = RotateVector(rpos);	  
+		rpos = RotateVector(rpos);
         if (rpos.z > -64) continue;
-        if ( fabs(rpos.x) > -rpos.z) continue;            
-        if ( fabs(rpos.y) > -rpos.z) continue;            
+        if (rpos.z < -(ctViewR * 256.f)) continue;   // SOURCEPORT: far-distance cull
+        if ( fabs(rpos.x) > -rpos.z) continue;
+        if ( fabs(rpos.y) > -rpos.z) continue;
 
 		if (!fproc1) d3dStartBuffer();
 
@@ -5645,10 +5689,11 @@ void RenderSun(float x, float y, float z)
 	if (d<2048) {
 		SunLight = (290.f- d*290.f/2048.f);
 #ifdef _opengl
-		// SOURCEPORT: cap higher than D3D (300 vs 180) — GL path's additive rays
-		// are subtler, so the fullscreen tint does more of the work. Boosted so
-		// staring directly at the sun produces a stronger glare/flare.
-		if (SunLight > 300) SunLight = 300;
+		// SOURCEPORT: cap at 255 — the fullscreen tint is packed as (SunLight<<24)
+		// into a DWORD colour byte; values > 255 overflow the byte, wrapping the
+		// alpha to near-zero and making the glare disappear at the sun centre.
+		// 255 = maximum possible alpha → maximum glare when staring directly at sun.
+		if (SunLight > 255) SunLight = 255.f;
 #else
 		if (SunLight>180) SunLight = 180;
 #endif

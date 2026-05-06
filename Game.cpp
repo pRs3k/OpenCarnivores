@@ -1007,6 +1007,7 @@ void MakeCall()
 		 }
 
 	 if (cptr->AI!=TargetCall) continue;
+	 if (!cptr->Health) continue;   // SOURCEPORT: dead/tranquilized dinos don't respond
 	 if (cptr->AfraidTime) continue;
 	 if (cptr->State) continue;
 

@@ -37,6 +37,10 @@ public:
     void SetZBufferEnabled(bool enabled) override;
     void SetDepthMask(bool write);
     void SetBrightness(float b);   // SOURCEPORT: live brightness uniform (1.0=neutral)
+    // SOURCEPORT: override uProjection with a caller-supplied column-major mat4.
+    // Used by the VR stereo path to switch between per-eye and flat projections
+    // without calling BeginFrame() (which would also reset the viewport cache).
+    void UpdateProjection(const float* mat16);
     // SOURCEPORT: stencil modes for weapon/overlay isolation.
     // 0=off, 1=write (mark drawn pixels with ref=1), 2=test (only draw where ref==1).
     void SetStencilMode(int mode);

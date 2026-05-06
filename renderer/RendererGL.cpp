@@ -318,8 +318,11 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
         return false;
     }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    // SOURCEPORT: Request GL 4.1 Core — OpenXR runtimes (Meta Link, SteamVR)
+    // require GL 4.0+; 4.1 is also the highest Core version supported on macOS.
+    // All 3.3 code is forward-compatible: only the context version changes.
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -632,6 +635,12 @@ void RendererGL::BeginFrame() {
 
 void RendererGL::EndFrame() {
     SDL_GL_SwapWindow(m_window);
+}
+
+void RendererGL::UpdateProjection(const float* mat16) {
+    glUseProgram(m_shaderProgram);
+    glUniformMatrix4fv(m_locProjection, 1, GL_FALSE, mat16);
+    std::memcpy(m_projMatrix, mat16, 16 * sizeof(float));
 }
 
 void RendererGL::ClearBuffers() {

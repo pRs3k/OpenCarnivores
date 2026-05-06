@@ -268,6 +268,7 @@ void Shutdown() {
 }
 
 bool Connected() { return g_pad != nullptr; }
+SDL_GameController* GetPad() { return g_pad; }
 
 bool HandleEvent(const SDL_Event& ev) {
     switch (ev.type) {
@@ -366,4 +367,18 @@ int PollPadAxisEdge() {
         s_rebindState[i] = active;
     }
     return fired;
+}
+
+int PollPadButtonEdge() {
+    if (!g_pad) return 0;
+    static bool s_btnState[SDL_CONTROLLER_BUTTON_MAX] = {};
+    for (int b = 0; b < SDL_CONTROLLER_BUTTON_MAX; ++b) {
+        bool active = (SDL_GameControllerGetButton(
+                           g_pad, (SDL_GameControllerButton)b) != 0);
+        bool wasActive = s_btnState[b];
+        s_btnState[b] = active;
+        if (active && !wasActive)
+            return b + 1;  // 1-based to distinguish from "no press" (0)
+    }
+    return 0;
 }

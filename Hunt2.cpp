@@ -19,6 +19,12 @@
 // same mouselook accumulator keyboard/mouse use.
 int  g_sdlMouseDX = 0;  // accumulated relative mouse X since last ProcessPlayerMovement
 int  g_sdlMouseDY = 0;
+// SOURCEPORT: VR body-yaw offset — accumulates right-stick / turn-key input in VR mode
+// so that locomotion turning works on top of the HMD's absolute head orientation.
+static float g_vrBodyYaw = 0.f;
+// SOURCEPORT: true during the second-eye HUD pass — tells DrawPostObjects to render
+// without advancing weapon/timer state (state was already advanced on eye 0).
+bool g_vrSecondEyePass = false;
 // SOURCEPORT: set by Game.cpp ExitTime expiry to trigger return-to-menus instead of DoHalt
 bool g_returnToMenus = false;
 
@@ -220,7 +226,16 @@ void PreCashGroundModel()
 			VMap2[VMAP_CENTER+y][VMAP_CENTER+x].ALPHA=(int)Alpha;
 			VMap2[VMAP_CENTER+y][VMAP_CENTER+x].Fog = 0;
 
+			// SOURCEPORT: in GL/VR the downward FOV can be ~56°, putting terrain at
+			// ~190 units in front of the camera on screen. The original 256-unit near-clip
+			// discards those tiles (DFlags=128), leaving a grey strip at the bottom of the
+			// eye FBO. Lower to 16 units in GL; the original 256 is kept for the soft
+			// renderer (where the narrow 4:3 FOV always puts sub-256 terrain off-screen).
+#ifdef _opengl
+			if (rv.z>-16.0f) VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags=128; else {
+#else
 			if (rv.z>-256.0) VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags=128; else {
+#endif
 #ifdef _soft
 	          VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scrx = VideoCX - (int)(rv.x / rv.z * CameraW);
 	          VMap2[VMAP_CENTER+y][VMAP_CENTER+x].scry = VideoCY + (int)(rv.y / rv.z * CameraH);
@@ -337,7 +352,12 @@ void PreCashGroundModel()
 
 	  
 
+	  // SOURCEPORT: see VMap2 near-clip comment above — same fix for VMap.
+#ifdef _opengl
+	  if (v[0].z>-16.0f) DF+=128; else {
+#else
 	  if (v[0].z>-256.0) DF+=128; else {
+#endif
 
 #ifdef _soft
 	   VMap[VMAP_CENTER+y][VMAP_CENTER+x].scrx = VideoCX - (int)(v[0].x / v[0].z * CameraW);
@@ -404,37 +424,49 @@ void DrawScene()
    cb = (float)cos(CameraBeta);
    sb = (float)sin(CameraBeta);
 
+   // SOURCEPORT: recompute frustum clip planes every DrawScene so they always
+   // reflect the current VideoCX/VideoCY/CameraW/CameraH/WinH.  In VR these
+   // change per-eye (asymmetric principal point, eye-FBO resolution) so a
+   // one-time call before the eye loop would leave ClipB/ClipD computed from
+   // the flat-screen values — ClipB (bottom plane) would then clip terrain at
+   // scry > 2*VideoCY_flat (~90% of WinH) instead of at WinH, producing a grey
+   // strip at the bottom of each eye FBO.
+   FOVK = CameraW / (VideoCX * 1.25f);
+   InitClips();
+
    CCX = ((int)CameraX / 512) * 2;
    CCY = ((int)CameraZ / 512) * 2;
 
-   drawSceneStage = "PreCash";
+   // SOURCEPORT: per-stage flush to diagnose VR crash
+   if (XR::StereoActive()) { drawSceneStage = "PreCash"; PrintLog("DS:PreCash\n"); }
    PreCashGroundModel();
 
 #ifdef _soft
    CreateChRenderList();
 #endif
 
-   drawSceneStage = "SkyPlane";
+   if (XR::StereoActive()) { drawSceneStage = "SkyPlane"; PrintLog("DS:SkyPlane\n"); }
    RenderSkyPlane();
 
    cb = (float)cos(CameraBeta);
    sb = (float)sin(CameraBeta);
 
-   drawSceneStage = "Ground";
+   if (XR::StereoActive()) { drawSceneStage = "Ground"; PrintLog("DS:Ground\n"); }
    RenderGround();
 
-   drawSceneStage = "Models";
+   if (XR::StereoActive()) { drawSceneStage = "Models"; PrintLog("DS:Models\n"); }
    RenderModelsList();
 
-   drawSceneStage = "HWPosts";
+   if (XR::StereoActive()) { drawSceneStage = "HWPosts"; PrintLog("DS:HWPosts\n"); }
    Render3DHardwarePosts();
 
-   drawSceneStage = "Water";
+   if (XR::StereoActive()) { drawSceneStage = "Water"; PrintLog("DS:Water\n"); }
    if (NeedWater) RenderWater();
 
-   drawSceneStage = "Elements";
+   if (XR::StereoActive()) { drawSceneStage = "Elements"; PrintLog("DS:Elements\n"); }
    RenderElements();
    drawSceneStage = "done";
+   if (XR::StereoActive()) PrintLog("DS:done\n");
 }
 
 
@@ -482,17 +514,23 @@ void ScanLifeForms()
 
 void DrawPostObjects()
 {
+  // SOURCEPORT: no-op in all builds — was PrintLog spam during VR debug.
+#define XRLOG(s) ((void)0)
+  // SOURCEPORT: when true, skip all state-advancing code (timers, weapon FTime) so
+  // the second-eye HUD pass is a pure render with no double-tick side effects.
+  extern bool g_vrSecondEyePass;
   float b;
   TWeapon* wptr = &Weapon;
 
-  Hardware_ZBuffer(FALSE);
+  XRLOG("start"); Hardware_ZBuffer(FALSE); XRLOG("ZBuf");
 
-  if (DemoPoint.DemoTime) goto SKIPWEAPON;
+  if (DemoPoint.DemoTime) { XRLOG("skipDemoTime"); goto SKIPWEAPON; }
 
-  GlassL = 0;
+  XRLOG("GlassL"); GlassL = 0;
   if (BINMODE) {
+   XRLOG("BinMode");
    d3dSetHUDMode(TRUE);  // SOURCEPORT: HUD mode — binoculars frame needs opaque black pixels
-   RenderNearModel(Binocular, 0, 0, 2*(216-72 * BinocularPower), 192,  0,0);
+   RenderNearModel(Binocular, 0, 0, 2*(216-72 * BinocularPower), 192,  0,0); XRLOG("Binoc");
 #ifdef _opengl
    // SOURCEPORT: the binocular model was designed for 4:3.  In widescreen the
    // Hor+ FOV leaves the extra horizontal area uncovered — fill sides with black.
@@ -515,32 +553,60 @@ void DrawPostObjects()
 
   if (!TrophyMode)
    if (!KeyboardState[VK_CAPITAL] & 1) {
+    XRLOG("WindStart");
     BOOL lr = LOWRESTX;
     LOWRESTX = TRUE;
-    VideoCX = WinW / 5;
-    VideoCY = WinH - (WinH / 3);
-	VideoCY = WinH - (WinH * 10 / 23);
+    // SOURCEPORT: save caller's VideoCX/CY so the wind/compass section doesn't clobber
+    // the per-eye principal point that the weapon render needs.  In VR the caller sets
+    // VideoCX = eyeVCXFrac * WinW; restoring WinW/2 would create divergent parallax and
+    // cause double-weapon.  On flat screen callerCX == WinW/2 anyway, so no change.
+    int callerCX = VideoCX, callerCY = VideoCY;
+    // SOURCEPORT: place wind/compass at a fixed angular offset from the
+    // per-eye principal point so they appear at the same position in both
+    // flat-screen and VR.
+    //
+    // Original flat-screen 640×480 (callerCX=320, CameraW=CameraH=400):
+    //   Wind:    VideoCX = WinW/5    = 128  → 0.48 rad (27.5°) LEFT  of forward
+    //   Compass: VideoCX = WinW-WinW/5=512  → 0.48 rad (27.5°) RIGHT of forward
+    //   Both:    VideoCY = WinH*13/23= 272  → 0.08 rad ( 4.5°) BELOW forward
+    //
+    // In VR (Quest 3 left eye: callerCX≈1136, CameraW≈827) the old WinW/5
+    // formula placed the wind at 53° left — outside the FOV.  Using the
+    // angular constants keeps both indicators at 27.5° left/right of the
+    // forward direction regardless of eye or resolution.
+    int hudCY = callerCY + (int)(0.08f * CameraH);
+	VideoCX = callerCX - (int)(0.48f * CameraW);   // wind: left of forward
+	VideoCY = hudCY;
+	XRLOG("WindMorph");
 	CreateMorphedModel(WindModel.mptr, &WindModel.Animation[0], (int)(Wind.speed*50.f), 1.0);
     d3dSetHUDMode(TRUE);  // SOURCEPORT: HUD mode — wind/compass need opaque black pixels
+    XRLOG("WindRender");
     RenderNearModel(WindModel.mptr, -10, -37, -96, 192,  CameraAlpha-Wind.alpha,0);
+    XRLOG("WindDone");
 
-	VideoCX = WinW - (WinW / 5);
-	VideoCY = WinH - (WinH * 10 / 23);
+	VideoCX = callerCX + (int)(0.48f * CameraW);   // compass: right of forward
+	VideoCY = hudCY;
+	XRLOG("CompassRender");
     RenderNearModel(CompasModel, +8, -38, -96, 192,  CameraAlpha,0);
+    XRLOG("CompassDone");
     d3dSetHUDMode(FALSE);
 
-    VideoCX = WinW / 2;
-    VideoCY = WinH / 2;
+    // SOURCEPORT: restore caller's principal point (not WinW/2) so subsequent weapon
+    // render uses the correct per-eye VideoCX/CY.
+    VideoCX = callerCX;
+    VideoCY = callerCY;
     LOWRESTX = lr;
   }
 
 SKIPWIND:  
 
   
-  if (wptr->state == 0) goto SKIPWEAPON;
+  XRLOG("WpnStateCheck");
+  if (wptr->state == 0) { XRLOG("WpnSkip"); goto SKIPWEAPON; }
 
   MapMode = FALSE;
   
+  if (!g_vrSecondEyePass) {
   wptr->shakel+= TimeDt / 10000.f;
   if (wptr->shakel > 4.0f) wptr->shakel = 4.0f;
 
@@ -609,12 +675,15 @@ SKIPWIND:
 
   if (!ShotsLeft[CurrentWeapon]) {
 	  HideWeapon();
-	  for (int w=0; w<10; w++) 
+	  for (int w=0; w<10; w++)
 		  if (ShotsLeft[w]) { TargetWeapon=w; break; }
   }
-  
-  CreateMorphedModel(wptr->chinfo[CurrentWeapon].mptr, 
+  } // end if (!g_vrSecondEyePass) — weapon state machine
+
+  XRLOG("WpnMorph");
+  CreateMorphedModel(wptr->chinfo[CurrentWeapon].mptr,
 	                &wptr->chinfo[CurrentWeapon].Animation[wptr->state-1], wptr->FTime, 1.0);
+  XRLOG("WpnMorphDone");
 
   b = (float)sin((float)RealTime / 300.f) / 100.f;     
   wpnDAlpha = wptr->shakel * (float)sin((float)RealTime / 300.f+pi/2) / 200.f;
@@ -626,7 +695,8 @@ SKIPWIND:
 
    Vector3d v = Sun3dPos;
    Sun3dPos = RotateVector(Sun3dPos);  
-   CalcNormals(wptr->chinfo[CurrentWeapon].mptr, wptr->normals);
+   XRLOG("CalcNormals");
+   CalcNormals(wptr->chinfo[CurrentWeapon].mptr, wptr->normals); XRLOG("CalcNormalsDone");
 
 
    if (GOUR)
@@ -650,8 +720,9 @@ SKIPWIND:
    extern RendererGL* g_glRenderer;
    if (g_glRenderer) g_glRenderer->SetStencilMode(1); // write stencil=1 at weapon pixels
 #endif
+   XRLOG("WpnRender");
    RenderNearModel(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, wpnlight,
-                   -wpnDAlpha, -wpnDBeta + wpnb);
+                   -wpnDAlpha, -wpnDBeta + wpnb); XRLOG("WpnRenderDone");
 #ifdef _opengl
    if (g_glRenderer) g_glRenderer->SetStencilMode(0); // stop marking
 #endif
@@ -680,16 +751,16 @@ SKIPWIND:
 	  
 
 SKIPWEAPON:
-
-  if (ChCallTime) {
-   ChCallTime-=TimeDt;
-   if (ChCallTime<0) ChCallTime=0;
-   DrawPicture(WinW - 10 - DinoInfo[ AI_to_CIndex[TargetCall] ].CallIcon.W, 7, 
-	           DinoInfo[ AI_to_CIndex[TargetCall] ].CallIcon);
+  XRLOG("SkipWeapon");
+  if (ChCallTime) { XRLOG("ChCallTime");
+   if (!g_vrSecondEyePass) { ChCallTime-=TimeDt; if (ChCallTime<0) ChCallTime=0; }
+   DrawPicture(WinW - 10 - DinoInfo[ AI_to_CIndex[TargetCall] ].CallIcon.W, 7,
+	           DinoInfo[ AI_to_CIndex[TargetCall] ].CallIcon); XRLOG("ChCallDone");
   }
 
-  Hardware_ZBuffer(TRUE);
+  XRLOG("ZBufTrue"); Hardware_ZBuffer(TRUE);
 
+  XRLOG("BulletPics");
   if (Weapon.state) {
   int y0 = 5;
   if (AmmoMag[CurrentWeapon]) {
@@ -732,10 +803,9 @@ SKIPWEAPON:
         DrawTrophyText(x0, y0);
 
 		if (TrophyTime) {
-			TrophyTime-=TimeDt;
-			if (TrophyTime<0) {
-				TrophyTime=0;
-				TrophyBody = -1;
+			if (!g_vrSecondEyePass) {
+				TrophyTime-=TimeDt;
+				if (TrophyTime<0) { TrophyTime=0; TrophyBody = -1; }
 			}
 		}
 	  }	
@@ -1146,7 +1216,13 @@ void ProcessPlayerMovement()
    int mouseDX = ms.x - VideoCX;
    int mouseDY = ms.y - VideoCY;
 #elif defined(_opengl)
-   // SOURCEPORT: relative mouse motion accumulated from SDL_MOUSEMOTION events
+   // SOURCEPORT: relative mouse motion accumulated from SDL_MOUSEMOTION events.
+   // In VR mode the HMD drives head orientation absolutely, so raw mouse/stick X
+   // is redirected to g_vrBodyYaw (locomotion turn) instead of being discarded.
+   if (XR::StereoActive()) {
+       g_vrBodyYaw += (float)g_sdlMouseDX * (OptMsSens+64) / 600.f / 192.f;
+       g_sdlMouseDX = 0; g_sdlMouseDY = 0;
+   }
    int mouseDX = g_sdlMouseDX;
    int mouseDY = REVERSEMS ? -g_sdlMouseDY : g_sdlMouseDY;
    g_sdlMouseDX = 0;
@@ -1222,11 +1298,26 @@ void ProcessPlayerMovement()
 	   AddVoicev(fxJump.length, fxJump.lpData, 256);
      }
 
-//=========  rotation =========//   
-   if (KeyFlags & kfRight)  PlayerAlpha+=DeltaT*1.5f;
-   if (KeyFlags & kfLeft )  PlayerAlpha-=DeltaT*1.5f;
-   if (KeyFlags & kfLookUp) PlayerBeta-=DeltaT;
-   if (KeyFlags & kfLookDn) PlayerBeta+=DeltaT;
+//=========  rotation =========//
+#ifdef _opengl
+   if (XR::StereoActive()) {
+       // SOURCEPORT: HMD yaw is the head orientation in the reference space.
+       // g_vrBodyYaw accumulates locomotion turns (right stick + turn keys) so
+       // the player can rotate their body independently of where they look.
+       if (KeyFlags & kfRight)  g_vrBodyYaw += DeltaT*1.5f;
+       if (KeyFlags & kfLeft )  g_vrBodyYaw -= DeltaT*1.5f;
+       float xrYaw, xrPitch;
+       XR::GetHeadOrientation(xrYaw, xrPitch);
+       PlayerAlpha = g_vrBodyYaw + xrYaw;
+       PlayerBeta  = xrPitch;
+   } else
+#endif
+   {
+       if (KeyFlags & kfRight)  PlayerAlpha+=DeltaT*1.5f;
+       if (KeyFlags & kfLeft )  PlayerAlpha-=DeltaT*1.5f;
+       if (KeyFlags & kfLookUp) PlayerBeta-=DeltaT;
+       if (KeyFlags & kfLookDn) PlayerBeta+=DeltaT;
+   }
 
 
 //========= movement ==========//
@@ -1817,26 +1908,172 @@ void ProcessGame()
     // wall-clock rate while the sim itself remains deterministic.
     TimeDt = frameDt;
 
-	DrawScene();
+    // SOURCEPORT: stereo VR render or flat-screen render.
+#ifdef _opengl
+    if (XR::StereoActive()) {
+        // Save all per-frame globals so they can be restored for the companion
+        // window render and for HUD passes after the eye loop.
+        int   savedVCX  = VideoCX, savedVCY  = VideoCY;
+        float savedCW   = CameraW, savedCH   = CameraH, savedFOVK = FOVK;
+        int   savedWinW = WinW,    savedWinH = WinH;
+        int   savedWinEX = WinEX,  savedWinEY = WinEY;
+
+        // SOURCEPORT: render each eye at the HMD's native eye resolution so the
+        // CPU-side geometry projection matches the full VR FOV and the compositor
+        // receives full-res pixels instead of an upsampled window-size image.
+        WinW = (int)XR::EyeWidth();
+        WinH = (int)XR::EyeHeight();
+        // SOURCEPORT: WinEX/WinEY are the CPU-side screen-edge clip bounds used by
+        // terrain and model culling (SetVideoMode sets them to WinW-1/WinH-1).
+        // Without updating them here the cullers use flat-screen bounds (e.g. WinEY=959)
+        // against eye-space projected coordinates (WinH=1920), culling every terrain
+        // vertex with scry > 959 as "below screen" and leaving the bottom ~half grey.
+        WinEX = WinW - 1;
+        WinEY = WinH - 1;
+
+        for (int xrEye = 0; xrEye < 2; ++xrEye) {
+            unsigned int fbo = XR::AcquireEyeImage(xrEye);
+            if (!fbo) continue;
+
+            // Per-eye camera: HMD orientation + body yaw + IPD offset + asymmetric FOV.
+            float eyeAlpha, eyeBeta, eyeDX, eyeDY, eyeDZ, eyeCW, eyeCH;
+            float eyeVCXFrac, eyeVCYFrac, eyeFovkUnused;
+            XR::GetEyeCameraSetup(xrEye,
+                eyeAlpha, eyeBeta,
+                eyeDX, eyeDY, eyeDZ,
+                eyeCW, eyeCH, eyeFovkUnused,
+                eyeVCXFrac, eyeVCYFrac);
+            // SOURCEPORT: add locomotion body yaw so thumbstick turning rotates the world.
+            CameraAlpha = eyeAlpha + g_vrBodyYaw;
+            CameraBeta  = eyeBeta;
+            ca = cosf(CameraAlpha); sa = sinf(CameraAlpha);
+            cb = cosf(CameraBeta);  sb = sinf(CameraBeta);
+            CameraX = saveX + eyeDX;
+            CameraY = saveY + eyeDY;
+            CameraZ = saveZ + eyeDZ;
+
+            // eyeCW/eyeCH are focal lengths in eye-image pixels (EyeWidth/EyeHeight units).
+            // Now that WinW/WinH == EyeWidth/EyeHeight, no rescaling is needed.
+            VideoCX = (int)(eyeVCXFrac * (float)WinW + 0.5f);
+            VideoCY = (int)(eyeVCYFrac * (float)WinH + 0.5f);
+            CameraW = eyeCW;
+            CameraH = eyeCH;
+            FOVK    = CameraW / ((float)VideoCX * 1.25f);
+
+            // Bind the XR eye FBO; GL viewport maps CPU screen coords to eye pixels.
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo);
+            glViewport(0, 0, (GLsizei)WinW, (GLsizei)WinH);
+            {
+                float R = (float)WinW, B = (float)WinH;
+                const float N = 0.f, F = 0.25f;
+                float proj[16] = {
+                     2.f/R, 0.f,    0.f,         0.f,
+                     0.f,  -2.f/B,  0.f,         0.f,
+                     0.f,   0.f,    2.f/(F-N),   0.f,
+                    -1.f,   1.f,  -(F+N)/(F-N),  1.f
+                };
+                d3dUpdateProjection(proj);
+            }
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            // SOURCEPORT: disable alpha writes for the entire eye render.
+            // The Meta Quest compositor inspects the FBO alpha channel even in
+            // XR_ENVIRONMENT_BLEND_MODE_OPAQUE.  Semi-transparent faces (sfTransparent
+            // glass objects, GlassL distance-fade) set color.a < 1.0 and the blend
+            // equation  out.a = src_alpha * src.a + (1-src_alpha) * dst.a  then drives
+            // the FBO alpha below 1.0 at those pixels.  The compositor sees alpha < 1.0
+            // → composites the passthrough camera through the rendered image → "world
+            // models showing up transparent".  After the clear all FBO pixels have
+            // alpha = 1.0; blocking further alpha writes keeps them at 1.0 throughout.
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
+            DrawScene();
+
+            // SOURCEPORT: HUD/weapon pass — rendered per-eye so the headset sees it.
+            // Reset to head-centre (no IPD, no asymmetric principal point) so 2D HUD
+            // geometry projects identically in both eyes. VideoCX = WinW/2 is critical:
+            // Quest 3 has an asymmetric principal point (~0.62 of width for left eye) so
+            // leaving the per-eye VideoCX would place the weapon at different screen-x
+            // positions in each eye, causing double-image.
+            // ShowVideo() is intentionally excluded: it calls d3dClearBuffers() /
+            // g_glRenderer->EndFrame() which would clear/swap the eye FBO before release.
+            // g_vrSecondEyePass gates state-advancing code (timers, weapon FTime) in
+            // DrawPostObjects so state only advances once per frame (on eye 0).
+            // SOURCEPORT: HUD camera — head-centre position/orientation so 2D overlays
+            // are not offset by IPD. We keep the per-eye VideoCX/CameraW/CameraH so the
+            // weapon projects onto the eye's own principal point (the forward direction
+            // for that optic). Quest 3 has an asymmetric principal point (~62%/38% of
+            // EyeWidth). Using WinW/2 instead would place the weapon ~220 px off-axis in
+            // each eye with opposite sign → 30° divergent parallax → unfusable double image.
+            // Per-eye values keep angle=0 (forward) in both eyes → zero parallax → fused.
+            CameraAlpha = saveA; CameraBeta  = saveB;
+            CameraX = saveX; CameraY = saveY; CameraZ = saveZ;
+            ca = cosf(CameraAlpha); sa = sinf(CameraAlpha);
+            cb = cosf(CameraBeta);  sb = sinf(CameraBeta);
+            // VideoCX/CameraW/CameraH/FOVK intentionally kept as per-eye values.
+            g_vrSecondEyePass = (xrEye != 0);
+            if (!TrophyMode) if (MapMode) DrawHMap();
+            DrawPostObjects();
+            ShowControlElements();
+            g_vrSecondEyePass = false;
+
+            // SOURCEPORT: restore full color mask before releasing the eye image.
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            XR::ReleaseEyeImage(xrEye);
+        }
+
+        // Restore flat-screen state for companion window.
+        WinW = savedWinW; WinH = savedWinH;
+        WinEX = savedWinEX; WinEY = savedWinEY;
+        CameraAlpha = saveA; CameraBeta = saveB;
+        CameraX = saveX; CameraY = saveY; CameraZ = saveZ;
+        CameraW = savedCW; CameraH = savedCH;
+        FOVK    = savedFOVK;
+        VideoCX = savedVCX; VideoCY = savedVCY;
+        ca = cosf(saveA); sa = sinf(saveA);
+        cb = cosf(saveB); sb = sinf(saveB);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, WinW, WinH);
+        {
+            float R = (float)WinW, B = (float)WinH;
+            const float N = 0.f, F = 0.25f;
+            float proj[16] = {
+                 2.f/R, 0.f,    0.f,         0.f,
+                 0.f,  -2.f/B,  0.f,         0.f,
+                 0.f,   0.f,    2.f/(F-N),   0.f,
+                -1.f,   1.f,  -(F+N)/(F-N),  1.f
+            };
+            d3dUpdateProjection(proj);
+        }
+        // Companion window: scene only (HUD on monitor is rendered below with the rest).
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        DrawScene();
+    } else
+#endif
+    {
+        DrawScene();
+    }
 
     // Restore authoritative sim state so the next ProcessControls /
     // physics tick starts from the un-interpolated pose.
     CameraX = saveX; CameraY = saveY; CameraZ = saveZ;
     CameraAlpha = saveA; CameraBeta = saveB;
 
-    drawSceneStage = "DrawHMap"; // SOURCEPORT: debug
+    drawSceneStage = "DrawHMap";
 	if (!TrophyMode)
      if (MapMode) DrawHMap();
 
-    drawSceneStage = "PostObj"; // SOURCEPORT: debug
+    drawSceneStage = "PostObj";
+    // SOURCEPORT: in VR the eye-0 HUD pass already advanced weapon/timer state;
+    // suppress the second advance here so state only ticks once per frame.
+    if (XR::StereoActive()) g_vrSecondEyePass = true;
     DrawPostObjects();
+    g_vrSecondEyePass = false;
 
-    drawSceneStage = "Controls"; // SOURCEPORT: debug
+    drawSceneStage = "Controls";
     ShowControlElements();
 
-    drawSceneStage = "ShowVideo"; // SOURCEPORT: debug
+    drawSceneStage = "ShowVideo";
     ShowVideo();
-    drawSceneStage = "frameDone"; // SOURCEPORT: debug
+    drawSceneStage = "frameDone";
 }
 
 
@@ -2248,6 +2485,7 @@ int main(int argc, char* argv[])
             // SOURCEPORT: sample analog sticks + triggers once per poll pass,
             // before ProcessGame() reads KeyboardState / g_sdlMouseDX[Y].
             Gamepad::Sample((float)TimeDt);
+            // XR::SampleVR() is called after BeginFrame() so PollControllers() runs first.
             if (!huntDone) {
                 // SOURCEPORT: dev hot reload — polls registered files (shaders,
                 // _res.txt, texture overrides) ~3×/sec, fires callbacks on change.
@@ -2261,7 +2499,17 @@ int main(int argc, char* argv[])
                 // then drives xrBeginSession / xrEndSession in response to
                 // runtime state changes. No-op when VR is unavailable.
                 XR::PollEvents();
-                if (blActive) ProcessGame();
+                if (blActive) {
+                    // SOURCEPORT: drive the OpenXR frame loop — xrWaitFrame
+                    // paces us, xrBeginFrame opens the submission window, and
+                    // xrLocateViews fetches per-eye pose+FOV for this frame.
+                    // EndFrame() submits an empty layer (step 5); step 6 will
+                    // attach the rendered eye images to a projection layer.
+                    XR::BeginFrame();
+                    XR::SampleVR();  // SOURCEPORT: moved here so PollControllers() in BeginFrame has fresh state
+                    ProcessGame();
+                    XR::EndFrame();
+                }
                 else SDL_Delay(100);
                 // SOURCEPORT: ExitTime expiry sets this instead of DoHalt
                 if (g_returnToMenus) {
