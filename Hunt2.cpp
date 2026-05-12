@@ -2134,7 +2134,7 @@ void ProcessGame()
                     // Create circular vignette mask: black out everything outside a circle
                     float centerX = (float)VideoCX;
                     float centerY = (float)VideoCY;
-                    float radius = (float)WinH * 0.35f;  // Binocular field of view (circular)
+                    float radius = (float)WinH * 0.45f;  // Binocular field of view (circular)
 
                     glDisable(GL_DEPTH_TEST);
                     glEnable(GL_BLEND);
