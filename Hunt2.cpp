@@ -2128,29 +2128,31 @@ void ProcessGame()
             g_vrSecondEyePass = false;
 
             // SOURCEPORT: VR binoculars vignette — black out periphery except circular center
-            if (BINMODE && g_glRenderer) {
-                // Create circular vignette mask: black out everything outside a circle
-                // Use stencil or render a circular black mask with soft edges
-                float centerX = (float)VideoCX;
-                float centerY = (float)VideoCY;
-                float radius = (float)WinH * 0.35f;  // Binocular field of view (circular)
+            if (BINMODE) {
+                extern RendererGL* g_glRenderer;
+                if (g_glRenderer) {
+                    // Create circular vignette mask: black out everything outside a circle
+                    float centerX = (float)VideoCX;
+                    float centerY = (float)VideoCY;
+                    float radius = (float)WinH * 0.35f;  // Binocular field of view (circular)
 
-                glDisable(GL_DEPTH_TEST);
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glDisable(GL_DEPTH_TEST);
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-                // Draw black rectangles around the circular binocular area
-                // Top bar
-                g_glRenderer->FillRect(0, 0, WinW, (int)(centerY - radius), 0xFF000000u);
-                // Bottom bar
-                g_glRenderer->FillRect(0, (int)(centerY + radius), WinW, WinH - (int)(centerY + radius), 0xFF000000u);
-                // Left bar
-                g_glRenderer->FillRect(0, (int)(centerY - radius), (int)(centerX - radius), (int)(2 * radius), 0xFF000000u);
-                // Right bar
-                g_glRenderer->FillRect((int)(centerX + radius), (int)(centerY - radius),
-                                      WinW - (int)(centerX + radius), (int)(2 * radius), 0xFF000000u);
+                    // Draw black rectangles around the circular binocular area
+                    // Top bar
+                    g_glRenderer->FillRect(0, 0, WinW, (int)(centerY - radius), 0xFF000000u);
+                    // Bottom bar
+                    g_glRenderer->FillRect(0, (int)(centerY + radius), WinW, WinH - (int)(centerY + radius), 0xFF000000u);
+                    // Left bar
+                    g_glRenderer->FillRect(0, (int)(centerY - radius), (int)(centerX - radius), (int)(2 * radius), 0xFF000000u);
+                    // Right bar
+                    g_glRenderer->FillRect((int)(centerX + radius), (int)(centerY - radius),
+                                          WinW - (int)(centerX + radius), (int)(2 * radius), 0xFF000000u);
 
-                glEnable(GL_DEPTH_TEST);
+                    glEnable(GL_DEPTH_TEST);
+                }
             }
 
             // SOURCEPORT: blit eye 1 to the SDL companion window while the swapchain
