@@ -2658,13 +2658,13 @@ void Render_LifeInfo(int li)
 	if (OptSys) sprintf(t,"Weight: %3.2ft ", DinoInfo[ctype].Mass * scale * scale / 0.907);
 	else        sprintf(t,"Weight: %3.2fT ", DinoInfo[ctype].Mass * scale * scale);
 
-	ddTextOut(x, y+20, t, 0x0000b000);
+	ddTextOut(x, y+40, t, 0x0000b000);
 
 	int R  = (int)(VectorLength( SubVectors(Characters[li].pos, PlayerPos) )*3 / 64.f);
 	if (OptSys) sprintf(t,"Distance: %dft ", R);
 	else        sprintf(t,"Distance: %dm  ", R/3);
 
-	ddTextOut(x, y+40, t, 0x0000b000);
+	ddTextOut(x, y+80, t, 0x0000b000);
     
 	SmallFont = FALSE;
 	//SelectObject(hdcMain, oldfont);	
@@ -2711,7 +2711,7 @@ void ShowControlElements()
 	  wsprintf(buf,"Preparing for evacuation...");
       ddTextOut(VideoCX - GetTextW(hdcCMain, buf)/2, y, buf, 0x0060C0D0);
 	  wsprintf(buf,"%d seconds left.", 1 + ExitTime / 1000);
-	  ddTextOut(VideoCX - GetTextW(hdcCMain, buf)/2, y + 24, buf, 0x0060C0D0);
+	  ddTextOut(VideoCX - GetTextW(hdcCMain, buf)/2, y + 50, buf, 0x0060C0D0);
   }  
 }
 
