@@ -642,32 +642,18 @@ void RendererGL::BeginFrame() {
     // same screen-space projection to render pre-transformed vertices correctly.
     std::memcpy(m_projMatrix, proj, sizeof(proj));
 
-    // SOURCEPORT: flatscreen supersampling — create/update FBO if OptSSFactor changed
-    extern int OptSSFactor;
-    float newScale = OptSSFactor / 100.0f;
-    int ssaWidth  = (int)(WinW * newScale);
-    int ssaHeight = (int)(WinH * newScale);
-    if (OptSSFactor != 100 && (m_ssaScale != newScale || m_ssaWidth != ssaWidth || m_ssaHeight != ssaHeight)) {
-        CreateSSAFramebuffer(ssaWidth, ssaHeight);
-        m_ssaScale = newScale;
-    }
-
-    // Bind supersampling FBO if active, otherwise ensure we're rendering to backbuffer
-    if (m_ssaFBO) {
-        BindSSAFramebuffer();
-    } else {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(0, 0, WinW, WinH);
-    }
+    // SOURCEPORT: flatscreen supersampling disabled — causes black screen rendering
+    // FBO-based rendering pipeline needs architectural redesign. Use VR supersampling instead.
+    // Future: implement via compute shader downsampling or native resolution scaling.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, WinW, WinH);
 
     m_frameCounter++;
 }
 
 void RendererGL::EndFrame() {
-    // SOURCEPORT: if supersampling is active, downscale FBO to backbuffer before swap
-    if (m_ssaFBO) {
-        UnbindAndDownscaleSSA();
-    }
+    // SOURCEPORT: flatscreen supersampling disabled due to FBO rendering issues
+    // VR supersampling available via XR.cpp eye FBO scaling instead
     SDL_GL_SwapWindow(m_window);
 }
 
