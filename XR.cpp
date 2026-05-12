@@ -58,8 +58,13 @@ typedef struct XrSpace_T*     XrSpaceHandle;
 #define XR_MAX_SYSTEM_NAME_SIZE                256
 #define XR_MAX_RESULT_STRING_SIZE              64
 
-#define XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT  0x00000001  // spec: XrFlags64 bit 0
-#define XR_SWAPCHAIN_USAGE_SAMPLED_BIT           0x00000020  // spec: XrFlags64 bit 5
+#define XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT         0x00000001  // spec: XrFlags64 bit 0
+#define XR_SWAPCHAIN_USAGE_SAMPLED_BIT                  0x00000020  // spec: XrFlags64 bit 5
+#define XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT 0x00000002  // XR_KHR_composition_layer_depth
+
+// GL depth formats for depth swapchain (XR_KHR_composition_layer_depth)
+#define XR_GL_DEPTH24_STENCIL8   ((int64_t)0x88F0)   // GL_DEPTH24_STENCIL8
+#define XR_GL_DEPTH_COMPONENT24  ((int64_t)0x81A6)   // GL_DEPTH_COMPONENT24 (fallback)
 
 #define XR_VIEW_STATE_ORIENTATION_VALID_BIT      0x00000001
 #define XR_VIEW_STATE_POSITION_VALID_BIT         0x00000002
@@ -123,6 +128,8 @@ typedef enum XrStructureType {
     XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR    = 1000023000,
     XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR           = 1000023004,
     XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR     = 1000023005,
+    // XR_KHR_composition_layer_depth
+    XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR     = 1000010001,
 } XrStructureType;
 
 typedef enum XrFormFactor {
@@ -424,6 +431,19 @@ typedef struct XrCompositionLayerQuad {
     XrExtent2Df         size;
 } XrCompositionLayerQuad;
 
+// XR_KHR_composition_layer_depth — chained to XrCompositionLayerProjectionView.next.
+// Tells the compositor the depth range so ATW/ASW can correctly avoid warping
+// near-plane pixels (weapon/HUD) during frame drops.
+typedef struct XrCompositionLayerDepthInfoKHR {
+    XrStructureType     type;
+    const void*         next;
+    XrSwapchainSubImage subImage;
+    float               minDepth;   // depth buffer value → nearZ distance
+    float               maxDepth;   // depth buffer value → farZ distance
+    float               nearZ;      // metres; corresponds to minDepth
+    float               farZ;       // metres; corresponds to maxDepth
+} XrCompositionLayerDepthInfoKHR;
+
 // xrEndFrame receives an array of pointers to XrCompositionLayerBaseHeader.
 // Step 5 submitted layerCount=0; step 6 submits a projection layer.
 typedef struct XrFrameEndInfo {
@@ -670,9 +690,24 @@ namespace {
     // GL texture names written by xrEnumerateSwapchainImages
     XrSwapchainImageOpenGLKHR g_scImages[2][MAX_SC_IMAGES] = {};
 
-    // One FBO per swapchain image per eye; depth renderbuffer shared per eye
+    // One FBO per swapchain image per eye; depth renderbuffer shared per eye (fallback).
     GLuint g_eyeFBO[2][MAX_SC_IMAGES] = {};
     GLuint g_eyeDepthRBO[2]           = {};
+
+    // ── XR_KHR_composition_layer_depth: per-eye depth swapchains ─────────────
+    // When available, each frame we acquire a depth swapchain image, attach it
+    // to the rendering FBO instead of the RBO, submit it to the compositor so
+    // ATW/ASW can use per-pixel depth when synthesising missed frames.  Near-plane
+    // pixels (weapon, HUD — depth≈1.0) get near-zero reprojection correction, so
+    // the weapon stays head-locked instead of trailing during frame drops.
+    bool              g_depthLayerEnabled              = false;
+    XrSwapchainHandle g_depthSwapchain[2]              = {};
+    uint32_t          g_depthScLength[2]               = {};
+    XrSwapchainImageOpenGLKHR g_depthScImages[2][MAX_SC_IMAGES] = {};
+    uint32_t          g_depthImageIdx[2]               = {};
+    bool              g_depthImageAcquired[2]          = {};
+    XrCompositionLayerDepthInfoKHR g_depthInfo[2]      = {};
+    int64_t           g_depthScFormat                  = 0;   // chosen depth format
 
     // ── Step 5: reference space + per-frame view data ─────────────────────────
     XrSpaceHandle g_refSpace        = XR_NULL_HANDLE;
@@ -776,17 +811,25 @@ namespace {
                     g_eyeFBO[eye][i] = 0;
                 }
             }
-            // Delete depth renderbuffer
+            // Delete depth renderbuffer (fallback RBO)
             if (g_eyeDepthRBO[eye]) {
                 glDeleteRenderbuffers(1, &g_eyeDepthRBO[eye]);
                 g_eyeDepthRBO[eye] = 0;
             }
-            // Destroy swapchain
+            // Destroy color swapchain
             if (g_swapchain[eye] != XR_NULL_HANDLE && g_xrDestroySC) {
                 g_xrDestroySC(g_swapchain[eye]);
                 g_swapchain[eye] = XR_NULL_HANDLE;
             }
             g_scLength[eye] = 0;
+
+            // Destroy depth swapchain (XR_KHR_composition_layer_depth)
+            if (g_depthSwapchain[eye] != XR_NULL_HANDLE && g_xrDestroySC) {
+                g_xrDestroySC(g_depthSwapchain[eye]);
+                g_depthSwapchain[eye] = XR_NULL_HANDLE;
+            }
+            g_depthScLength[eye]      = 0;
+            g_depthImageAcquired[eye] = false;
         }
         g_eyeWidth  = 0;
         g_eyeHeight = 0;
@@ -841,6 +884,31 @@ namespace {
         return fmts[0];
     }
 
+    // Select the best GL depth format for the depth swapchain.
+    // Prefer GL_DEPTH24_STENCIL8 (matches the RBO, preserves stencil buffer for
+    // the weapon overlay masking). Fall back to GL_DEPTH_COMPONENT24 if absent.
+    // Returns 0 if no supported depth format is found (disables depth layer).
+    int64_t ChooseDepthSwapchainFormat() {
+        if (!g_xrEnumSCFmts || g_session == XR_NULL_HANDLE) return 0;
+
+        uint32_t count = 0;
+        g_xrEnumSCFmts(g_session, 0, &count, nullptr);
+        if (!count) return 0;
+
+        int64_t fmts[32] = {};
+        if (count > 32) count = 32;
+        g_xrEnumSCFmts(g_session, count, &count, fmts);
+
+        bool hasD24S8 = false, hasD24 = false;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (fmts[i] == XR_GL_DEPTH24_STENCIL8)  hasD24S8 = true;
+            if (fmts[i] == XR_GL_DEPTH_COMPONENT24) hasD24   = true;
+        }
+        if (hasD24S8) return XR_GL_DEPTH24_STENCIL8;
+        if (hasD24)   return XR_GL_DEPTH_COMPONENT24;
+        return 0;
+    }
+
     // Create swapchains for both eyes and build the FBO table.
     // Must be called with a current GL context after CreateSession succeeds.
     bool CreateSwapchains() {
@@ -887,8 +955,17 @@ namespace {
         // Use recommended size, but clamp to the per-view maximum so we
         // never request a swapchain larger than the runtime can allocate.
         g_eyeWidth  = vcViews[0].recommendedImageRectWidth;
-        if (g_eyeWidth  > vcViews[0].maxImageRectWidth)  g_eyeWidth  = vcViews[0].maxImageRectWidth;
         g_eyeHeight = vcViews[0].recommendedImageRectHeight;
+
+        // SOURCEPORT: supersampling disabled pending fix for rendering pipeline
+        // if (OptSSFactor != 100) {
+        //     float scale = OptSSFactor / 100.0f;
+        //     g_eyeWidth  = (uint32_t)(g_eyeWidth  * scale);
+        //     g_eyeHeight = (uint32_t)(g_eyeHeight * scale);
+        // }
+
+        // Clamp to hardware maximums
+        if (g_eyeWidth  > vcViews[0].maxImageRectWidth)  g_eyeWidth  = vcViews[0].maxImageRectWidth;
         if (g_eyeHeight > vcViews[0].maxImageRectHeight) g_eyeHeight = vcViews[0].maxImageRectHeight;
         // DIAG: if height > 2*width the runtime likely reported a bad value —
         // clamp to width so we don't create an absurdly tall swapchain.
@@ -955,22 +1032,29 @@ namespace {
                 glBindTexture(GL_TEXTURE_2D, 0);
             }
 
-            // Create one shared depth renderbuffer for this eye.
+            // Create one shared depth+stencil renderbuffer for this eye.
+            // SOURCEPORT: GL_DEPTH24_STENCIL8 (was GL_DEPTH_COMPONENT24) so that
+            // SetStencilMode(1/2) in DrawPostObjects can restrict PhongMap/EnvMap
+            // weapon overlays to weapon pixels only.  Without stencil the additive
+            // overlays paint on all terrain/sky pixels under the weapon model's
+            // screen-space triangles, producing a bright smear that trails when the
+            // head moves.
             glGenRenderbuffers(1, &g_eyeDepthRBO[eye]);
             glBindRenderbuffer(GL_RENDERBUFFER, g_eyeDepthRBO[eye]);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
                                   (GLsizei)g_eyeWidth, (GLsizei)g_eyeHeight);
             glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
             // Create one FBO per swapchain image, attaching the runtime's
-            // texture as colour and the shared depth renderbuffer.
+            // texture as colour and the shared depth+stencil renderbuffer.
             glGenFramebuffers((GLsizei)imgCount, g_eyeFBO[eye]);
             for (uint32_t i = 0; i < imgCount; ++i) {
                 glBindFramebuffer(GL_FRAMEBUFFER, g_eyeFBO[eye][i]);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                       GL_TEXTURE_2D,
                                       (GLuint)g_scImages[eye][i].image, 0);
-                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                // SOURCEPORT: attach as DEPTH_STENCIL (was DEPTH_ATTACHMENT only).
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                                          GL_RENDERBUFFER, g_eyeDepthRBO[eye]);
 
                 GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -985,6 +1069,67 @@ namespace {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
             LogFmt("XR: eye %d — %u swapchain images, FBOs ready.\n", eye, imgCount);
+        }
+
+        // ── Depth swapchains (XR_KHR_composition_layer_depth) ────────────────
+        // SOURCEPORT: create per-eye depth swapchains so the compositor receives
+        // actual per-pixel depth.  ATW/ASW then applies near-zero warp correction
+        // to weapon/HUD pixels (depth≈1.0 = near plane) while correctly warping
+        // world geometry (depth 0.0–1.0), eliminating the weapon trail on frame drops.
+        if (g_depthLayerEnabled) {
+            g_depthScFormat = ChooseDepthSwapchainFormat();
+            if (!g_depthScFormat) {
+                Log("XR: no suitable depth swapchain format — depth layer disabled.\n");
+                g_depthLayerEnabled = false;
+            }
+        }
+        if (g_depthLayerEnabled) {
+            bool depthOk = true;
+            for (int eye = 0; eye < 2 && depthOk; ++eye) {
+                XrSwapchainCreateInfo dsci = {};
+                dsci.type        = XR_TYPE_SWAPCHAIN_CREATE_INFO;
+                dsci.usageFlags  = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+                dsci.format      = g_depthScFormat;
+                dsci.sampleCount = 1;
+                dsci.width       = g_eyeWidth;
+                dsci.height      = g_eyeHeight;
+                dsci.faceCount   = 1;
+                dsci.arraySize   = 1;
+                dsci.mipCount    = 1;
+
+                XrResult dr = g_xrCreateSC(g_session, &dsci, &g_depthSwapchain[eye]);
+                if (dr != XR_SUCCESS) {
+                    LogResult("xrCreateSwapchain (depth)", dr);
+                    depthOk = false;
+                    break;
+                }
+
+                uint32_t dimgCount = 0;
+                g_xrEnumSCImages(g_depthSwapchain[eye], 0, &dimgCount, nullptr);
+                if (dimgCount > MAX_SC_IMAGES) dimgCount = MAX_SC_IMAGES;
+                g_depthScLength[eye] = dimgCount;
+
+                for (uint32_t i = 0; i < dimgCount; ++i) {
+                    g_depthScImages[eye][i].type = XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR;
+                    g_depthScImages[eye][i].next = nullptr;
+                }
+                g_xrEnumSCImages(g_depthSwapchain[eye], dimgCount, &dimgCount,
+                    reinterpret_cast<XrSwapchainImageBaseHeader*>(&g_depthScImages[eye][0]));
+
+                LogFmt("XR: eye %d depth swapchain — %u images, format 0x%llX.\n",
+                       eye, dimgCount, (unsigned long long)g_depthScFormat);
+            }
+            if (!depthOk) {
+                Log("XR: depth swapchain creation failed — depth layer disabled.\n");
+                g_depthLayerEnabled = false;
+                for (int eye = 0; eye < 2; ++eye) {
+                    if (g_depthSwapchain[eye] != XR_NULL_HANDLE && g_xrDestroySC) {
+                        g_xrDestroySC(g_depthSwapchain[eye]);
+                        g_depthSwapchain[eye] = XR_NULL_HANDLE;
+                    }
+                    g_depthScLength[eye] = 0;
+                }
+            }
         }
 
         // ── Menu quad swapchain ───────────────────────────────────────────────
@@ -1513,8 +1658,6 @@ bool Init()
         return false;
     }
 
-    const char* extensions[] = { "XR_KHR_opengl_enable" };
-
     XrApplicationInfo app = {};
     strncpy(app.applicationName, "OpenCarnivores", XR_MAX_APPLICATION_NAME_SIZE - 1);
     strncpy(app.engineName,      "OpenCarnivores", XR_MAX_ENGINE_NAME_SIZE - 1);
@@ -1523,12 +1666,31 @@ bool Init()
     app.apiVersion         = XR_CURRENT_API_VERSION;
 
     XrInstanceCreateInfo ci = {};
-    ci.type                    = XR_TYPE_INSTANCE_CREATE_INFO;
-    ci.applicationInfo         = app;
-    ci.enabledExtensionCount   = 1;
-    ci.enabledExtensionNames   = extensions;
+    ci.type            = XR_TYPE_INSTANCE_CREATE_INFO;
+    ci.applicationInfo = app;
 
+    // SOURCEPORT: try to enable XR_KHR_composition_layer_depth so depth-based
+    // reprojection (ATW/ASW) treats near-plane pixels (weapon/HUD) as head-locked,
+    // preventing them from trailing when the app drops frames.  Fall back to
+    // opengl_enable-only if the runtime doesn't support it.
+    const char* extsWithDepth[] = {
+        "XR_KHR_opengl_enable",
+        "XR_KHR_composition_layer_depth"
+    };
+    const char* extsBase[] = { "XR_KHR_opengl_enable" };
+
+    ci.enabledExtensionCount = 2;
+    ci.enabledExtensionNames = extsWithDepth;
     XrResult r = g_xrCreateInstance(&ci, &g_instance);
+    if (r == XR_SUCCESS) {
+        g_depthLayerEnabled = true;
+        Log("XR: XR_KHR_composition_layer_depth enabled.\n");
+    } else {
+        Log("XR: depth extension unavailable; retrying without it.\n");
+        ci.enabledExtensionCount = 1;
+        ci.enabledExtensionNames = extsBase;
+        r = g_xrCreateInstance(&ci, &g_instance);
+    }
     if (r != XR_SUCCESS) {
         LogFmt("XR: xrCreateInstance failed (%d) — likely no active runtime. Flat-screen only.\n", (int)r);
         FreeLibrary(g_loaderDll); g_loaderDll = nullptr;
@@ -1952,7 +2114,47 @@ unsigned int AcquireEyeImage(int eye)
     if (r != XR_SUCCESS) { LogResult("xrWaitSwapchainImage", r); return 0; }
 
     g_eyeImageAcquired[eye] = true;
-    return (unsigned int)g_eyeFBO[eye][g_eyeImageIdx[eye]];
+
+    // SOURCEPORT: XR_KHR_composition_layer_depth — acquire a depth swapchain image
+    // and attach it to the eye FBO so GL renders depth into the compositor's texture.
+    // We reattach the FBO each frame because the acquired image index may differ.
+    GLuint fbo = g_eyeFBO[eye][g_eyeImageIdx[eye]];
+    if (g_depthLayerEnabled && g_depthSwapchain[eye] != XR_NULL_HANDLE) {
+        XrResult dr = g_xrAcquireSCImage(g_depthSwapchain[eye], &ai, &g_depthImageIdx[eye]);
+        if (dr == XR_SUCCESS) {
+            XrSwapchainImageWaitInfo dwi = {};
+            dwi.type    = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
+            dwi.timeout = XR_INFINITE_DURATION;
+            dr = g_xrWaitSCImage(g_depthSwapchain[eye], &dwi);
+        }
+        if (dr == XR_SUCCESS) {
+            g_depthImageAcquired[eye] = true;
+            // Attach the depth texture to the FBO, replacing the fallback RBO.
+            // GL_DEPTH24_STENCIL8 → DEPTH_STENCIL_ATTACHMENT; DEPTH_COMPONENT24 → DEPTH_ATTACHMENT.
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            GLuint depthTex = (GLuint)g_depthScImages[eye][g_depthImageIdx[eye]].image;
+            if (g_depthScFormat == XR_GL_DEPTH24_STENCIL8) {
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                       GL_TEXTURE_2D, depthTex, 0);
+            } else {
+                // Depth-only format: attach depth texture + keep RBO for stencil.
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                       GL_TEXTURE_2D, depthTex, 0);
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
+                                          GL_RENDERBUFFER, g_eyeDepthRBO[eye]);
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        } else {
+            // Depth acquire failed: fall back to RBO for this frame, no depth submission.
+            g_depthImageAcquired[eye] = false;
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                                       GL_RENDERBUFFER, g_eyeDepthRBO[eye]);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+    }
+
+    return (unsigned int)fbo;
 }
 
 void ReleaseEyeImage(int eye, bool symmetricFov)
@@ -2010,6 +2212,35 @@ void ReleaseEyeImage(int eye, bool symmetricFov)
     g_projViews[eye].subImage.imageRect.extent.width  = (int32_t)g_eyeWidth;
     g_projViews[eye].subImage.imageRect.extent.height = (int32_t)g_eyeHeight;
 
+    // SOURCEPORT: XR_KHR_composition_layer_depth — build depth info and chain it
+    // to this eye's projection view via the OpenXR next-chain.
+    // Reversed depth convention: depth=1.0 → near plane, depth=0.0 → far plane.
+    // minDepth=1.0 maps to nearZ (weapon at ~0.01m); maxDepth=0.0 maps to farZ.
+    // The compositor uses this to apply near-zero ATW warp to near-plane pixels,
+    // so the weapon stays approximately head-locked when ASW synthesises frames.
+    g_projViews[eye].next = nullptr;
+    if (g_depthLayerEnabled && g_depthImageAcquired[eye]) {
+        g_depthInfo[eye] = {};
+        g_depthInfo[eye].type                           = XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR;
+        g_depthInfo[eye].subImage.swapchain             = g_depthSwapchain[eye];
+        g_depthInfo[eye].subImage.imageArrayIndex       = 0;
+        g_depthInfo[eye].subImage.imageRect.offset.x   = 0;
+        g_depthInfo[eye].subImage.imageRect.offset.y   = 0;
+        g_depthInfo[eye].subImage.imageRect.extent.width  = (int32_t)g_eyeWidth;
+        g_depthInfo[eye].subImage.imageRect.extent.height = (int32_t)g_eyeHeight;
+        g_depthInfo[eye].minDepth = 1.0f;      // reversed depth: 1.0 → nearZ
+        g_depthInfo[eye].maxDepth = 0.0f;      // reversed depth: 0.0 → farZ
+        g_depthInfo[eye].nearZ    = 0.01f;     // ~1.3 GU at 133 GU/m — near clip
+        g_depthInfo[eye].farZ     = 10000.0f;  // ~1,330,000 GU — beyond far terrain
+        g_projViews[eye].next = &g_depthInfo[eye];
+
+        // Release depth swapchain image back to the runtime.
+        XrSwapchainImageReleaseInfo dri = {};
+        dri.type = XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO;
+        g_xrReleaseSCImage(g_depthSwapchain[eye], &dri);
+        g_depthImageAcquired[eye] = false;
+    }
+
     g_projViewReady[eye] = true;
     // Only mark ready when BOTH eyes have been released this frame.
     // If either eye's AcquireEyeImage failed (returned 0 and was skipped by
@@ -2025,25 +2256,28 @@ void ReleaseEyeImage(int eye, bool symmetricFov)
 }
 
 void GetEyeCameraSetup(int eye,
-    float& alpha, float& beta,
+    float& alpha, float& beta, float& gamma,
     float& dx,    float& dy,    float& dz,
     float& cw,    float& ch,    float& fovk,
     float& vcxFrac, float& vcyFrac)
 {
     // Safe defaults if called without valid views.
     if (eye < 0 || eye > 1 || !g_viewsValid) {
-        alpha = beta = 0.f; dx = dy = dz = 0.f;
+        alpha = beta = gamma = 0.f; dx = dy = dz = 0.f;
         cw = ch = 400.f; fovk = 1.0f;
         vcxFrac = vcyFrac = 0.5f;
         return;
     }
 
-    // ── Orientation: quaternion → game yaw/pitch ──────────────────────────────
+    // ── Orientation: quaternion → game yaw/pitch/roll ────────────────────────
     // OpenXR uses Y-up, -Z forward, X-right (right-handed) — same as the game.
     // Game forward vector: (sin(α)*cos(β), -sin(β), -cos(α)*cos(β))
     // XR forward = R(q) * (0,0,-1) = [ -2(qx*qz+qw*qy),
     //                                    2(qw*qx-qy*qz),
     //                                   2(qx²+qy²)-1    ]
+    // XR right = R(q) * (1,0,0) = [ 1 - 2(qy²+qz²),
+    //                               2(qx*qy+qw*qz),
+    //                               2(qx*qz-qw*qy)  ]
     float qx = g_views[eye].pose.orientation.x;
     float qy = g_views[eye].pose.orientation.y;
     float qz = g_views[eye].pose.orientation.z;
@@ -2053,23 +2287,31 @@ void GetEyeCameraSetup(int eye,
     float fy =  2.f*(qw*qx - qy*qz);
     float fz =  2.f*(qx*qx + qy*qy) - 1.f;
 
+    float rx = 1.f - 2.f*(qy*qy + qz*qz);
+    float ry =  2.f*(qx*qy + qw*qz);
+
     alpha = atan2f(fx, -fz);                                    // yaw
     beta  = asinf(fmaxf(-1.f, fminf(1.f, -fy)));               // pitch (-fy: game y = -sin(β))
+    gamma = asinf(fmaxf(-1.f, fminf(1.f, ry)));                // roll: ry=0 for pure yaw, no spurious tilt
 
-    // ── Position: IPD offset from HMD center (metres → game units × 256) ──────
+    // ── Position: IPD offset from HMD center (metres → game units) ─────────────
     // Use the mid-point between both eye positions as the reference "head centre"
     // so the stereo separation is applied symmetrically around the game pos.
+    // World scale: HeadY=220 GU is standing eye-height ≈ 1.65 m → ~133 GU/m.
+    // The original 256 was ~2× too large, doubling the virtual IPD and making
+    // everything appear miniaturised with excessive near-object stereo disparity.
+    static constexpr float kGUperM = 220.f / 1.65f;  // ≈ 133
     float cx = (g_views[0].pose.position.x + g_views[1].pose.position.x) * 0.5f;
     float cy = (g_views[0].pose.position.y + g_views[1].pose.position.y) * 0.5f;
     float cz = (g_views[0].pose.position.z + g_views[1].pose.position.z) * 0.5f;
 
-    dx = (g_views[eye].pose.position.x - cx) * 256.f;
-    dy = (g_views[eye].pose.position.y - cy) * 256.f;
-    dz = (g_views[eye].pose.position.z - cz) * 256.f;
+    dx = (g_views[eye].pose.position.x - cx) * kGUperM;
+    dy = (g_views[eye].pose.position.y - cy) * kGUperM;
+    dz = (g_views[eye].pose.position.z - cz) * kGUperM;
     static int s_ipdLogCount = 0;
     if (s_ipdLogCount < 4) {
         ++s_ipdLogCount;
-        LogFmt("IPD eye%d: raw=(%.4f,%.4f,%.4f) ctr=(%.4f,%.4f,%.4f) d=(%.3f,%.3f,%.3f)\n",
+        LogFmt("IPD eye%d: raw=(%.4f,%.4f,%.4f) ctr=(%.4f,%.4f,%.4f) d_GU=(%.3f,%.3f,%.3f)\n",
                eye,
                g_views[eye].pose.position.x, g_views[eye].pose.position.y, g_views[eye].pose.position.z,
                cx, cy, cz,
@@ -2139,7 +2381,7 @@ bool GetEyeFov(int eye, float& left, float& right, float& up, float& down) {
 
 int64_t PredictedDisplayTime() { return (int64_t)g_predictedTime; }
 
-bool GetHeadOrientation(float& yaw, float& pitch)
+bool GetHeadOrientation(float& yaw, float& pitch, float& roll)
 {
     if (!g_viewsValid) return false;
 
@@ -2150,6 +2392,10 @@ bool GetHeadOrientation(float& yaw, float& pitch)
     //   fx = -2(qx·qz + qw·qy)
     //   fy =  2(qw·qx - qy·qz)
     //   fz =  2(qx²  + qy²) - 1
+    // Right vector = R(q) * (1,0,0):
+    //   rx = 1 - 2(qy² + qz²)
+    //   ry = 2(qx·qy + qw·qz)
+    //   rz = 2(qx·qz - qw·qy)
     float qx = g_views[0].pose.orientation.x;
     float qy = g_views[0].pose.orientation.y;
     float qz = g_views[0].pose.orientation.z;
@@ -2159,8 +2405,24 @@ bool GetHeadOrientation(float& yaw, float& pitch)
     float fy =  2.f*(qw*qx - qy*qz);
     float fz =  2.f*(qx*qx + qy*qy) - 1.f;
 
-    yaw   = atan2f(fx, -fz);                                    // game yaw
+    float rx = 1.f - 2.f*(qy*qy + qz*qz);
+    float ry =  2.f*(qx*qy + qw*qz);
+
+    yaw   = atan2f(fx, -fz);                                    // game yaw (matches GetEyeCameraSetup)
     pitch = asinf(fmaxf(-1.f, fminf(1.f, -fy)));               // game pitch
+    roll  = asinf(fmaxf(-1.f, fminf(1.f, ry)));                // game roll: ry=0 for pure yaw, no spurious tilt
+    return true;
+}
+
+// Returns the HMD centre position in OpenXR reference-space metres.
+// Use this for 6DoF roomscale tracking (leaning, crouching, walking).
+// Returns false if views are not yet valid.
+bool GetHeadCenterPos(float& x, float& y, float& z)
+{
+    if (!g_viewsValid) return false;
+    x = (g_views[0].pose.position.x + g_views[1].pose.position.x) * 0.5f;
+    y = (g_views[0].pose.position.y + g_views[1].pose.position.y) * 0.5f;
+    z = (g_views[0].pose.position.z + g_views[1].pose.position.z) * 0.5f;
     return true;
 }
 
@@ -2183,7 +2445,8 @@ unsigned int AcquireMenuImage()
     if (!g_xrAcquireSCImage || !g_xrWaitSCImage) return 0;
 
     // On first call after a ResetMenuQuadPose(), snap the quad position
-    // to 2 m in front of the player's current gaze direction.
+    // to 2.5 m in front of the player's current gaze direction.
+    // SOURCEPORT: increased from 2m for better VR comfort
     if (!g_menuPoseLocked && g_viewsValid) {
         float qx = g_views[0].pose.orientation.x;
         float qy = g_views[0].pose.orientation.y;
@@ -2198,9 +2461,9 @@ unsigned int AcquireMenuImage()
         float hx = g_views[0].pose.position.x;
         float hy = g_views[0].pose.position.y;
         float hz = g_views[0].pose.position.z;
-        g_menuQuadPose.position.x = hx + fx * 2.f;
+        g_menuQuadPose.position.x = hx + fx * 2.5f;
         g_menuQuadPose.position.y = hy;
-        g_menuQuadPose.position.z = hz + fz * 2.f;
+        g_menuQuadPose.position.z = hz + fz * 2.5f;
 
         // Orient quad so its +Z faces back toward the player.
         // Rotate default (0,0,1) → (-fx, 0, -fz) via Y-axis rotation θ

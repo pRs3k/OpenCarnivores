@@ -20,6 +20,7 @@ public:
     void BeginFrame() override;
     void EndFrame() override;
     void ClearBuffers() override;
+    void RestoreEngineGLState() override;
 
     void SetTexture(void* lpData, int w, int h) override;
 
@@ -89,12 +90,21 @@ public:
     // (e.g. BrightenTexture rewrites night/day mode pixels into the same buffers).
     void InvalidateTextureCache();
 
+    // SOURCEPORT: query maximum anisotropic filtering level supported by hardware
+    int GetMaxAnisotropy() const { return m_maxAnisotropy; }
+
 
 private:
     void CompileShaders();
     void CreateBuffers();
     GLuint UploadTexture16(void* data, int w, int h);
     void FlushBatch(RenderVertex* verts, int vertexCount, bool alphaTest);
+
+    // SOURCEPORT: supersampling FBO management
+    void CreateSSAFramebuffer(int width, int height);
+    void DestroySSAFramebuffer();
+    void BindSSAFramebuffer();
+    void UnbindAndDownscaleSSA();
 
     SDL_Window*   m_window = nullptr;
     SDL_GLContext  m_glContext = nullptr;
@@ -139,6 +149,17 @@ private:
 
     // 1x1 white texture for untextured (vertex-color-only) geometry
     GLuint m_whiteTexture = 0;
+
+    // SOURCEPORT: cached maximum anisotropic filtering level from hardware
+    int m_maxAnisotropy = 1;
+
+    // SOURCEPORT: supersampling FBO for flatscreen (render at higher res, downscale to window)
+    GLuint m_ssaFBO = 0;            // framebuffer object for supersampled rendering
+    GLuint m_ssaTexture = 0;        // color texture for FBO
+    GLuint m_ssaDepth = 0;          // depth renderbuffer for FBO
+    int    m_ssaWidth = 0;          // scaled rendering width
+    int    m_ssaHeight = 0;         // scaled rendering height
+    float  m_ssaScale = 1.0f;       // current scale factor (for comparison)
 
     // Vertex staging buffers
     static constexpr int MAX_MAIN_VERTICES = 1024 * 3;

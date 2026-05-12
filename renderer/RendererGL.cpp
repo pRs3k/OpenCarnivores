@@ -424,9 +424,18 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     }
 
-    fprintf(stderr, "RendererGL: OpenGL %d.%d initialized (%dx%d mode=%d vsync=%d)\n",
+    // SOURCEPORT: query max anisotropic filtering level for menu display
+    // SOURCEPORT: DISABLED - pending debug of rendering black screen issue
+    // if (GLAD_GL_ARB_texture_filter_anisotropic || GLAD_GL_EXT_texture_filter_anisotropic) {
+    //     GLfloat maxAniso = 1.0f;
+    //     glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+    //     m_maxAnisotropy = (int)maxAniso;
+    // }
+    m_maxAnisotropy = 1;  // Default to 1 if not querying
+
+    fprintf(stderr, "RendererGL: OpenGL %d.%d initialized (%dx%d mode=%d vsync=%d aniso=%d)\n",
             GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version),
-            m_width, m_height, OptDisplayMode, OptVSync);
+            m_width, m_height, OptDisplayMode, OptVSync, m_maxAnisotropy);
 
     return true;
 }
@@ -613,6 +622,9 @@ void RendererGL::BeginFrame() {
         m_width  = WinW;
         m_height = WinH;
         glViewport(0, 0, WinW, WinH);
+    } else {
+        // Ensure viewport is set even if size didn't change
+        glViewport(0, 0, WinW, WinH);
     }
 
     // Rebuild projection every frame so it always matches the current WinW×WinH
@@ -646,6 +658,20 @@ void RendererGL::UpdateProjection(const float* mat16) {
 void RendererGL::ClearBuffers() {
     glStencilMask(0xFF); // must unmask stencil writes before clearing
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
+void RendererGL::RestoreEngineGLState() {
+    // SOURCEPORT: XR::EndFrame resets GL state for the compositor's benefit
+    // (glUseProgram(0), glDepthFunc(GL_LESS), glClearDepth(1.0), glDisable(GL_BLEND)).
+    // These persist into the next frame's VR eye-render loop, breaking the engine's
+    // reversed depth convention: sky writes depth≈0, then GL_LESS rejects all closer
+    // geometry (walls, terrain) because their depth > 0. Result: geometry invisible
+    // where sky was drawn — "holes in walls". Restore all affected state here.
+    glUseProgram(m_shaderProgram);
+    glDepthFunc(GL_GEQUAL);   // reversed depth: near=1, far=0, clear=0
+    glClearDepth(0.0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 // --- Texture management ---
@@ -797,17 +823,20 @@ void RendererGL::SetTexture(void* lpData, int w, int h) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
-            // SOURCEPORT: anisotropic filtering — see renderd3d.cpp::gl_SetAnisotropy
-            {
-                static GLfloat maxAniso_ = -1.0f;
-                if (maxAniso_ < 0.0f) {
-                    if (GLAD_GL_ARB_texture_filter_anisotropic || GLAD_GL_EXT_texture_filter_anisotropic)
-                        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso_);
-                    else maxAniso_ = 0.0f;
-                }
-                if (maxAniso_ > 1.0f) glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
-                                                     maxAniso_ < 16.0f ? maxAniso_ : 16.0f);
-            }
+            // SOURCEPORT: anisotropic filtering — DISABLED pending debug of black screen
+            // {
+            //     extern int OptAnisoLevel;
+            //     if (m_maxAnisotropy > 1) {
+            //         // Map OptAnisoLevel (1-3) to anisotropy values (2x, 4x, 8x); level 4 = hardware max
+            //         float desiredAniso;
+            //         if (OptAnisoLevel >= 4) {
+            //             desiredAniso = (float)m_maxAnisotropy;  // "Max" setting uses full hardware capability
+            //         } else {
+            //             desiredAniso = 1 << OptAnisoLevel;  // 2, 4, 8 for inputs 1, 2, 3
+            //         }
+            //         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, desiredAniso);
+            //     }
+            // }
         } else {
             int ow = 0, oh = 0;
             const uint32_t* over = TextureOverrides::Get(lpData, &ow, &oh);
@@ -1472,4 +1501,77 @@ bool RendererGL::IsRGB565() const {
 int RendererGL::GetTextureMemory() const {
     // Report 64MB — modern GPUs have plenty
     return 64 * 1024 * 1024;
+}
+
+// --- Supersampling FBO management (flatscreen only) ---
+
+void RendererGL::CreateSSAFramebuffer(int width, int height) {
+    DestroySSAFramebuffer();  // Clean up old FBO if it exists
+
+    m_ssaWidth  = width;
+    m_ssaHeight = height;
+
+    // Create color texture
+    glGenTextures(1, &m_ssaTexture);
+    glBindTexture(GL_TEXTURE_2D, m_ssaTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    // Create depth renderbuffer
+    glGenRenderbuffers(1, &m_ssaDepth);
+    glBindRenderbuffer(GL_RENDERBUFFER, m_ssaDepth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+
+    // Create FBO and attach
+    glGenFramebuffers(1, &m_ssaFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_ssaFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_ssaTexture, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_ssaDepth);
+
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        fprintf(stderr, "RendererGL: SSA FBO incomplete (0x%X), falling back to direct rendering\n", status);
+        DestroySSAFramebuffer();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void RendererGL::DestroySSAFramebuffer() {
+    if (m_ssaFBO) { glDeleteFramebuffers(1, &m_ssaFBO); m_ssaFBO = 0; }
+    if (m_ssaTexture) { glDeleteTextures(1, &m_ssaTexture); m_ssaTexture = 0; }
+    if (m_ssaDepth) { glDeleteRenderbuffers(1, &m_ssaDepth); m_ssaDepth = 0; }
+    m_ssaWidth = 0;
+    m_ssaHeight = 0;
+}
+
+void RendererGL::BindSSAFramebuffer() {
+    if (!m_ssaFBO) {
+        // Fallback: bind default framebuffer if SSA FBO unavailable
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, m_width, m_height);
+        return;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, m_ssaFBO);
+    glViewport(0, 0, m_ssaWidth, m_ssaHeight);
+}
+
+void RendererGL::UnbindAndDownscaleSSA() {
+    if (!m_ssaFBO) return;
+
+    // Bind backbuffer
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_width, m_height);
+
+    // Blit FBO to backbuffer with downscaling
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_ssaFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, m_ssaWidth, m_ssaHeight, 0, 0, m_width, m_height,
+                      GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_LINEAR);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
