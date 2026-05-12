@@ -425,13 +425,13 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
     }
 
     // SOURCEPORT: query max anisotropic filtering level for menu display
-    // SOURCEPORT: DISABLED - pending debug of rendering black screen issue
-    // if (GLAD_GL_ARB_texture_filter_anisotropic || GLAD_GL_EXT_texture_filter_anisotropic) {
-    //     GLfloat maxAniso = 1.0f;
-    //     glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-    //     m_maxAnisotropy = (int)maxAniso;
-    // }
-    m_maxAnisotropy = 1;  // Default to 1 if not querying
+    if (GLAD_GL_ARB_texture_filter_anisotropic || GLAD_GL_EXT_texture_filter_anisotropic) {
+        GLfloat maxAniso = 1.0f;
+        glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+        m_maxAnisotropy = (int)maxAniso;
+    } else {
+        m_maxAnisotropy = 1;
+    }
 
     fprintf(stderr, "RendererGL: OpenGL %d.%d initialized (%dx%d mode=%d vsync=%d aniso=%d)\n",
             GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version),
@@ -823,20 +823,20 @@ void RendererGL::SetTexture(void* lpData, int w, int h) {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
-            // SOURCEPORT: anisotropic filtering — DISABLED pending debug of black screen
-            // {
-            //     extern int OptAnisoLevel;
-            //     if (m_maxAnisotropy > 1) {
-            //         // Map OptAnisoLevel (1-3) to anisotropy values (2x, 4x, 8x); level 4 = hardware max
-            //         float desiredAniso;
-            //         if (OptAnisoLevel >= 4) {
-            //             desiredAniso = (float)m_maxAnisotropy;  // "Max" setting uses full hardware capability
-            //         } else {
-            //             desiredAniso = 1 << OptAnisoLevel;  // 2, 4, 8 for inputs 1, 2, 3
-            //         }
-            //         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, desiredAniso);
-            //     }
-            // }
+            // SOURCEPORT: anisotropic filtering — controlled by OptAnisoLevel (1=2x, 2=4x, 3=8x, 4=max hardware)
+            {
+                extern int OptAnisoLevel;
+                if (m_maxAnisotropy > 1) {
+                    // Map OptAnisoLevel (1-3) to anisotropy values (2x, 4x, 8x); level 4 = hardware max
+                    float desiredAniso;
+                    if (OptAnisoLevel >= 4) {
+                        desiredAniso = (float)m_maxAnisotropy;  // "Max" setting uses full hardware capability
+                    } else {
+                        desiredAniso = 1 << OptAnisoLevel;  // 2, 4, 8 for inputs 1, 2, 3
+                    }
+                    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, desiredAniso);
+                }
+            }
         } else {
             int ow = 0, oh = 0;
             const uint32_t* over = TextureOverrides::Get(lpData, &ow, &oh);
