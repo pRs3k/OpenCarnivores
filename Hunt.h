@@ -507,6 +507,7 @@ void RenderCharacter(int);
 void RenderShip();
 void RenderPlayer(int);
 void RenderSkyPlane();
+void RenderFogLayers();
 void RenderHealthBar();
 void Render_Cross(int, int);
 void Render_LifeInfo(int);
@@ -801,13 +802,18 @@ _EXTORNOT   TBTrail   BloodTrail;
 _EXTORNOT   int     PrevTime, TimeDt, T, Takt, RealTime, StepTime, MyHealth, ExitTime,
                     ChCallTime, CallLockTime, NextCall;
 _EXTORNOT   float   DeltaT;
-_EXTORNOT   float   CameraX, CameraY, CameraZ, CameraAlpha, CameraBeta;
-_EXTORNOT   float   PlayerX, PlayerY, PlayerZ, PlayerAlpha, PlayerBeta, 
+_EXTORNOT   float   CameraX, CameraY, CameraZ, CameraAlpha, CameraBeta, CameraGamma;  // SOURCEPORT: gamma = roll (head tilt)
+_EXTORNOT   float   g_vrCamCenterX, g_vrCamCenterZ;  // SOURCEPORT: VR head-centre position for sky (no IPD parallax)
+_EXTORNOT   float   g_vrBodyYaw;  // SOURCEPORT: VR body-yaw offset for locomotion turning
+_EXTORNOT   float   g_vrHeadRefX, g_vrHeadRefY, g_vrHeadRefZ;  // SOURCEPORT: initial head pos in OpenXR metres (6DoF anchor)
+_EXTORNOT   bool    g_vrHeadRefSet;   // SOURCEPORT: whether reference position has been captured
+_EXTORNOT   float   g_vrRoomOffsetX, g_vrRoomOffsetY, g_vrRoomOffsetZ;  // SOURCEPORT: roomscale offset in game units this frame
+_EXTORNOT   float   PlayerX, PlayerY, PlayerZ, PlayerAlpha, PlayerBeta, PlayerGamma,  // SOURCEPORT: gamma = roll (head tilt)
                     HeadY, HeadBackR, HeadBSpeed, HeadAlpha, HeadBeta,
                     SSpeed,VSpeed,RSpeed,YSpeed;      
 _EXTORNOT   Vector3d PlayerNv;
 
-_EXTORNOT   float   ca,sa,cb,sb, wpnDAlpha, wpnDBeta;
+_EXTORNOT   float   ca,sa,cb,sb,cg,sg, wpnDAlpha, wpnDBeta;  // SOURCEPORT: cg,sg = cos/sin of roll (head tilt)
 _EXTORNOT   void    *lpVideoBuf, *lpTextureAddr;
 _EXTORNOT   HBITMAP hbmpVideoBuf;
 _EXTORNOT   HCURSOR hcArrow;
@@ -921,6 +927,11 @@ _EXTORNOT BOOL SHADOWS3D,REVERSEMS;
 // OptVSync:       0=disabled, 1=enabled (default)
 // OptResW/H:      0 = use SetupRes() preset; nonzero = override resolution
 _EXTORNOT int  OptDisplayMode, OptVSync, OptResW, OptResH;
+
+// SOURCEPORT: graphics quality options (apply to flatscreen and VR)
+// OptAnisoLevel:   1=Low (2x), 2=Medium (4x), 3=High (8x), 4=Max (16x)
+// OptSSFactor:     100-200, supersampling multiplier for VR eye FBOs (100=no scaling)
+_EXTORNOT int  OptAnisoLevel, OptSSFactor;
 
 _EXTORNOT BOOL SLOW, DEBUG, MORPHP, MORPHA;
 _EXTORNOT HANDLE hlog;
