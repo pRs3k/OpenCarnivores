@@ -321,12 +321,11 @@ _EXTORNOT int  OptSSFactor;     // 100–200, eye FBO supersampling multiplier
 - Global variables declared (Hunt.h line 934)
 - Defaults initialized and config persistence implemented (Game.cpp)
 
-**Rendering Code**: ⏸ Disabled (pending pipeline fix)
-- **Anisotropy**: Code implemented (RendererGL.cpp lines 814–839) but currently disabled. When enabled: maps `OptAnisoLevel` (1–3) to fixed values (2x, 4x, 8x); level 4 queries hardware maximum via `GL_MAX_TEXTURE_MAX_ANISOTROPY` (OpenGL standard max is 16x). Applied immediately in `SetTexture()`.
-- **Supersampling**: Architecture implemented but rendering disabled due to black-screen issue after implementation. When enabled:
-  - **VR**: Eye FBO dimensions would be scaled by `OptSSFactor / 100.0f` in `XR.cpp` (line 961–965).
-  - **Flatscreen**: Intermediate FBO would be created at scaled resolution in `RendererGL.cpp` (lines 1510–1577); `BeginFrame()` would render to FBO, `EndFrame()` would blit downscaled result to backbuffer.
-- **Status**: Rendering code disabled (commented out) pending investigation and fix of complete black-screen rendering failure introduced during supersampling implementation.
+**Rendering Code**:
+- **Anisotropy**: Code implemented (RendererGL.cpp lines 814–839) but currently disabled via commented-out code block. Maps `OptAnisoLevel` (1–3) to fixed values (2x, 4x, 8x); level 4 queries hardware maximum via `GL_MAX_TEXTURE_MAX_ANISOTROPY` (OpenGL standard max is 16x across all vendors). Can be re-enabled when anisotropy query in Init() is uncommented.
+- **Supersampling**:
+  - **VR**: ✓ Enabled — Eye FBO dimensions scaled by `OptSSFactor / 100.0f` in `XR.cpp` (lines 961–965). OpenXR compositor downscales rendered textures for display.
+  - **Flatscreen**: ⏸ Disabled — FBO-based rendering code is present (RendererGL.cpp lines 1510–1577) but commented out. The flatscreen FBO rendering approach caused black-screen rendering failures and requires architectural redesign for safe implementation. Default to native resolution rendering until fixed.
 
 ## Remaining work
 - Input abstraction: SDL3 or OpenXR input layer to replace `_KeyFlags` bitfield with an action-binding layer so VR controllers, gamepads, and rebindable keyboards all route through it.
