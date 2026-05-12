@@ -957,12 +957,13 @@ namespace {
         g_eyeWidth  = vcViews[0].recommendedImageRectWidth;
         g_eyeHeight = vcViews[0].recommendedImageRectHeight;
 
-        // SOURCEPORT: supersampling disabled pending fix for rendering pipeline
-        // if (OptSSFactor != 100) {
-        //     float scale = OptSSFactor / 100.0f;
-        //     g_eyeWidth  = (uint32_t)(g_eyeWidth  * scale);
-        //     g_eyeHeight = (uint32_t)(g_eyeHeight * scale);
-        // }
+        // SOURCEPORT: apply supersampling scale factor from options (100-200%)
+        // This path is safe and just scales the eye texture resolution
+        if (OptSSFactor != 100) {
+            float scale = OptSSFactor / 100.0f;
+            g_eyeWidth  = (uint32_t)(g_eyeWidth  * scale);
+            g_eyeHeight = (uint32_t)(g_eyeHeight * scale);
+        }
 
         // Clamp to hardware maximums
         if (g_eyeWidth  > vcViews[0].maxImageRectWidth)  g_eyeWidth  = vcViews[0].maxImageRectWidth;
