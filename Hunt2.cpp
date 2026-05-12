@@ -2127,31 +2127,6 @@ void ProcessGame()
             ShowControlElements();
             g_vrSecondEyePass = false;
 
-            // SOURCEPORT: VR binoculars vignette — black out entire screen around binocular view
-            if (BINMODE) {
-                extern RendererGL* g_glRenderer;
-                if (g_glRenderer) {
-                    // Black out entire screen except central rectangular area for binocular model
-                    // Match binocular graphic dimensions: less tall, more narrow (with less center bar)
-                    int maskLeft   = (int)(WinW * 0.22f);
-                    int maskRight  = (int)(WinW * 0.78f);
-                    int maskTop    = (int)(WinH * 0.35f);
-                    int maskBottom = (int)(WinH * 0.65f);
-
-                    glDisable(GL_DEPTH_TEST);
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-                    // Fill edges with black, leaving rectangular window in center
-                    g_glRenderer->FillRect(0, 0, WinW, maskTop, 0xFF000000u);                          // Top
-                    g_glRenderer->FillRect(0, maskBottom, WinW, WinH - maskBottom, 0xFF000000u);       // Bottom
-                    g_glRenderer->FillRect(0, maskTop, maskLeft, maskBottom - maskTop, 0xFF000000u);   // Left
-                    g_glRenderer->FillRect(maskRight, maskTop, WinW - maskRight, maskBottom - maskTop, 0xFF000000u); // Right
-
-                    glEnable(GL_DEPTH_TEST);
-                }
-            }
-
             // SOURCEPORT: blit eye 1 to the SDL companion window while the swapchain
             // image is still valid (before ReleaseEyeImage hands it to the compositor).
             // This replaces the post-loop DrawScene for the companion window, saving a
