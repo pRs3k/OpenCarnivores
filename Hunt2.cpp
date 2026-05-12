@@ -2132,9 +2132,9 @@ void ProcessGame()
                 extern RendererGL* g_glRenderer;
                 if (g_glRenderer) {
                     // Black out entire screen except central rectangular area for binocular model
-                    // Model is rendered at screen center, roughly 40% of width and 50% of height
-                    int maskLeft   = (int)(WinW * 0.30f);
-                    int maskRight  = (int)(WinW * 0.70f);
+                    // Narrower horizontally to reduce black bar between eyes
+                    int maskLeft   = (int)(WinW * 0.40f);
+                    int maskRight  = (int)(WinW * 0.60f);
                     int maskTop    = (int)(WinH * 0.25f);
                     int maskBottom = (int)(WinH * 0.75f);
 
