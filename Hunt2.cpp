@@ -2132,9 +2132,9 @@ void ProcessGame()
                 extern RendererGL* g_glRenderer;
                 if (g_glRenderer) {
                     // Black out entire screen except central rectangular area for binocular model
-                    // Narrower horizontally to reduce black bar between eyes
-                    int maskLeft   = (int)(WinW * 0.40f);
-                    int maskRight  = (int)(WinW * 0.60f);
+                    // Wider horizontally to reduce black bar in middle of each eye
+                    int maskLeft   = (int)(WinW * 0.15f);
+                    int maskRight  = (int)(WinW * 0.85f);
                     int maskTop    = (int)(WinH * 0.25f);
                     int maskBottom = (int)(WinH * 0.75f);
 
