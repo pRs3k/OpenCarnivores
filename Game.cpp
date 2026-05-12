@@ -766,6 +766,10 @@ void InitEngine()
     // OptBrightness=0 → uBrightness=1.0 (neutral, no change). Matches D3D6 legacy default.
     OptBrightness  = 0;
 
+    // SOURCEPORT: graphics quality options defaults
+    OptAnisoLevel = 2;   // Medium (4x)
+    OptSSFactor   = 100; // 100% (no supersampling)
+
     // SOURCEPORT: load persisted display/graphics settings before command-line args so
     // -fullscreen/-windowed/etc. can still override individual settings at launch.
     LoadDisplayConfig();
@@ -1784,7 +1788,7 @@ void SaveTrophy()
 // Uses Win32 WriteFile/ReadFile to match the rest of Game.cpp (no stdio dependency).
 // Format: 8 ints written sequentially with a magic header for version safety.
 static const DWORD kDisplayMagic = 0x44495350; // 'DISP'
-static const DWORD kDisplayVer   = 2; // bumped: v1 saved pre-DPI-awareness resolutions
+static const DWORD kDisplayVer   = 3; // bumped: v3 added VR graphics options
 
 void SaveDisplayConfig()
 {
@@ -1802,6 +1806,9 @@ void SaveDisplayConfig()
     int sh = (int)SHADOWS3D, fg = (int)FOGENABLE;
     WriteFile(h, &sh, 4, &l, NULL);
     WriteFile(h, &fg, 4, &l, NULL);
+    // SOURCEPORT: v3 — graphics quality options
+    WriteFile(h, &OptAnisoLevel, 4, &l, NULL);
+    WriteFile(h, &OptSSFactor,   4, &l, NULL);
     CloseHandle(h);
     PrintLog("Display config saved.\n");
 }
@@ -1815,7 +1822,7 @@ void LoadDisplayConfig()
     DWORD magic = 0, ver = 0;
     ReadFile(h, &magic, 4, &l, NULL);
     ReadFile(h, &ver,   4, &l, NULL);
-    if (magic != kDisplayMagic || ver != kDisplayVer) { CloseHandle(h); return; }
+    if (magic != kDisplayMagic || ver > kDisplayVer) { CloseHandle(h); return; }
     ReadFile(h, &OptDisplayMode, 4, &l, NULL);
     ReadFile(h, &OptVSync,       4, &l, NULL);
     ReadFile(h, &OptResW,        4, &l, NULL);
@@ -1826,12 +1833,24 @@ void LoadDisplayConfig()
     ReadFile(h, &sh, 4, &l, NULL);
     ReadFile(h, &fg, 4, &l, NULL);
     SHADOWS3D = sh; FOGENABLE = fg;
+    // SOURCEPORT: v3 — graphics quality options (with forward compatibility)
+    if (ver >= 3) {
+        ReadFile(h, &OptAnisoLevel, 4, &l, NULL);
+        ReadFile(h, &OptSSFactor,   4, &l, NULL);
+    } else {
+        // v2 or earlier: initialize options with defaults
+        OptAnisoLevel = 2;   // Medium (4x)
+        OptSSFactor = 100;   // 100% (no supersampling)
+    }
     CloseHandle(h);
     // SOURCEPORT: validate loaded values — clamp mode to known range, and reject any
     // saved resolution that is implausibly small (could be a DPI-scaled logical value
     // or a corrupt write). Reset to 0 (SetupRes preset) so the game picks a safe size.
     if (OptDisplayMode < 0 || OptDisplayMode > 2) OptDisplayMode = 0;
     if (OptResW < 640 || OptResH < 480) { OptResW = 0; OptResH = 0; }
+    // Validate quality options
+    if (OptAnisoLevel < 1 || OptAnisoLevel > 4) OptAnisoLevel = 2;
+    if (OptSSFactor < 100 || OptSSFactor > 200) OptSSFactor = 100;
     PrintLog("Display config loaded.\n");
 }
 

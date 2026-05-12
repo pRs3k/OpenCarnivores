@@ -41,6 +41,7 @@ struct MenuScreen {
 static int    gLastHov      = -1;
 static short* gMenuAmbActive = nullptr;
 
+
 // Start MENUAMB looping if it isn't already the current ambient.
 static void MenuStartAmb() {
     if (fxMenuAmb.lpData && fxMenuAmb.lpData != gMenuAmbActive) {
@@ -1615,6 +1616,10 @@ static void RunOptions(bool& appQuit) {
             for (auto& s : sliders) {
                 MTMed(s.lbl, ox, y, 0x00AC6D24);
                 *s.var = DrawSlider(ox + lblW, y + 2, slW, lnH - 6, *s.var, s.mn, s.mx);
+                // Display percentage (100% at midpoint 128)
+                char buf[32];
+                wsprintf(buf, "%d%%", (*s.var * 100) / 128);
+                MT(buf, ox + lblW + slW + 8, y, 0x00C0C0C0);
                 y += lnH;
             }
             // Measurement toggle
@@ -1781,6 +1786,45 @@ static void RunOptions(bool& appQuit) {
                 OptBrightness = DrawSlider(vx, y+2, slW, lnH-6, OptBrightness+128, 64, 256) - 128;
                 if (OptBrightness != prev)
                     g_glRenderer->SetBrightness(1.0f + OptBrightness / 128.0f);
+                // Display percentage (0 = 100%)
+                char buf[32];
+                wsprintf(buf, "%d%%", 100 + (OptBrightness * 100) / 128);
+                MT(buf, vx + slW + 8, y, 0x00C0C0C0);
+            }
+            y += lnH;
+
+            // Anisotropic filtering level
+            {
+                MTMed("Anisotropy", ox, y, 0x00AC6D24);
+                int prev = OptAnisoLevel;
+                OptAnisoLevel = DrawSlider(vx, y+2, slW, lnH-6, OptAnisoLevel, 1, 4);
+                if (OptAnisoLevel != prev) {
+                    // Applied immediately in RendererGL.cpp SetTexture()
+                }
+                // Display label with actual hardware max for level 4
+                char buf[32];
+                if (OptAnisoLevel < 4) {
+                    static const char* anisoLabels[] = { "Low (2x)", "Medium (4x)", "High (8x)" };
+                    MT(anisoLabels[OptAnisoLevel - 1], vx + slW + 8, y, 0x00C0C0C0);
+                } else {
+                    int maxAniso = g_glRenderer ? g_glRenderer->GetMaxAnisotropy() : 16;
+                    wsprintf(buf, "Max (%dx)", maxAniso);
+                    MT(buf, vx + slW + 8, y, 0x00C0C0C0);
+                }
+            }
+            y += lnH;
+
+            // Supersampling (VR eye FBO multiplier; ignored on flatscreen)
+            {
+                MTMed("Supersampling (VR)", ox, y, 0x00AC6D24);
+                int prev = OptSSFactor;
+                OptSSFactor = DrawSlider(vx, y+2, slW, lnH-6, OptSSFactor, 100, 200);
+                if (OptSSFactor != prev) {
+                    // TODO: wire to eye FBO rendering scale in VR
+                }
+                char buf[32];
+                wsprintf(buf, "%d%%", OptSSFactor);
+                MT(buf, vx + slW + 8, y, 0x00C0C0C0);
             }
         }
 
@@ -1863,6 +1907,10 @@ static void RunOptions(bool& appQuit) {
             // Mouse sensitivity
             MTMed("Mouse sensitivity", ox, y, 0x00AC6D24);
             OptMsSens = DrawSlider(kx, y+2, WinW*130/800, lnH2-6, OptMsSens, 1, 20);
+            // Display percentage (10 = 100%)
+            char buf[32];
+            wsprintf(buf, "%d%%", (OptMsSens * 100) / 10);
+            MT(buf, kx + WinW*130/800 + 8, y, 0x00C0C0C0);
         }
 
         // BACK
