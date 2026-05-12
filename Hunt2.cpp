@@ -2131,25 +2131,28 @@ void ProcessGame()
             if (BINMODE) {
                 extern RendererGL* g_glRenderer;
                 if (g_glRenderer) {
-                    // Create circular vignette mask: black out everything outside a circle
+                    // Create circular vignette mask: black out everything outside the binocular lens
                     float centerX = (float)VideoCX;
                     float centerY = (float)VideoCY;
-                    float radius = (float)WinH * 0.45f;  // Binocular field of view (circular)
+                    // Binocular model is roughly 192 pixels tall in original coords; scale to eye FBO
+                    // Use smaller radius to match the actual binocular lens opening
+                    float radiusX = (float)WinW * 0.28f;
+                    float radiusY = (float)WinH * 0.33f;
 
                     glDisable(GL_DEPTH_TEST);
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-                    // Draw black rectangles around the circular binocular area
+                    // Draw black rectangles around the binocular area (elliptical mask)
                     // Top bar
-                    g_glRenderer->FillRect(0, 0, WinW, (int)(centerY - radius), 0xFF000000u);
+                    g_glRenderer->FillRect(0, 0, WinW, (int)(centerY - radiusY), 0xFF000000u);
                     // Bottom bar
-                    g_glRenderer->FillRect(0, (int)(centerY + radius), WinW, WinH - (int)(centerY + radius), 0xFF000000u);
+                    g_glRenderer->FillRect(0, (int)(centerY + radiusY), WinW, WinH - (int)(centerY + radiusY), 0xFF000000u);
                     // Left bar
-                    g_glRenderer->FillRect(0, (int)(centerY - radius), (int)(centerX - radius), (int)(2 * radius), 0xFF000000u);
+                    g_glRenderer->FillRect(0, (int)(centerY - radiusY), (int)(centerX - radiusX), (int)(2 * radiusY), 0xFF000000u);
                     // Right bar
-                    g_glRenderer->FillRect((int)(centerX + radius), (int)(centerY - radius),
-                                          WinW - (int)(centerX + radius), (int)(2 * radius), 0xFF000000u);
+                    g_glRenderer->FillRect((int)(centerX + radiusX), (int)(centerY - radiusY),
+                                          WinW - (int)(centerX + radiusX), (int)(2 * radiusY), 0xFF000000u);
 
                     glEnable(GL_DEPTH_TEST);
                 }
