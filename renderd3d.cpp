@@ -4,10 +4,12 @@
 #include "stdio.h"
 
 #ifdef _opengl
+#include <glad/gl.h>
 #include "renderer/RendererGL.h"
 #include "Materials.h"
 #include "CustomMaterials.h"
 #include <SDL.h>
+#include "XR.h"
 #endif
 
 #undef  TCMAX 
@@ -2650,19 +2652,19 @@ void Render_LifeInfo(int li)
 	
     x = VideoCX + WinW / 64;
 	y = VideoCY + (int)(WinH / 6.8);
-		
-    ddTextOut(x, y, DinoInfo[ctype].Name, 0x0000b000);    
-		
+
+    ddTextOut(x, y, DinoInfo[ctype].Name, 0x0000b000);
+
 	if (OptSys) sprintf(t,"Weight: %3.2ft ", DinoInfo[ctype].Mass * scale * scale / 0.907);
-	else        sprintf(t,"Weight: %3.2fT ", DinoInfo[ctype].Mass * scale * scale);     
-    
-	ddTextOut(x, y+16, t, 0x0000b000);
+	else        sprintf(t,"Weight: %3.2fT ", DinoInfo[ctype].Mass * scale * scale);
+
+	ddTextOut(x, y+20, t, 0x0000b000);
 
 	int R  = (int)(VectorLength( SubVectors(Characters[li].pos, PlayerPos) )*3 / 64.f);
 	if (OptSys) sprintf(t,"Distance: %dft ", R);
-	else        sprintf(t,"Distance: %dm  ", R/3);     
+	else        sprintf(t,"Distance: %dm  ", R/3);
 
-	ddTextOut(x, y+32, t, 0x0000b000);
+	ddTextOut(x, y+40, t, 0x0000b000);
     
 	SmallFont = FALSE;
 	//SelectObject(hdcMain, oldfont);	
@@ -2704,12 +2706,12 @@ void ShowControlElements()
     ddTextOut(10, 10, MessageList.mtext, 0x0020A0A0);
   }
 
-  if (ExitTime) {	  
+  if (ExitTime) {
 	  int y = WinH / 3;
 	  wsprintf(buf,"Preparing for evacuation...");
       ddTextOut(VideoCX - GetTextW(hdcCMain, buf)/2, y, buf, 0x0060C0D0);
 	  wsprintf(buf,"%d seconds left.", 1 + ExitTime / 1000);
-	  ddTextOut(VideoCX - GetTextW(hdcCMain, buf)/2, y + 18, buf, 0x0060C0D0);
+	  ddTextOut(VideoCX - GetTextW(hdcCMain, buf)/2, y + 24, buf, 0x0060C0D0);
   }  
 }
 
@@ -3811,7 +3813,7 @@ void RenderGround()
 	       ProcessMap(CCX+x, CCY+r, r);
    }
 
-   for (r=ctViewR-1; r>0; r--) {
+   for (r=r-1; r>0; r--) {
 #endif
      
      for (int x=r; x>0; x--) {
@@ -4374,12 +4376,14 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
 
 
 		
-    rVertex[s].x = (p.x * ca + p.z * sa) + x0;
-
+    float dx = p.x * ca + p.z * sa;
     float vz = p.z * ca - p.x * sa;
-
-    rVertex[s].y = (p.y * cb - vz * sb)  + y0;
-    rVertex[s].z = (vz  * cb + p.y * sb) + z0;
+    float dy = p.y * cb - vz * sb;
+    float dz = vz  * cb + p.y * sb;
+    // SOURCEPORT: apply camera roll to vertex displacement; cg/sg are global camera roll (not shadowed here)
+    rVertex[s].x = (dx * cg + dy * sg) + x0;
+    rVertex[s].y = (dy * cg - dx * sg) + y0;
+    rVertex[s].z = dz + z0;
 
     if (rVertex[s].z<-64) {
      gScrp[s].x = VideoCX + (int)(rVertex[s].x / (-rVertex[s].z) * CameraW);
@@ -4495,10 +4499,14 @@ void RenderShadowClip(TModel* _mptr,
     float shz = mrz + mptr->gVertex[s].y * SunShadowK;
     float shy = GetLandH(shx + xm0, shz + zm0) - ym0;
 
-    rVertex[s].x = (shx * ca + shz * sa)   + x0;
+    float dx = shx * ca + shz * sa;
     float vz = shz * ca - shx * sa;
-    rVertex[s].y = (shy * cb - vz * sb) + y0;
-    rVertex[s].z = (vz * cb + shy * sb) + z0;     
+    float dy = shy * cb - vz * sb;
+    float dz = vz * cb + shy * sb;
+    // SOURCEPORT: apply camera roll to shadow vertex displacement; cg/sg are global camera roll (not shadowed here)
+    rVertex[s].x = (dx * cg + dy * sg) + x0;
+    rVertex[s].y = (dy * cg - dx * sg) + y0;
+    rVertex[s].z = dz + z0;     
     if (rVertex[s].z<0) BL=TRUE;
 
     if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
@@ -4640,11 +4648,14 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
 	 if (vFogT[s]>255) vFogT[s]=255;	 
 	} else vFogT[s] = 255;
 
-		   
-	rVertex[s].x = (mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa) /* * mdlScale */ + x0;
-    float vz = mptr->gVertex[s].z * ca - mptr->gVertex[s].x * sa;
-    rVertex[s].y = (mptr->gVertex[s].y * cb - vz * sb) /* * mdlScale */ + y0;
-    rVertex[s].z = (vz * cb + mptr->gVertex[s].y * sb) /* * mdlScale */ + z0;     
+    { float dx = mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa;
+      float vz = mptr->gVertex[s].z * ca - mptr->gVertex[s].x * sa;
+      float dy = mptr->gVertex[s].y * cb - vz * sb;
+      float dz = vz * cb + mptr->gVertex[s].y * sb;
+      // SOURCEPORT: apply camera roll to vertex displacement; cg/sg are global camera roll (not shadowed here)
+      rVertex[s].x = (dx * cg + dy * sg) + x0;
+      rVertex[s].y = (dy * cg - dx * sg) + y0;
+      rVertex[s].z = dz + z0; }
     if (rVertex[s].z<0) BL=TRUE;
 
     if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
@@ -4778,19 +4789,22 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
    
    DWORD PHCOLOR = 0xFFFFFFFF;   
    
-   BOOL BL = FALSE;   
-   
+   BOOL BL = FALSE;
 
-   for (int s=0; s<mptr->VCount; s++) {                  	
-		   
-	rVertex[s].x = (mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa) /* * mdlScale */ + x0;
-    float vz = mptr->gVertex[s].z * ca - mptr->gVertex[s].x * sa;
-    rVertex[s].y = (mptr->gVertex[s].y * cb - vz * sb) /* * mdlScale */ + y0;
-    rVertex[s].z = (vz * cb + mptr->gVertex[s].y * sb) /* * mdlScale */ + z0;     
+
+   for (int s=0; s<mptr->VCount; s++) {
+    { float dx = mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa;
+      float vz = mptr->gVertex[s].z * ca - mptr->gVertex[s].x * sa;
+      float dy = mptr->gVertex[s].y * cb - vz * sb;
+      float dz = vz * cb + mptr->gVertex[s].y * sb;
+      // SOURCEPORT: apply camera roll to vertex displacement; cg/sg are global camera roll (not shadowed here)
+      rVertex[s].x = (dx * cg + dy * sg) + x0;
+      rVertex[s].y = (dy * cg - dx * sg) + y0;
+      rVertex[s].z = dz + z0; }
     if (rVertex[s].z<0) BL=TRUE;
 
     if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
-    else {   
+    else {
      int f = 0;
      int sx =  VideoCX + (int)(rVertex[s].x / (-rVertex[s].z) * CameraW);
      int sy =  VideoCY - (int)(rVertex[s].y / (-rVertex[s].z) * CameraH); 
@@ -4921,16 +4935,19 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
    int   rv = SkyR +64; if (rv>255) rv = 255;
    int   gv = SkyG +64; if (gv>255) gv = 255;
    int   bv = SkyB +64; if (bv>255) bv = 255;
-   DWORD PHCOLOR = 0xFF000000 + (rv<<16) + (gv<<8) + bv;      
-   
-   BOOL BL = FALSE;   
-   
-   for (int s=0; s<mptr->VCount; s++) {                  	
-		   
-	rVertex[s].x = (mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa) /* * mdlScale */ + x0;
-    float vz = mptr->gVertex[s].z * ca - mptr->gVertex[s].x * sa;
-    rVertex[s].y = (mptr->gVertex[s].y * cb - vz * sb) /* * mdlScale */ + y0;
-    rVertex[s].z = (vz * cb + mptr->gVertex[s].y * sb) /* * mdlScale */ + z0;     
+   DWORD PHCOLOR = 0xFF000000 + (rv<<16) + (gv<<8) + bv;
+
+   BOOL BL = FALSE;
+
+   for (int s=0; s<mptr->VCount; s++) {
+    { float dx = mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa;
+      float vz = mptr->gVertex[s].z * ca - mptr->gVertex[s].x * sa;
+      float dy = mptr->gVertex[s].y * cb - vz * sb;
+      float dz = vz * cb + mptr->gVertex[s].y * sb;
+      // SOURCEPORT: apply camera roll to vertex displacement; cg/sg are global camera roll (not shadowed here)
+      rVertex[s].x = (dx * cg + dy * sg) + x0;
+      rVertex[s].y = (dy * cg - dx * sg) + y0;
+      rVertex[s].z = dz + z0; }
     if (rVertex[s].z<0) BL=TRUE;
 
     if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
@@ -5385,10 +5402,9 @@ void RenderCharacterPost(TCharacter *cptr)
    
    int Al = 0x60;
    
-   if (cptr->Health==0) {    
+   if (cptr->Health==0) {
     int at = cptr->pinfo->Animation[cptr->Phase].AniTime;
-	if (Tranq) return;	
-    if (cptr->FTime==at-1) return;
+	if (Tranq) return;
     Al = Al * (at-cptr->FTime) / at;  }
    	if (cptr->AI==0) Al = 0x50;
 
@@ -5556,7 +5572,9 @@ void DrawHMap()
   // may be larger than 256×256 due to the decorative border).  The dot coordinate origin is
   // always VideoCX/CY ± 128*scale, matching the original hardcoded ±128 reference offset that
   // was independent of image size.
-  const float mapScaleF = (float)WinH / 480.0f;
+  float mapScaleF = (float)WinH / 480.0f;
+  // SOURCEPORT: scale down for VR to push map further from player's face
+  if (XR::StereoActive()) mapScaleF *= 0.45f;
   const int   mapSize   = (int)(256 * mapScaleF);     // world→pixel span on screen
   const int   imgW      = (int)(MapPic.W * mapScaleF);
   const int   imgH      = (int)(MapPic.H * mapScaleF);
@@ -5732,6 +5750,7 @@ void RenderSun(float x, float y, float z)
 
 void RotateVVector(Vector3d& v)
 {
+   // Rotation order: Yaw (Y-axis) → Pitch (X-axis) → Roll (Z-axis)
    float x = v.x * ca - v.z * sa;
    float y = v.y;
    float z = v.z * ca + v.x * sa;
@@ -5739,23 +5758,43 @@ void RotateVVector(Vector3d& v)
    float xx = x;
    float xy = y * cb + z * sb;
    float xz = z * cb - y * sb;
-   
-   v.x = xx; v.y = xy; v.z = xz;
+
+   // SOURCEPORT: Apply inverse roll — RotateVVector yaw is opposite sign to RotateVector, so roll cross-terms negate
+   float xxx = xx * cg - xy * sg;
+   float xxy = xy * cg + xx * sg;
+   float xxz = xz;
+
+   v.x = xxx; v.y = xxy; v.z = xxz;
 }
 
 
 
-
-
+// SOURCEPORT: placeholder for fog layer rendering
+void RenderFogLayers()
+{
+   // TODO: implement fog volume geometry rendering through the model pipeline
+   // to visualize fog zones in 3D space. Fog is currently applied as vertex
+   // color tinting on models only, making it look grey without atmospheric context.
+}
 
 
 void RenderSkyPlane()
-{	
-	
+{
+
    Vector3d v,vbase;
    Vector3d tx,ty,nv;
    float p,q, qx, qy, qz, px, py, pz, rx, ry, rz, ddx, ddy;
    float lastdt = 0.f;
+
+#ifdef _opengl
+   // SOURCEPORT: In VR use head-centre position so the sky has no IPD-offset parallax.
+   float saveX = CameraX, saveZ = CameraZ;
+   if (XR::StereoActive()) {
+       extern float g_vrCamCenterX, g_vrCamCenterZ;
+       CameraX = g_vrCamCenterX;
+       CameraZ = g_vrCamCenterZ;
+   }
+#endif
 
    d3dSetTexture(SkyPic, 256, 256);
    
@@ -5803,11 +5842,11 @@ void RenderSkyPlane()
    tx.x=0.002f;  tx.y=0;     tx.z=0;
    ty.x=0.0f;    ty.y=0;     ty.z=0.002f;
    nv.x=0;       nv.y=-1.f;  nv.z=0;
-      
+
    RotateVVector(tx);
    RotateVVector(ty);
    RotateVVector(nv);
-      
+
    sh = 4*512*16;
    // SOURCEPORT: use low-frequency world coords so sky scrolls slowly while walking
    // but doesn't jump dramatically when rotating. Divide by 128 to damp rotation effect.
@@ -5841,7 +5880,7 @@ void RenderSkyPlane()
    int alphc = (int)(255*40240 / (40240+_zc));
    
    int sx1 = - VideoCX;
-   int sx2 = + VideoCX;      
+   int sx2 = + (WinW - VideoCX);  // SOURCEPORT: use actual right-edge offset from principal point for asymmetric VR FOV
 
    float qx1 = qx * sx1 + qz;
    float qx2 = qx * sx2 + qz;
@@ -6109,10 +6148,14 @@ void RenderSkyPlane()
 
 sky_done:
    LINEARFILTER = TRUE;
-            
+
+#ifdef _opengl
+   if (XR::StereoActive()) { CameraX = saveX; CameraZ = saveZ; }
+#endif
+
    nv = RotateVector(Sun3dPos);
    SunLight = 0;
-   if (nv.z < -2024) RenderSun(nv.x, nv.y, nv.z);	
+   if (nv.z < -2024) RenderSun(nv.x, nv.y, nv.z);
 }
 
 
