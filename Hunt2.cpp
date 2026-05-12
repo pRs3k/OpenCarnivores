@@ -2127,32 +2127,26 @@ void ProcessGame()
             ShowControlElements();
             g_vrSecondEyePass = false;
 
-            // SOURCEPORT: VR binoculars vignette — black out periphery except circular center
+            // SOURCEPORT: VR binoculars vignette — black out entire screen around binocular view
             if (BINMODE) {
                 extern RendererGL* g_glRenderer;
                 if (g_glRenderer) {
-                    // Create circular vignette mask: black out everything outside the binocular lens
-                    float centerX = (float)VideoCX;
-                    float centerY = (float)VideoCY;
-                    // Binocular model is roughly 192 pixels tall in original coords; scale to eye FBO
-                    // Use smaller radius to match the actual binocular lens opening
-                    float radiusX = (float)WinW * 0.28f;
-                    float radiusY = (float)WinH * 0.33f;
+                    // Black out entire screen except central rectangular area for binocular model
+                    // Model is rendered at screen center, roughly 40% of width and 50% of height
+                    int maskLeft   = (int)(WinW * 0.30f);
+                    int maskRight  = (int)(WinW * 0.70f);
+                    int maskTop    = (int)(WinH * 0.25f);
+                    int maskBottom = (int)(WinH * 0.75f);
 
                     glDisable(GL_DEPTH_TEST);
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-                    // Draw black rectangles around the binocular area (elliptical mask)
-                    // Top bar
-                    g_glRenderer->FillRect(0, 0, WinW, (int)(centerY - radiusY), 0xFF000000u);
-                    // Bottom bar
-                    g_glRenderer->FillRect(0, (int)(centerY + radiusY), WinW, WinH - (int)(centerY + radiusY), 0xFF000000u);
-                    // Left bar
-                    g_glRenderer->FillRect(0, (int)(centerY - radiusY), (int)(centerX - radiusX), (int)(2 * radiusY), 0xFF000000u);
-                    // Right bar
-                    g_glRenderer->FillRect((int)(centerX + radiusX), (int)(centerY - radiusY),
-                                          WinW - (int)(centerX + radiusX), (int)(2 * radiusY), 0xFF000000u);
+                    // Fill edges with black, leaving rectangular window in center
+                    g_glRenderer->FillRect(0, 0, WinW, maskTop, 0xFF000000u);                          // Top
+                    g_glRenderer->FillRect(0, maskBottom, WinW, WinH - maskBottom, 0xFF000000u);       // Bottom
+                    g_glRenderer->FillRect(0, maskTop, maskLeft, maskBottom - maskTop, 0xFF000000u);   // Left
+                    g_glRenderer->FillRect(maskRight, maskTop, WinW - maskRight, maskBottom - maskTop, 0xFF000000u); // Right
 
                     glEnable(GL_DEPTH_TEST);
                 }
