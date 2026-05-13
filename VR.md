@@ -2,23 +2,20 @@
 
 OpenXR stereo rendering is fully implemented. The stereo eye loop lives in `Hunt2.cpp` (`ShowVideo` VR branch) and renders the scene twice per frame with per-eye projection matrices into runtime-allocated swapchain FBOs.
 
-## Setup: openxr_loader.dll requirement
+## Setup: openxr_loader.dll
 
-**CRITICAL**: VR mode requires `openxr_loader.dll` in the build output directory (`build/Debug/` or `build/Release/`). This DLL is provided by Meta's OpenXR runtime.
+**VR mode requires `openxr_loader.dll`** (OpenXR runtime loader from Meta).
 
-### How to get openxr_loader.dll
+**Good news:** The DLL is **included in this repository** at `openxr_loader.dll` for end-user convenience. 
 
-**Option 1** (Recommended): Install **Meta Horizon Link** (formerly Meta Quest Link)
-- Download from [Meta Developer](https://www.meta.com/developers/webxr/)
-- Installs to: `C:/Program Files/Meta/MetaXREngine/openxr_loader.dll`
-- CMakeLists.txt will auto-detect and copy it during build
+**Build process:** CMakeLists.txt automatically copies it to the build output directory (`build/Debug/` and `build/Release/`) during the build step.
 
-**Option 2**: Manual copy
-- Locate `openxr_loader.dll` from any OpenXR-enabled application or Meta runtime installation
-- Copy to `build/Debug/` and `build/Release/` directories
-- CMakeLists.txt will recognize it and include in build
+**If you prefer to use a different version:** You can optionally replace `openxr_loader.dll` with a newer version from Meta Horizon Link:
+1. Install [Meta Horizon Link](https://www.meta.com/developers/webxr/)
+2. Copy `C:/Program Files/Meta/MetaXREngine/openxr_loader.dll` over the repo version
+3. Rebuild; CMakeLists.txt will include it in build output
 
-**If DLL is missing**: The build will warn you, and VR will not launch (flatscreen still works). You'll see "Run-Time Check failure" or Meta Horizon Link failing to launch the game.
+**If DLL is missing:** VR mode will fail to launch (flatscreen still works). See [BUILD_REQUIREMENTS.md](BUILD_REQUIREMENTS.md) troubleshooting section.
 
 ## Implemented components
 

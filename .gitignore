@@ -13,7 +13,8 @@ reshade-shaders/
 /OpenCarnivores.map
 /SDL2.dll
 /OpenAL32.dll
-/openxr_loader.dll
+# SOURCEPORT: openxr_loader.dll is included in repo for end-user convenience
+# (avoids requirement to manually obtain from Meta Horizon Link)
 /display.cfg
 
 # dgVoodoo2 wrapper (downloaded separately)
