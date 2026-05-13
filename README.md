@@ -36,11 +36,24 @@ In VR (OpenXR headset detected), a **VR Graphics** submenu appears with VR-speci
 - **Map Scale** — adjusts world size perception
 - **Supersampling** — render above headset native resolution (100–200%); trades visual quality for framerate
 
+### VR prerequisites
+
+To play in VR (Meta Quest 3, HTC Vive, Valve Index, etc.):
+1. **Install Meta Horizon Link** (the OpenXR runtime) from [Meta Developer](https://www.meta.com/developers/webxr/), even if using a non-Meta headset
+   - This provides `openxr_loader.dll`, which OpenCarnivores requires
+   - The release zip includes `openxr_loader.dll`, so no extra setup is needed
+2. Connect your headset via USB or Wi-Fi
+3. Launch `OpenCarnivores.exe` — it will detect the headset and launch in stereo VR mode
+
+**Note for developers building from source**: If `openxr_loader.dll` is not found in the build output, the CMake build will warn you. See [VR.md](VR.md) for how to obtain it.
+
 ### Troubleshooting
+
 - **"Missing file" or black screen on launch** — you probably don't have the `HUNTDAT` folder next to `OpenCarnivores.exe`. Re-check Step 3.
 - **Game is too dark or too bright** — open the in-game Options menu and adjust the Brightness slider; it updates live.
 - **Resolution looks wrong** — open Options → Video and pick a resolution from the list. The choice is saved to `display.cfg`.
 - **Terrain looks shimmery or blurry at distance** — increase Anisotropic Filtering in Video Options (Medium or High recommended).
+- **VR not launching** — verify `openxr_loader.dll` is present next to `OpenCarnivores.exe`. If missing, download the release zip which includes it, or install Meta Horizon Link.
 - **VR performance drops when zooming out** — Render Distance in VR is capped at 110 units; increasing the in-game view range slider beyond ~78% will maintain the cap but won't draw more terrain.
 
 ---

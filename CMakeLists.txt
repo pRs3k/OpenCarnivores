@@ -152,7 +152,37 @@ if(RENDERER STREQUAL "opengl")
             "$<TARGET_FILE_DIR:OpenCarnivores>/shaders"
         COMMENT "Copying shaders"
     )
-    # SOURCEPORT: openxr_loader.dll must be present in build output for VR.
-    # This is provided by the Meta XR runtime on the system. If missing,
-    # copy from backup or the Meta/OpenXR installation directory.
+
+    # SOURCEPORT: openxr_loader.dll — required for VR runtime support.
+    # This DLL is provided by Meta's OpenXR runtime (Meta Horizon Link/Meta Quest Link).
+    # Build post-step attempts to locate and copy it; if not found, VR will not work.
+    set(OPENXR_DLL_CANDIDATES
+        "C:/Program Files/Meta/MetaXREngine/openxr_loader.dll"
+        "${CMAKE_BINARY_DIR}/Release/openxr_loader.dll"
+        "${CMAKE_BINARY_DIR}/Debug/openxr_loader.dll"
+        "${CMAKE_BINARY_DIR}/openxr_loader.dll"
+        "${CMAKE_SOURCE_DIR}/openxr_loader.dll"
+    )
+
+    set(OPENXR_DLL_FOUND FALSE)
+    foreach(DLL_PATH ${OPENXR_DLL_CANDIDATES})
+        if(EXISTS "${DLL_PATH}")
+            add_custom_command(TARGET OpenCarnivores POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${DLL_PATH}"
+                    "$<TARGET_FILE_DIR:OpenCarnivores>/openxr_loader.dll"
+                COMMENT "Copying openxr_loader.dll"
+            )
+            set(OPENXR_DLL_FOUND TRUE)
+            break()
+        endif()
+    endforeach()
+
+    if(NOT OPENXR_DLL_FOUND)
+        message(WARNING
+            "openxr_loader.dll not found. VR will not work.\n"
+            "Install Meta Horizon Link, or copy openxr_loader.dll to project root or build/ directory.\n"
+            "See VR.md for setup instructions."
+        )
+    endif()
 endif()
