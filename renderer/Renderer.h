@@ -90,6 +90,9 @@ public:
     // --- Display info ---
     virtual bool IsRGB565() const = 0;
     virtual int  GetTextureMemory() const = 0;
+
+    // SOURCEPORT: post-processing pipeline accessor (returns nullptr if not available)
+    virtual void* GetPostProcessingPipeline() const { return nullptr; }
 };
 
 // Global renderer instance — set during initialization

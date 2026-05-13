@@ -6,6 +6,7 @@
 #include <SDL.h>
 #include <SDL_syswm.h>
 #include "renderer/RendererGL.h"
+#include "renderer/PostProcessing.h"
 #include "HotReload.h"
 #include "VFS.h"
 #include "Gamepad.h"
@@ -2234,8 +2235,12 @@ void ProcessGame()
 
     drawSceneStage = "ShowVideo";
     ShowVideo();
-    // SOURCEPORT: Phase 2 post-processing effects (flatscreen)
-    // XR::ApplyEffects();
+    // SOURCEPORT: Phase 1 post-processing effects (flatscreen)
+    if (g_Renderer) {
+        if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
+            pipeline->ApplyEffects();
+        }
+    }
     drawSceneStage = "frameDone";
 }
 
@@ -2673,8 +2678,12 @@ int main(int argc, char* argv[])
                     XR::SampleVR();  // SOURCEPORT: moved here so PollControllers() in BeginFrame has fresh state
                     ProcessGame();
                     XR::EndFrame();
-                    // SOURCEPORT: Phase 2 post-processing effects
-                    // XR::ApplyEffects();
+                    // SOURCEPORT: Phase 1 post-processing effects (VR)
+                    if (g_Renderer) {
+                        if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
+                            pipeline->ApplyEffects();
+                        }
+                    }
                 }
                 else SDL_Delay(100);
                 // SOURCEPORT: ExitTime expiry sets this instead of DoHalt

@@ -9,6 +9,7 @@
 #undef min
 #undef max
 #include "RendererGL.h"
+#include "PostProcessing.h"
 #include "../Materials.h"
 #include "../CustomMaterials.h"
 #include "../HotReload.h"
@@ -397,6 +398,13 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
 
     CreateBuffers();
 
+    // SOURCEPORT: Phase 1 post-processing pipeline initialization
+    m_postProcessingPipeline = new PostProcessingPipeline();
+    if (!m_postProcessingPipeline->Initialize(m_width, m_height)) {
+        fprintf(stderr, "ERROR: PostProcessingPipeline initialization failed\n");
+        return false;
+    }
+
     // Initial GL state
     glViewport(0, 0, m_width, m_height);
     glEnable(GL_DEPTH_TEST);
@@ -587,6 +595,12 @@ void RendererGL::InvalidateTextureCache() {
 }
 
 void RendererGL::Shutdown() {
+    // SOURCEPORT: Clean up post-processing pipeline
+    if (m_postProcessingPipeline) {
+        delete m_postProcessingPipeline;
+        m_postProcessingPipeline = nullptr;
+    }
+
     // Clean up textures
     for (auto& pair : m_texCache) {
         glDeleteTextures(1, &pair.second.texId);

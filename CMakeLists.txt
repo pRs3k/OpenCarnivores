@@ -38,6 +38,7 @@ if(RENDERER STREQUAL "opengl")
 
     set(RENDERER_SOURCES
         renderer/RendererGL.cpp
+        renderer/PostProcessing.cpp
         ${GLAD_DIR}/src/gl.c
         ${LUA_SOURCES}
     )

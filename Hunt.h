@@ -936,6 +936,38 @@ _EXTORNOT int  OptAnisoLevel, OptSSFactor;
 _EXTORNOT BOOL SLOW, DEBUG, MORPHP, MORPHA;
 _EXTORNOT HANDLE hlog;
 
+// SOURCEPORT: Phase 1 post-processing effect toggles and parameters (inline for C++17)
+// Bloom effect: bright pixel extraction + separable Gaussian blur
+#ifdef _MAIN_
+bool   g_enableBloom = false;
+float  g_bloomIntensity = 1.0f;         // 0.0-1.0 (additive blend factor)
+float  g_bloomThreshold = 0.8f;         // 0.0-2.0 (bright pixel threshold)
+float  g_bloomKnee = 0.1f;              // 0.0-0.5 (soft threshold knee)
+
+// Tone mapping: HDR to SDR conversion with exposure adjustment
+bool   g_enableToneMapping = false;
+float  g_tonemapExposure = 1.0f;        // 0.5-2.0 (HDR exposure pre-tone)
+
+// Screen-space reflections: ray-marched reflections on shiny surfaces
+bool   g_enableSSR = false;
+float  g_ssrIntensity = 0.5f;           // 0.0-1.0 (reflection blend factor)
+
+// Dynamic shadow mapping: cascaded PCF shadows from sun light
+bool   g_enableShadows = false;
+int    g_shadowQuality = 2;             // 0=off, 1=low, 2=medium, 3=high
+#else
+extern bool   g_enableBloom;
+extern float  g_bloomIntensity;
+extern float  g_bloomThreshold;
+extern float  g_bloomKnee;
+extern bool   g_enableToneMapping;
+extern float  g_tonemapExposure;
+extern bool   g_enableSSR;
+extern float  g_ssrIntensity;
+extern bool   g_enableShadows;
+extern int    g_shadowQuality;
+#endif
+
 
 //========== for audio ==============//
 void  AddVoicev  (int, short int*, int);

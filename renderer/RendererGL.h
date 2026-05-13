@@ -9,6 +9,9 @@
 #include <unordered_map>
 #include <vector>
 
+// Forward declaration
+class PostProcessingPipeline;
+
 class RendererGL : public IRenderer {
 public:
     RendererGL();
@@ -84,6 +87,9 @@ public:
 
     // Returns a 1x1 white RGBA texture for untextured (vertex-color-only) rendering
     GLuint GetWhiteTexture();
+
+    // SOURCEPORT: post-processing pipeline accessor (overrides IRenderer)
+    void* GetPostProcessingPipeline() const override { return m_postProcessingPipeline; }
 
     // Discard all cached GPU textures so they are re-uploaded on next use.
     // Call before LoadResources() whenever texture pixel data changes in-place
@@ -181,4 +187,7 @@ private:
     // Fullscreen quad VAO for overlays
     GLuint m_fsQuadVao = 0;
     GLuint m_fsQuadVbo = 0;
+
+    // SOURCEPORT: Post-processing pipeline for bloom, tone mapping, SSR, shadows
+    PostProcessingPipeline* m_postProcessingPipeline = nullptr;
 };
