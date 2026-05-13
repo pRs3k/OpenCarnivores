@@ -185,7 +185,7 @@ void PreCashGroundModel()
 	  int yy = (CCY + y) & gMapMask;
 
 	  v[0].x = xx*256 - CameraX;
-      v[0].z = yy*256 - CameraZ;	  
+      v[0].z = yy*256 - CameraZ;
 	  v[0].y = (float)((int)HMap[yy][xx])*ctHScale - CameraY;
 
 
@@ -828,11 +828,18 @@ SKIPWEAPON:
 		int dh = TrophyPic.H * WinH / 480;
 		int x0 = WinW - dw - 16;
 		int y0 = WinH - dh - 12;
-		if (!TrophyMode)
+		float textScale = 1.0f;
+		if (!TrophyMode) {
+			// SOURCEPORT: in VR, position and scale trophy like the exit graphic (centered, eye level, smaller)
+			textScale = 0.10f;
+			dw = dw * 65 / 100;
+			dh = dh * 65 / 100;
 			x0 = VideoCX - dw / 2;
+			y0 = WinH / 2.75 - dh / 2;
+		}
 
         DrawPictureScaled(x0, y0, dw, dh, TrophyPic);
-        DrawTrophyText(x0, y0);
+        DrawTrophyText(x0, y0, textScale);
 
 		if (TrophyTime) {
 			if (!g_vrSecondEyePass) {
@@ -2127,6 +2134,32 @@ void ProcessGame()
             ShowControlElements();
             g_vrSecondEyePass = false;
 
+            // SOURCEPORT: VR binoculars vignette — black out edges around binocular graphic
+            if (BINMODE) {
+                extern RendererGL* g_glRenderer;
+                if (g_glRenderer) {
+                    glDisable(GL_DEPTH_TEST);
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+                    // Black bars on the edges (top, bottom, left, right) without center bar
+                    int edgeWidth = (int)(WinW * 0.25f);        // Width of left/right black bars
+                    int edgeHeightTop = (int)(WinH * 0.15f);    // Height of top black bar
+                    int edgeHeightBottom = (int)(WinH * 0.35f); // Height of bottom black bar
+
+                    // Top bar (full width, reduced height to avoid covering binoculars)
+                    g_glRenderer->FillRect(0, 0, WinW, edgeHeightTop, 0xFF000000u);
+                    // Bottom bar (full width, increased height to cover world)
+                    g_glRenderer->FillRect(0, WinH - edgeHeightBottom, WinW, edgeHeightBottom, 0xFF000000u);
+                    // Left bar (partial height to avoid center bar)
+                    g_glRenderer->FillRect(0, edgeHeightTop, edgeWidth, WinH - edgeHeightTop - edgeHeightBottom, 0xFF000000u);
+                    // Right bar (partial height to avoid center bar)
+                    g_glRenderer->FillRect(WinW - edgeWidth, edgeHeightTop, edgeWidth, WinH - edgeHeightTop - edgeHeightBottom, 0xFF000000u);
+
+                    glEnable(GL_DEPTH_TEST);
+                }
+            }
+
             // SOURCEPORT: blit eye 1 to the SDL companion window while the swapchain
             // image is still valid (before ReleaseEyeImage hands it to the compositor).
             // This replaces the post-loop DrawScene for the companion window, saving a
@@ -2503,6 +2536,7 @@ int main(int argc, char* argv[])
         _GameState    = 0;   // force ReInitGame() on first ProcessGame()
         RestartMode   = FALSE;
         ExitTime      = 0;   // SOURCEPORT: reset so second hunt doesn't immediately exit
+        RunMode       = TRUE; // SOURCEPORT: enable run mode by default
         bool huntDone = false;
 
         while (!huntDone) {

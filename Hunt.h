@@ -501,7 +501,7 @@ void ProcessMapW2(int x, int y, int r);
 void DrawTPlane(BOOL);
 void DrawTPlaneClip(BOOL);
 void ClearVideoBuf();
-void DrawTrophyText(int, int);
+void DrawTrophyText(int, int, float = 1.0f);
 void DrawHMap();
 void RenderCharacter(int);
 void RenderShip();

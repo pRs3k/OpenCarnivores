@@ -2,6 +2,7 @@
 #include "Bindings.h"
 #include "Gamepad.h"
 #include "Scripting.h"
+#include "XR.h"
 
 
 /*typedef struct tagAudioQuad
@@ -615,6 +616,11 @@ void ApplyViewRange()
 	int v = 42 + ((int)OptViewR * (int)OptViewR) / 300;
 	if (v < 20)  v = 20;
 	if (v > 250) v = 250;
+	// SOURCEPORT: VR stereo rendering doubles terrain workload (per-eye loop).
+	// Terrain tiles grow as O(r²), so ctViewR increase of +20% yields ~44% more tiles.
+	// With stereo that's 88% more total tiles/frame, causing steep framerate cliff.
+	// Cap render distance lower in VR to maintain 90 FPS.
+	if (XR::StereoActive() && v > 110) v = 110;
 	ctViewR = v;
 }
 
@@ -767,7 +773,7 @@ void InitEngine()
     OptBrightness  = 0;
 
     // SOURCEPORT: graphics quality options defaults
-    OptAnisoLevel = 2;   // Medium (4x)
+    OptAnisoLevel = 3;   // High (8x) — reduces anisotropic aliasing on oblique ground tiles
     OptSSFactor   = 100; // 100% (no supersampling)
 
     // SOURCEPORT: load persisted display/graphics settings before command-line args so
@@ -1839,7 +1845,7 @@ void LoadDisplayConfig()
         ReadFile(h, &OptSSFactor,   4, &l, NULL);
     } else {
         // v2 or earlier: initialize options with defaults
-        OptAnisoLevel = 2;   // Medium (4x)
+        OptAnisoLevel = 3;   // High (8x) — reduces anisotropic aliasing on oblique ground tiles
         OptSSFactor = 100;   // 100% (no supersampling)
     }
     CloseHandle(h);

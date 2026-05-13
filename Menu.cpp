@@ -477,10 +477,8 @@ static void MenuEnd() {
                               0, blitY0, dstW, blitY0 + blitH,
                               GL_COLOR_BUFFER_BIT, GL_LINEAR);
 
-            // Draw controller cursor dot over the blit.
+            // SOURCEPORT: Draw controller cursor as crosshair instead of circle.
             if (s_ctrlCursorValid) {
-                // Map screen coords (0..WinW, 0..WinH, Y down) → menu texture
-                // coords (0..dstW, 0..dstH, Y up for GL).
                 int cx = (int)(s_ctrlCursorX * dstW / WinW);
                 // s_ctrlCursorY is Y-down; OpenGL FBO origin is Y-up.
                 int cy_down = blitY0 + (int)(s_ctrlCursorY * blitH / WinH);
@@ -488,15 +486,25 @@ static void MenuEnd() {
 
                 glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)menuFbo);
                 glEnable(GL_SCISSOR_TEST);
-                const int OR = 9, IR = 6;  // outer/inner radius (menu-texture px)
-                // Black border ring
-                glScissor(cx - OR, cy - OR, OR * 2, OR * 2);
+
+                // Draw crosshair cursor (+ shape)
+                const int sz = 8;  // size of crosshair
+                const int th = 2;  // thickness
+
+                // Horizontal bar - black
+                glScissor(cx - sz, cy - th, sz * 2, th * 2);
                 glClearColor(0.f, 0.f, 0.f, 1.f);
                 glClear(GL_COLOR_BUFFER_BIT);
-                // White filled centre
-                glScissor(cx - IR, cy - IR, IR * 2, IR * 2);
+
+                // Vertical bar - black
+                glScissor(cx - th, cy - sz, th * 2, sz * 2);
+                glClear(GL_COLOR_BUFFER_BIT);
+
+                // Center dot - white
+                glScissor(cx - 1, cy - 1, 2, 2);
                 glClearColor(1.f, 1.f, 1.f, 1.f);
                 glClear(GL_COLOR_BUFFER_BIT);
+
                 glDisable(GL_SCISSOR_TEST);
             }
 
@@ -1423,6 +1431,9 @@ static void RunOptions(bool& appQuit) {
     SafeLoadTGA(slBar, "HUNTDAT\\MENU\\SL_BAR.TGA");
     SafeLoadTGA(slBut, "HUNTDAT\\MENU\\SL_BUT.TGA");
 
+    // Track which slider is currently being dragged (to prevent multiple sliders responding)
+    static int dragSliderTx = -1, dragSliderTy = -1;
+
     // Draw horizontal slider using SL_BAR.TGA / SL_BUT.TGA; returns updated value on click.
     auto DrawSlider = [&](int tx, int ty, int tw, int th,
                           int val, int minVal, int maxVal) -> int {
@@ -1445,13 +1456,35 @@ static void RunOptions(bool& appQuit) {
             else
                 g_glRenderer->FillRect(thumbX, thumbY, butW, butH + 4, 0xFFC09060);
         }
-        if (gMI.lHeld && gMI.x >= tx && gMI.x < tx+tw &&
-                         gMI.y >= ty-4 && gMI.y < ty+th+4) {
+        // Handle slider dragging: track which slider is active to prevent multi-slider response
+        if (!gMI.lHeld) {
+            dragSliderTx = dragSliderTy = -1;  // Mouse released, clear drag state
+        } else if (dragSliderTx == tx && dragSliderTy == ty) {
+            // This slider is currently being dragged; continue drag with free movement
             int butH   = (slBut.H > 0) ? slBut.H * th / std::max(1, slBar.H) : th + 4;
             int butW   = (slBut.W > 0) ? slBut.W * butH / std::max(1, slBut.H) : 8;
             int travel = tw - butW;
-            int v = (travel > 0) ? minVal + (gMI.x - tx) * range / travel : minVal;
+            int clampedX = std::max(tx, std::min(gMI.x, tx + tw));
+            int v = (travel > 0) ? minVal + (clampedX - tx) * range / travel : minVal;
             return std::max(minVal, std::min(v, maxVal));
+        } else if (dragSliderTx == -1) {
+            // No slider currently being dragged; check if this one is clicked on the button
+            int butH   = (slBut.H > 0) ? slBut.H * th / std::max(1, slBar.H) : th + 4;
+            int butW   = (slBut.W > 0) ? slBut.W * butH / std::max(1, slBut.H) : 8;
+            int travel = tw - butW;
+            int thumbX = tx + (travel > 0 ? (val - minVal) * travel / range : 0);
+
+            // Check if cursor is on or near the button (with margin)
+            int buttonMargin = 8;
+            if (gMI.x >= thumbX - buttonMargin && gMI.x < thumbX + butW + buttonMargin &&
+                gMI.y >= ty-4 && gMI.y < ty+th+4) {
+                dragSliderTx = tx;
+                dragSliderTy = ty;
+                // Apply drag for this frame
+                int clampedX = std::max(tx, std::min(gMI.x, tx + tw));
+                int v = (travel > 0) ? minVal + (clampedX - tx) * range / travel : minVal;
+                return std::max(minVal, std::min(v, maxVal));
+            }
         }
         return val;
     };
@@ -1720,7 +1753,7 @@ static void RunOptions(bool& appQuit) {
             };
 
             int ox  = WinW * 80 / 800;
-            int y   = WinH * 350 / 600;
+            int y   = WinH * 335 / 600;
             int vx  = ox + lblW;
             int tvW = WinW * 130 / 800;  // clickable value column width
 
@@ -1816,7 +1849,7 @@ static void RunOptions(bool& appQuit) {
 
             // Supersampling (VR eye FBO multiplier; ignored on flatscreen)
             {
-                MTMed("Supersampling (VR)", ox, y, 0x00AC6D24);
+                MTMed("Supersampling (VR Only)", ox, y, 0x00AC6D24);
                 int prev = OptSSFactor;
                 OptSSFactor = DrawSlider(vx, y+2, slW, lnH-6, OptSSFactor, 100, 200);
                 if (OptSSFactor != prev) {
@@ -1833,10 +1866,10 @@ static void RunOptions(bool& appQuit) {
         // Click any value column to rebind; ESC cancels an active rebind.
         {
             char kbuf[32];
-            int ox   = WinW * 410 / 800;   // action label left edge
-            int kx   = WinW * 495 / 800;   // keyboard column
-            int px   = WinW * 578 / 800;   // gamepad column
-            int vx   = WinW * 661 / 800;   // VR controller column
+            int ox   = WinW * 430 / 800;   // action label left edge
+            int kx   = WinW * 515 / 800;   // keyboard column
+            int px   = WinW * 598 / 800;   // gamepad column
+            int vx   = WinW * 681 / 800;   // VR controller column
             int colW = WinW *  78 / 800;   // clickable width per column
             int y    = WinH * 80 / 600;
             int lnH2 = WinH * 24 / 600;
@@ -1906,11 +1939,11 @@ static void RunOptions(bool& appQuit) {
             }
             // Mouse sensitivity
             MTMed("Mouse sensitivity", ox, y, 0x00AC6D24);
-            OptMsSens = DrawSlider(kx, y+2, WinW*130/800, lnH2-6, OptMsSens, 1, 20);
+            OptMsSens = DrawSlider(kx + 20, y - 14, WinW*130/800, lnH2-6, OptMsSens, 1, 20);
             // Display percentage (10 = 100%)
             char buf[32];
             wsprintf(buf, "%d%%", (OptMsSens * 100) / 10);
-            MT(buf, kx + WinW*130/800 + 8, y, 0x00C0C0C0);
+            MT(buf, kx + 20 + WinW*130/800 + 8, y - 14, 0x00C0C0C0);
         }
 
         // BACK

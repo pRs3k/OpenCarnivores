@@ -1854,13 +1854,17 @@ static void gl_SetAnisotropy()
         }
     }
     if (maxAniso > 1.0f) {
-        GLfloat aniso = maxAniso < 16.0f ? maxAniso : 16.0f;
+        // SOURCEPORT: respect OptAnisoLevel user setting (1=2x, 2=4x, 3=8x, 4=max)
+        extern int OptAnisoLevel;
+        GLfloat aniso;
+        if (OptAnisoLevel == 1) aniso = 2.0f;
+        else if (OptAnisoLevel == 2) aniso = 4.0f;
+        else if (OptAnisoLevel == 3) aniso = 8.0f;
+        else aniso = maxAniso < 16.0f ? maxAniso : 16.0f;  // OptAnisoLevel == 4
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, aniso);
     }
-    // SOURCEPORT: LOD bias is now applied in the fragment shader via textureLod()
-    // so it works on NVIDIA regardless of the "Negative LOD bias: Clamp" driver
-    // setting.  Do NOT set GL_TEXTURE_LOD_BIAS here — it would double-apply on
-    // non-NVIDIA hardware where the texture-object bias is not clamped.
+    // SOURCEPORT: LOD bias is now set per-texture in gl_UploadRGBA based on texture type
+    // (foliage: -1.0f for sharpness, terrain: +0.25f to soften and reduce shimmer)
 }
 
 // SOURCEPORT: shared RGBA8 upload path — used by both the 16-bit decode and
@@ -1941,14 +1945,18 @@ static GLuint gl_UploadRGBA(const uint32_t* rgba, int w, int h)
         for (int s = (w > h ? w : h); s > 1; s >>= 1, maxLvl++);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, hasTransparency ? maxLvl : 0);
     }
-    if (hasTransparency) {
-        // Foliage/alpha-keyed: keep trilinear so averaged alpha coverage suppresses shimmer.
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
-    } else {
-        // Opaque: no mip selection — driver LOD bias cannot interfere.
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
-    }
+    // SOURCEPORT: always use trilinear for both transparent and opaque textures.
+    // Mipmaps reduce aliasing at distance; per-texture LOD bias set below.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
+
+    // SOURCEPORT: per-texture LOD bias — foliage sharp, terrain soft to reduce shimmer
+    if (hasTransparency) {
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -2.0f);  // Foliage: very sharp detail on leaves/bushes
+    } else {
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, +1.0f);  // Terrain: very soft to reduce shimmer
+    }
+
     gl_SetAnisotropy();
     return tex;
 }
@@ -2562,13 +2570,13 @@ void ddTextOut(int x, int y, LPSTR t, int color)
 }
 
 
-void DrawTrophyText(int x0, int y0)
+void DrawTrophyText(int x0, int y0, float textScale)
 {
 	int x;
 	SmallFont = TRUE;
-    HFONT oldfont = (HFONT)SelectObject(hdcMain, fnt_Small);  
+    HFONT oldfont = (HFONT)SelectObject(hdcMain, fnt_Small);
 	int tc = TrophyBody;
-	
+
 	int   dtype = TrophyRoom.Body[tc].ctype;
 	int   time  = TrophyRoom.Body[tc].time;
 	int   date  = TrophyRoom.Body[tc].date;
@@ -2578,10 +2586,11 @@ void DrawTrophyText(int x0, int y0)
 	float range = TrophyRoom.Body[tc].range;
 	char t[32];
 
-	// SOURCEPORT: scale offsets and line spacing proportionally to screen height
-	const int ls = 16 * WinH / 480;
-	x0 += 14 * WinH / 480;
-	y0 += 18 * WinH / 480;
+	// SOURCEPORT: scale offsets and line spacing proportionally to screen height and text scale
+	// Line spacing uses a larger multiplier to prevent overlap when text is scaled down
+	const int ls = (int)(90 * WinH / 480 * textScale);
+	x0 += (int)(60 * WinH / 480 * textScale);
+	y0 += (int)(100 * WinH / 480 * textScale);
     x = x0;
 	ddTextOut(x, y0      , "Name: ", 0x00BFBFBF);  x+=ddTextW("Name: ");
     ddTextOut(x, y0      , DinoInfo[dtype].Name, 0x0000BFBF);
@@ -3815,29 +3824,29 @@ void RenderGround()
 
    for (r=r-1; r>0; r--) {
 #endif
-     
+
      for (int x=r; x>0; x--) {
       ProcessMap(CCX-x, CCY+r, r);
       ProcessMap(CCX+x, CCY+r, r);
-	  ProcessMap(CCX-x, CCY-r, r); 		
-      ProcessMap(CCX+x, CCY-r, r); 	
-     }    	 
-    
-     ProcessMap(CCX, CCY-r, r); 	
-     ProcessMap(CCX, CCY+r, r); 	
+	  ProcessMap(CCX-x, CCY-r, r);
+      ProcessMap(CCX+x, CCY-r, r);
+     }
+
+     ProcessMap(CCX, CCY-r, r);
+     ProcessMap(CCX, CCY+r, r);
 
 	 for (int y=r-1; y>0; y--) {
       ProcessMap(CCX+r, CCY-y, r);
       ProcessMap(CCX+r, CCY+y, r);
-      ProcessMap(CCX-r, CCY+y, r); 
+      ProcessMap(CCX-r, CCY+y, r);
       ProcessMap(CCX-r, CCY-y, r);
      }
      ProcessMap(CCX-r, CCY, r);
      ProcessMap(CCX+r, CCY, r);
-   
-   } 
 
-   ProcessMap(CCX, CCY, 0);   
+   }
+
+   ProcessMap(CCX, CCY, 0);
 }
 
 
@@ -3918,11 +3927,8 @@ void RenderWater()
      for (int x=-ctViewR1+2; x<ctViewR1; x++)
        ProcessMapW(CCX+x, CCY+y, max(abs(x), abs(y)));
 #else
-   // SOURCEPORT: GL path — skip coarse 2×2 water LOD (ProcessMapW2). The
-   // extended view distance made its per-quad 4-corner fmWaterA check drop
-   // 2×2 blocks at water edges, leaving rectangular holes in distant water.
-   // Use fine ProcessMapW for the full ctViewR radius instead — matches the
-   // terrain-LOD-disabled approach in RenderGround above.
+   // SOURCEPORT: GL path — keep fine water detail for all rings (no ProcessMapW2 LOD).
+   // ProcessMapW2 has edge detection issues causing holes at region boundaries.
    for (int y=-ctViewR+2; y<ctViewR; y++)
      for (int x=-ctViewR+2; x<ctViewR; x++)
        ProcessMapW(CCX+x, CCY+y, max(abs(x), abs(y)));

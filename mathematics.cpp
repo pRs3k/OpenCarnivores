@@ -53,9 +53,12 @@ Vector3d RotateVector(Vector3d& v)
   float vx = v.x * ca + v.z * sa;
   float vz = v.z * ca - v.x * sa;
   float vy = v.y;
-  vv.x = vx;
-  vv.y = vy * cb - vz * sb;
-  vv.z = vz * cb + vy * sb;
+  float rx = vx;
+  float ry = vy * cb - vz * sb;
+  vv.z    = vz * cb + vy * sb;
+  // SOURCEPORT: apply inverse roll (head tilt) in camera XY plane
+  vv.x = rx * cg + ry * sg;
+  vv.y = ry * cg - rx * sg;
   return vv;
 }
 
@@ -572,7 +575,40 @@ void InitClips()
 {
 //	float XFOV = atan(CameraW , VideoCX); //1.6
 //	float YFOV = atan(CameraH , VideoCY);
-	float xx = (VideoCX+1) / (CameraW);
+	// SOURCEPORT: ClipA clips the RIGHT screen boundary; ClipC clips the LEFT.
+	// ClipA's inside-test is: vx/|vz| ≤ xx_right = (WinW-VideoCX+1)/CameraW.
+	// This maps to scrx ≤ WinW+1 — just outside the right edge, so nothing
+	// on-screen is clipped on the right.
+	// ClipC's inside-test is: vx/|vz| ≥ -xx_left = -(VideoCX+1)/CameraW.
+	// This maps to scrx ≥ -1 — just outside the left edge.
+	// With a symmetric principal point (VideoCX = WinW/2) both tangents are equal
+	// and behaviour is unchanged.  For asymmetric VR (e.g. Quest 3 right eye where
+	// VideoCX ≈ 0.38×WinW, temporal right tangent ≈ 1.376 vs nasal ≈ 0.839):
+	//   old code: ClipA used xx = (VideoCX+1)/CameraW ≈ 0.839 → clipped at ~76% WinW,
+	//             leaving close terrain (r≤8, DrawTPlaneClip) missing in the
+	//             temporal-right bottom corner → "transparent square".
+	//   new code: ClipA uses xx_right = (WinW-VideoCX+1)/CameraW ≈ 1.376 → clips
+	//             at ~100% WinW, matching the actual screen edge.
+	float xx_left  = (VideoCX        + 1) / (CameraW);  // nasal  half-tangent (left  for right eye, right for left eye)
+	float xx_right = (WinW - VideoCX + 1) / (CameraW);  // temporal half-tangent (right for right eye, left for left eye)
+	// SOURCEPORT: stereo close-object split fix.
+	// The nasal half-tangent (≈0.839, ≈40°) is narrower than the temporal (≈1.376, ≈54°).
+	// Setting the nasal-side clip plane at 40° causes the following per-eye asymmetry:
+	//   - Right eye (nasal=left): ClipC clips geometry beyond 40° to the LEFT.
+	//   - Left  eye (nasal=right): ClipA clips geometry beyond 40° to the RIGHT.
+	// The per-eye IPD offset (~4 GU) shifts close objects ~4/D radians laterally.
+	// At D≈122 GU (3ft), a body-width (±100 GU) object subtends ≈40° — so its
+	// outer vertices land just beyond 40° in the nasal eye, clipped out there but
+	// visible in the temporal eye.  Each eye loses the opposite extremity of the
+	// same object, making it appear split/doubled and impossible to fuse.
+	// Fix: use the wider (temporal) tangent for BOTH ClipA and ClipC so that no
+	// geometry visible in either eye is software-clipped.  Anything genuinely
+	// outside the physical screen (beyond temporal ≈54°) is handled by GL viewport
+	// clipping.  This does not reintroduce the transparent-corner bug — that was
+	// caused by ClipA using the nasal tangent for the temporal-side RIGHT boundary
+	// (already fixed).  Using temporal for the nasal-side LEFT boundary only
+	// widens the left clip, eliminating the asymmetric close-object culling.
+	float xx_wide  = fmaxf(xx_left, xx_right) * 1.05f;   // temporal tangent + 5% margin
 	// SOURCEPORT: use separate top/bottom tangents so clip planes match the
 	// actual screen edges under an asymmetric VR principal point.
 	// In symmetric 4:3: VideoCY == WinH/2, so yy_top == yy_bot and behaviour
@@ -581,21 +617,21 @@ void InitClips()
 	// ClipB (bottom plane) must use yy_bot; using yy_top instead clips terrain
 	// at scry > 2*VideoCY (~90% of WinH) rather than at WinH, leaving a grey
 	// strip at the bottom of the eye FBO.
-	float yy_top = (VideoCY+2)          / (CameraH);  // top-edge tangent  ≈ tU
-	float yy_bot = (WinH - VideoCY + 2) / (CameraH);  // bottom-edge tangent ≈ tD
-	float LX     = sqrtf(1.0f + xx      * xx);
-	float LY_top = sqrtf(1.0f + yy_top  * yy_top);
-	float LY_bot = sqrtf(1.0f + yy_bot  * yy_bot);
+	float yy_top   = (VideoCY+2)          / (CameraH);  // top-edge tangent  ≈ tU
+	float yy_bot   = (WinH - VideoCY + 2) / (CameraH);  // bottom-edge tangent ≈ tD
+	float LX_wide  = sqrtf(1.0f + xx_wide  * xx_wide);
+	float LY_top   = sqrtf(1.0f + yy_top   * yy_top);
+	float LY_bot   = sqrtf(1.0f + yy_bot   * yy_bot);
 
-   ClipA.v1.x = - (float)xx / LX;
+   ClipA.v1.x = - (float)xx_wide / LX_wide;
    ClipA.v1.y = 0;
-   ClipA.v1.z =   (float)1 / LX;
+   ClipA.v1.z =   (float)1       / LX_wide;
    ClipA.v2.x = 0; ClipA.v2.y = 1; ClipA.v2.z = 0;
    MulVectorsVect(ClipA.v1, ClipA.v2, ClipA.nv);
 
-   ClipC.v1.x = + (float)xx / LX;
+   ClipC.v1.x = + (float)xx_wide / LX_wide;
    ClipC.v1.y = 0;
-   ClipC.v1.z =   (float)1 / LX;
+   ClipC.v1.z =   (float)1       / LX_wide;
    ClipC.v2.x = 0; ClipC.v2.y =-1; ClipC.v2.z = 0;
    MulVectorsVect(ClipC.v1, ClipC.v2, ClipC.nv);
 

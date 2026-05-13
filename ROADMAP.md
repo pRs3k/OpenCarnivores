@@ -7,10 +7,8 @@
 - Virtual filesystem: wrap scattered path lookups in a VFS that can mount zips with priority (folders already implemented).
 - Dinosaurs are getting stuck on seemingly nothing, occasionally.
 - Dinosaurs killed swimming in water should sink to the ground
-- ✓ The text shown when leaving the world ("Preparing for evacuation...") is not aligned properly (the bottom row of text overlaps the top a little)
 - The sky renders correctly when looking straight up, but ripples/waves distort it when it gets very close to the horizon/furthest away from the player
-- In VR, the binoculars are not zooming in and are too far from the player. ✓ Text spacing fixed (name/weight/distance now properly spaced)
-- **In VR, sky textures shift when the player turns their head (yaw rotation).** Mathematical analysis identifies the root cause as the flat-plane TU formula giving `tu ∝ sin(CameraAlpha)` (oscillates, stalls at ±90°), contradicting world geometry which rotates monotonically. Cylindrical azimuth formula with perspective-correct scale was implemented but did not fix the issue. Root cause remains unknown; investigate whether the scale factor, sign, or fundamental formula approach is incorrect.
+- **In VR, sky textures shift when turning head.** Root cause: flat-plane UV math couples sky appearance to camera yaw. Attempted fixes (cylindrical UV, fixed world position, pitch-only vbase) all failed. Solution: replace with 3D dome model rendered at fixed world position through normal geometry pipeline.
 - Remove any dead code
 
 ## Specialized domains

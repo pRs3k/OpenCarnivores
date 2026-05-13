@@ -38,6 +38,9 @@ public:
     virtual void BeginFrame() = 0;
     virtual void EndFrame() = 0;   // Present/flip
     virtual void ClearBuffers() = 0;
+    // SOURCEPORT: restore engine-expected GL state clobbered by XR::EndFrame
+    // (glDepthFunc, glClearDepth, glBlend, shader program).
+    virtual void RestoreEngineGLState() = 0;
 
     // --- Texture management ---
     // Upload a 16-bit (RGB565 or RGB555) texture. Returns a handle.

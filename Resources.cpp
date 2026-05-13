@@ -1352,6 +1352,10 @@ void LoadResources()
 	SkyG = min(255,SkyG * (OptBrightness + 128) / 256);
 	SkyB = min(255,SkyB * (OptBrightness + 128) / 256);
 
+	// SOURCEPORT: Override sky color to sky blue (temporary until sky dome is implemented)
+	SkyR = 100;
+	SkyG = 160;
+	SkyB = 220;
 
     PrintLog("Loading textures:");
     for (int tt=0; tt<tc; tt++) {
@@ -1376,7 +1380,12 @@ void LoadResources()
 	PrintLoad("Loading models...");
     for (int mm=0; mm<mc; mm++) {
         ReadFile(hfile, &MObjects[mm].info, 64, &l, NULL);
-        MObjects[mm].info.Radius*=2;
+        // SOURCEPORT: YLo/YHi are terrain-height-scale values (each file unit = 2 GU)
+        // and need *=2.  Radius is a lateral game-unit distance stored at 1:1 scale —
+        // doubling it (as YLo/YHi are) made the collision sphere twice the intended
+        // size, stopping the player ~2 ft short of the visual tree/rock surface.
+        // circlerad and GrRad in the same struct are never doubled, confirming that
+        // only the height-derived fields need the ×2 conversion.
         MObjects[mm].info.YLo*=2;
         MObjects[mm].info.YHi*=2;
 		MObjects[mm].info.linelenght = (MObjects[mm].info.linelenght / 128) * 128;
