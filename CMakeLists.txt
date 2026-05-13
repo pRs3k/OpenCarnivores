@@ -152,4 +152,7 @@ if(RENDERER STREQUAL "opengl")
             "$<TARGET_FILE_DIR:OpenCarnivores>/shaders"
         COMMENT "Copying shaders"
     )
+    # SOURCEPORT: openxr_loader.dll must be present in build output for VR.
+    # This is provided by the Meta XR runtime on the system. If missing,
+    # copy from backup or the Meta/OpenXR installation directory.
 endif()
