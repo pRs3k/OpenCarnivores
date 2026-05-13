@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <math.h>
+#include <algorithm>
 
 #define _AUDIO_
 #include "audio.h"
@@ -66,7 +67,7 @@ int InitDirectSound( HWND hwnd)
 
 
    iTotal16SD = 0;
-   for( i = 0; i < iTotalSoundDevices; i++ ) {
+   for( int i = 0; i < iTotalSoundDevices; i++ ) {
       LPDIRECTSOUND lpds;
       if( DirectSoundCreate( &sdd[i].Guid, &lpds, NULL ) != DS_OK ) continue;
 
@@ -545,68 +546,28 @@ void Audio_MixAmbient3d()
 
 
 
-void Audio_MixSound(int DestAddr, int SrcAddr, int MixLen, int LVolume, int RVolume) 
+void Audio_MixSound(int DestAddr, int SrcAddr, int MixLen, int LVolume, int RVolume)
 {
-_asm {
-       mov      edi, DestAddr                    
-       mov      ecx, MixLen         
-       mov      esi, SrcAddr
-     }
-      
-SOUND_CYCLE :
+	// SOURCEPORT: Replaced x86 inline assembly with C++ implementation for x64 compatibility.
+	short* pDest = (short*)DestAddr;
+	short* pSrc = (short*)SrcAddr;
 
-_asm {                
-       movsx    eax, word ptr [esi]
-       imul     LVolume
-       sar      eax, 16
-       mov      bx, word ptr [edi]
-               
-       add      ax, bx
-       jo       LEFT_CHECK_OVERFLOW
-       mov      word ptr [edi], ax
-       jmp      CYCLE_RIGHT
- }
-LEFT_CHECK_OVERFLOW :
-__asm {
-       cmp      bx, 0
-       js       LEFT_MAX_NEGATIVE
-       mov      ax, 32767
-       mov      word ptr [edi], ax
-       jmp      CYCLE_RIGHT
-}
-LEFT_MAX_NEGATIVE :
-__asm  mov      word ptr [edi], -32767
-                           
-      
+	for (int i = 0; i < MixLen; i++) {
+		// Left channel
+		int left = (int)pSrc[0] * LVolume / 65536;
+		int destLeft = (int)pDest[0] + left;
+		if (destLeft > 32767) destLeft = 32767;
+		else if (destLeft < -32767) destLeft = -32767;
+		pDest[0] = (short)destLeft;
 
+		// Right channel
+		int right = (int)pSrc[0] * RVolume / 65536;
+		int destRight = (int)pDest[1] + right;
+		if (destRight > 32767) destRight = 32767;
+		else if (destRight < -32767) destRight = -32767;
+		pDest[1] = (short)destRight;
 
-CYCLE_RIGHT :
-__asm {
-       movsx    eax, word ptr [esi]
-       imul     dword ptr RVolume
-       sar      eax, 16
-       mov      bx, word ptr [edi+2]
-               
-       add      ax, bx
-       jo       RIGHT_CHECK_OVERFLOW
-       mov      word ptr [edi+2], ax
-       jmp      CYCLE_CONTINUE
-} 
-RIGHT_CHECK_OVERFLOW :
-__asm {
-       cmp      bx, 0
-       js       RIGHT_MAX_NEGATIVE
-       mov      word ptr [edi+2], 32767
-       jmp      CYCLE_CONTINUE
-}
-RIGHT_MAX_NEGATIVE :
-__asm  mov      word ptr [edi+2], -32767
-      
-CYCLE_CONTINUE :  
-__asm {
-       add      edi, 4
-       add      esi, 2
-       dec      ecx
-       jnz      SOUND_CYCLE
-}
+		pDest += 2;
+		pSrc += 1;
+	}
 }
