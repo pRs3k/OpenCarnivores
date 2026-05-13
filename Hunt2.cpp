@@ -2234,6 +2234,8 @@ void ProcessGame()
 
     drawSceneStage = "ShowVideo";
     ShowVideo();
+    // SOURCEPORT: Phase 2 post-processing effects (flatscreen)
+    // XR::ApplyEffects();
     drawSceneStage = "frameDone";
 }
 
@@ -2671,6 +2673,8 @@ int main(int argc, char* argv[])
                     XR::SampleVR();  // SOURCEPORT: moved here so PollControllers() in BeginFrame has fresh state
                     ProcessGame();
                     XR::EndFrame();
+                    // SOURCEPORT: Phase 2 post-processing effects
+                    // XR::ApplyEffects();
                 }
                 else SDL_Delay(100);
                 // SOURCEPORT: ExitTime expiry sets this instead of DoHalt
