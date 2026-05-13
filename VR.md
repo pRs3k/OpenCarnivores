@@ -10,82 +10,44 @@ OpenXR stereo rendering is fully implemented. The stereo eye loop lives in `Hunt
 
 ## Asymmetric per-eye FOV (Quest 3 / OpenXR)
 
-OpenXR supplies four independent tangent half-angles per eye (`angleLeft`, `angleRight`, `angleUp`, `angleDown`). On Quest 3 the horizontal FOV is strongly asymmetric:
-
-| Eye | Nasal (inward) tan | Temporal (outward) tan |
-|---|---|---|
-| Left | ≈ 0.839 (≈ 40°) | ≈ 1.376 (≈ 54°) |
-| Right | ≈ 0.839 (≈ 40°) | ≈ 1.376 (≈ 54°) |
-
-The principal point shifts toward the nasal side:
-- `VideoCX = tan_nasal / (tan_nasal + tan_temporal) × WinW ≈ 0.38 × WinW` (right eye)
-- `CameraW = WinW / (tan_nasal + tan_temporal)`
-
-The temporal half-offset from the principal point is `WinW − VideoCX ≈ 0.62 × WinW`, which is **larger** than `VideoCX`. Any code that uses `VideoCX` as a proxy for the horizontal half-FOV is implicitly using the nasal (narrower) side and will under-serve the temporal (wider) side.
+OpenXR supplies four independent tangent half-angles per eye (`angleLeft`, `angleRight`, `angleUp`, `angleDown`). Quest 3 has strongly asymmetric horizontal FOV (~40° nasal, ~54° temporal). The principal point shifts toward the nasal side, making `VideoCX` (screen-space center) offset from the geometric center. Code using `VideoCX` as a proxy for symmetric half-FOV will under-serve the wider temporal side.
 
 ### Close-object stereo split (diplopia at ~3ft)
 
-ClipA clips the **right** screen boundary (temporal side) and ClipC clips the **left** boundary (nasal side for the right eye; temporal for the left eye). The nasal half-FOV is ≈40° (tangent ≈0.839) vs the temporal ≈54° (tangent ≈1.376).
+Due to asymmetric FOV and IPD offset, close objects near the nasal edge can appear split between eyes (each eye sees different half, brain can't fuse). **Fix** (`mathematics.cpp` `InitClips()`): clip planes use the wider temporal tangent (+ 5% margin) instead of nasal, allowing GL viewport to handle edge clipping rather than software frustum clipping. This prevents the nasal-side geometry from being pre-clipped for one eye while visible to the other.
 
-For an object at ~3ft (≈122 GU) the per-eye IPD offset (~±4 GU) shifts its extremities by ~4/122 ≈ 2° laterally per eye. A body ±100 GU wide spans ≈40° — right at the nasal clip threshold. The right eye's ClipC (nasal=left at 40°) clips the object's left extremity; the left eye's ClipA (nasal=right at 40°) clips the object's right extremity. Each eye sees a different half of the object → the brain can't fuse them → object appears split into two.
+### Sky rendering
 
-**Fix** (`mathematics.cpp` `InitClips()`): both ClipA and ClipC use `xx_wide = max(xx_left, xx_right) * 1.05` (temporal tangent + 5% margin) for their clip planes. Geometry between nasal (40°) and temporal (54°) on the nasal side is no longer software-clipped; GL viewport handles anything beyond the physical screen edge. The transparent-corner fix (ClipA using temporal not nasal for the right boundary) is unaffected because `xx_wide ≥ xx_right` always.
+**Flatscreen**: Uses damped camera-relative plane positioning + yaw/pitch rotation to produce visually pleasing perspective without artifacts.
 
-### Fixes applied
+**VR (unsolved)**: Sky textures shift visibly when turning head, rather than staying locked to world position. Root cause: flat-plane perspective math inherently couples sky appearance to camera yaw. Previous attempts (cylindrical UV, fixed world position, pitch-only vbase) all failed. Head-centre camera position is used to eliminate IPD parallax.
 
-**Sky plane UV** (`renderd3d.cpp` `RenderSkyPlane()`):
-- `sx1 = −VideoCX` — left-edge offset from principal point ✓ (nasal)
-- `sx2 = +(WinW − VideoCX)` — right-edge offset ✓ (temporal, fixed from `+VideoCX`)
-- Cylindrical TV mapping: `tv = (ry·sy2 + rz) / q` at `sx=0` for both screen edges (fixed from flat-plane formula `(rx·sx + ry·sy2 + rz)/q`). The flat-plane formula has `rx = −0.002·p·CameraH·sin(yaw)`, which shears V horizontally whenever the camera is yawed — causing the sky texture to rock left/right as the player turns. Evaluating tv only at the principal point (`sx=0`) eliminates the sx term and gives a cylindrical sky where horizontal texture features appear at constant screen-y.
-- **Flatscreen sky (working)**: Sky rendering uses `RotateVVector` to transform tangent basis vectors `tx`/`ty` and plane normal `nv` by camera yaw+pitch. The plane position `vbase` is damped (divided by 128) so the sky scrolls slowly while walking but doesn't jump when rotating. This produces visually pleasing sky with correct perspective.
+**Recommended future approach**: Replace flat-plane sky with 3D dome/hemisphere model at fixed world position, rendered through normal geometry pipeline. This provides correct perspective and true world-locking without special-case UV math.
 
-- **VR sky (unsolved)**: When the player turns their head in VR, the sky textures visibly shift or oscillate rather than staying locked to world position. The flatscreen approach's RotateVVector rotation + camera-relative damped vbase produces yaw-coupling artifacts in VR. Root cause: the flat-plane perspective-projection math inherently couples sky appearance to camera orientation. No UV formula can simultaneously satisfy "world-locked" and "always visible from any angle." Multiple failed fix approaches: cylindrical UV (assumed qx=0), fixed world position (plane became a line when perpendicular), large tx/ty (texture tiled badly), pitch-only vbase (sky still moved), per-eye head-centre rendering (sky stayed camera-locked).
-
-**Recommended future approach**: Replace the flat-plane sky with a simple hemisphere or spherical dome 3D model positioned at a fixed world location (e.g., far behind the player), rendered through the normal geometry pipeline. This would provide correct perspective, visibility, and true world-locking without special-case math.
-
-- Head-centre `CameraX/Z` used for sky rendering (`g_vrCamCenterX/Z`) so the sky has no IPD-offset parallax between eyes.
-
-**`FOVK` / `hFovCull`** — horizontal early-cull key (`Hunt2.cpp`):
-- All three `FOVK =` assignments use `CameraW / (max(VideoCX, WinW−VideoCX) × 1.25f)`
-- `hFovCull` local in `PreCashGroundModel()` uses the same formula
-- Cull threshold is now `tan ≈ 1.72`, safely outside the `1.376` temporal edge
+**`FOVK` / `hFovCull`** — horizontal early-cull threshold: uses temporal FOV (wider side) with margin to safely exclude geometry that would be off-screen without clipping geometry that's actually visible. Prevents the nasal edge from over-culling.
 
 **Frustum clip planes** (`mathematics.cpp` `InitClips()`):
-- ClipB (bottom) and ClipD (top) use separate `yy_bot`/`yy_top` tangents for VR vertical asymmetry
-- ClipA clips the **right** screen boundary; ClipC clips the **left** screen boundary
-- ClipA uses `xx_right = (WinW - VideoCX + 1) / CameraW` (temporal tangent ≈ 1.376 for Quest 3 right eye)
-- ClipC uses `xx_left  = (VideoCX + 1) / CameraW` (nasal tangent ≈ 0.839 for Quest 3 right eye)
-- Root cause of "transparent square in bottom-right corner": old code used `xx = (VideoCX+1)/CameraW` for **both** planes. For the asymmetric right eye (`VideoCX ≈ 0.38 × WinW`), ClipA clipped the right side at `scrx ≈ 0.76 × WinW` instead of `WinW`. Close terrain tiles (r ≤ 8, rendered by `DrawTPlaneClip`) in the temporal-right region were software-clipped before reaching GL, leaving the bottom-right corner empty.
+- ClipA/C use asymmetric clip bounds (temporal vs nasal tangent) for left/right screen edges
+- ClipB/D use separate vertical tangents for top/bottom asymmetry
+- **Previous bug** (bottom-right corner transparent): both planes incorrectly used the nasal tangent, over-clipping the temporal side before geometry reached GL. Close terrain was software-clipped away while remaining invisible.
 
 ### Terrain rendering architecture note
 
-Two code paths render terrain tiles:
-- **`DrawTPlane`** (r > 8, far tiles): submits pre-projected vertices directly; GL viewport clips anything outside the screen. No software frustum clipping.
-- **`DrawTPlaneClip`** (r ≤ 8, close tiles): applies software clip planes (ClipA/B/C/D/Z) before submission. Incorrect clip plane bounds directly cause missing geometry in the corners for close terrain.
+Two code paths:
+- **`DrawTPlane`** (far tiles, r > 8): no software clipping; GL viewport handles screen edges.
+- **`DrawTPlaneClip`** (close tiles, r ≤ 8): applies software clip planes before submission. Clip plane bugs directly cause visible corner artifacts.
 
-The `±(ctViewR+3)` loop bounds in `PreCashGroundModel()` and the `ctViewR`-radius ring in `RenderGround()` are sufficient for the actual visible frustum — extending them to cover `htan×ctViewR` tiles caused a measurable performance regression without fixing the bottom-right corner (the gap was from ClipA, not missing tile generation).
+Loop bounds in `PreCashGroundModel()` are sufficient for the visible frustum. Extending loop bounds didn't fix corner artifacts — the issue was always in ClipA/C bounds, not missing tile generation.
 
 ## GL state pitfall — XR::EndFrame
 
-`XR::EndFrame()` resets several GL state variables for the OpenXR compositor's benefit after submitting swapchain images:
+`XR::EndFrame()` resets GL state (depth func, blend, program) for the OpenXR compositor. These changes persist into the **next frame's** eye-render loop. The engine uses reversed depth (`GL_GEQUAL`, near=1 far=0), so with compositor's `GL_LESS` + `clearDepth=1.0` active, sky geometry fails depth test and all subsequent geometry becomes invisible ("holes in walls").
 
-```
-glDepthFunc(GL_LESS)    // engine expects GL_GEQUAL (reversed depth)
-glClearDepth(1.0)       // engine expects 0.0
-glDisable(GL_BLEND)
-glUseProgram(0)
-```
-
-These changes persist into the **next frame's** VR eye-render loop. The engine uses a reversed depth convention (`GL_GEQUAL`, `glClearDepth(0.0)`, near=1 far=0). With `GL_LESS` + `clearDepth=1.0` active:
-- Sky geometry (depth ≈ 0) is drawn first and writes near-zero values into the depth buffer.
-- All subsequent geometry (walls, terrain, depth ≈ 0.1–0.4) fails `GL_LESS` against those values and is silently discarded.
-- Result: geometry is invisible wherever sky was drawn — "holes in walls."
-
-**Fix**: `RendererGL::RestoreEngineGLState()` (added to `Renderer.h` as a pure virtual, implemented in `RendererGL.cpp`) restores `GL_GEQUAL`, `glClearDepth(0.0)`, `GL_BLEND`, and the engine's shader program. It is called in `Hunt2.cpp` immediately before the per-eye loop, after `XR::EndFrame()` has run for the previous frame.
+**Fix**: `RendererGL::RestoreEngineGLState()` restores engine GL state immediately before the per-eye loop. This is called after each `XR::EndFrame()` from the previous frame completes.
 
 ## World scale and IPD
 
-Game world units: **~133 GU/m** (game units per real-world metre). Derived from `HeadY = 220 GU` (standing eye height) ÷ 1.65 m. The IPD eye-position offset in `XR.cpp::GetEyeCameraSetup` uses `kGUperM = 220/1.65 ≈ 133` to convert OpenXR metres to game units. Using a larger scale (e.g. 256) doubles the virtual IPD, shrinks the perceived world, and causes excessive near-object stereo disparity → eye strain.
+Game world units: **~133 GU/m** (from `HeadY = 220 GU` ÷ 1.65 m standing eye height). This scale is critical: changing it affects perceived world size and IPD-induced stereo disparity. Larger scales (e.g. 256 GU/m) shrink the perceived world and double IPD disparity, causing eye strain at close distances.
 
 ## Comfort and UX
 - 6DoF locomotion + snap turn options for VR comfort.
@@ -96,140 +58,88 @@ Game world units: **~133 GU/m** (game units per real-world metre). Derived from 
 - HRTF (Head-Related Transfer Function): see [AUDIO.md](AUDIO.md) for HRTF toggle (`ALC_HRTF_SOFT`).
 - EFX reverb zones for spatial immersion: see [AUDIO.md](AUDIO.md).
 
-## Weapon overlay smear fix
+## Weapon rendering in VR
 
-`DrawPostObjects()` renders the weapon in three passes:
-1. **Base pass** — `RenderNearModel` with `SetStencilMode(1)`: writes stencil=1 at every rasterized weapon pixel.
-2. **PhongMap pass** — `RenderModelClipPhongMap` with `SetStencilMode(2)`: additive specular overlay, reads stencil, renders only where stencil=1.
-3. **EnvMap pass** — `RenderModelClipEnvMap` with `SetStencilMode(2)`: additive environment-map overlay, same stencil test.
+Weapon rendering uses stencil buffer to restrict additive overlays (PhongMap, EnvMap) to weapon pixels only. **Bug**: VR eye FBOs lacked stencil buffer (`GL_DEPTH_COMPONENT24`), so overlays painted over terrain/sky. **Fix**: Changed to `GL_DEPTH24_STENCIL8` FBO format; clear stencil with `GL_STENCIL_BUFFER_BIT` each frame.
 
-On flat-screen the stencil test correctly restricts additive overlays to weapon pixels. In VR the eye FBOs previously had `GL_DEPTH_COMPONENT24` (no stencil buffer). `glEnable(GL_STENCIL_TEST)` against an FBO with no stencil attachment is a no-op — all fragments pass — so PhongMap/EnvMap painted on every pixel the weapon model's triangles projected onto, including terrain and sky. The depth buffer had been cleared by `Hardware_ZBuffer(FALSE)` at the start of `DrawPostObjects`, so `GL_GEQUAL` passed everywhere (all depths ≥ 0.0). This produced a bright smear over the terrain in the weapon's screen region that trailed visibly when the head moved.
-
-**Fix** (`XR.cpp`): Depth renderbuffer format changed from `GL_DEPTH_COMPONENT24` to `GL_DEPTH24_STENCIL8`, attached as `GL_DEPTH_STENCIL_ATTACHMENT`. Eye FBO clear in `Hunt2.cpp` extended with `GL_STENCIL_BUFFER_BIT` so stencil is reset to 0 each frame before `DrawPostObjects` runs.
-
-### Companion-window stencil clear
-
-The companion window's `DrawPostObjects()` (at the end of the frame, default FBO) was missing `GL_STENCIL_BUFFER_BIT` in its `glClear` call. Stale stencil=1 marks from the previous frame's weapon screen position were not cleared, so PhongMap/EnvMap overlays painted at both old and new weapon positions — smear trail on the monitor.
-
-**Fix** (`Hunt2.cpp`): companion window `glClear` extended with `GL_STENCIL_BUFFER_BIT`.
+Companion window was missing `GL_STENCIL_BUFFER_BIT` in its clear call, causing overlay smear trails on monitor. **Fix**: Extended companion window clear with stencil bit.
 
 ## Weapon reprojection smear (ASW during frame drops)
 
-When the app misses its frame deadline the Quest compositor synthesises intermediate frames via Asynchronous SpaceWarp (ASW), warping the last submitted eye textures to the current head pose. The weapon is rendered head-centre (zero IPD parallax) but baked into the world-locked projection layer, so ASW warps it as if it were a world-space object → it trails during frame drops.
+When the app misses frame deadline, Quest compositor synthesises frames via ASW, warping submitted textures to current head pose. Weapon is head-locked but baked into world-locked projection layer, so ASW warps it as world geometry → trails during frame drops.
 
-### Fix — `XR_KHR_composition_layer_depth` (`XR.cpp`)
+**Implemented feature** `XR_KHR_composition_layer_depth`: Submit depth buffer with eye textures so compositor's timewarp can scale warp correction per-pixel. Weapon pixels (near plane, depth ≈ 1.0) receive near-zero warp, staying approximately head-locked.
 
-Depth-based reprojection: submit the depth buffer alongside each eye's colour texture. The compositor's timewarp uses per-pixel depth to determine how far each pixel is from the camera and scales the warp correction proportionally. Weapon/HUD pixels have depth ≈ 1.0 (near plane in reversed-depth convention = ~0.01 m from camera); ASW applies near-zero warp to them, keeping the weapon approximately head-locked.
-
-**Implementation:**
-- `Init()`: probes `XR_KHR_composition_layer_depth` by trying `xrCreateInstance` with both extensions; falls back to `XR_KHR_opengl_enable`-only silently.
-- `CreateSwapchains()`: if the extension is available, creates a `GL_DEPTH24_STENCIL8` depth swapchain per eye (same dimensions as colour).
-- `AcquireEyeImage()`: acquires a depth swapchain image each frame and re-attaches it to the eye FBO as `GL_DEPTH_STENCIL_ATTACHMENT`, replacing the fallback RBO. If depth acquire fails, falls back to the RBO for that frame (no depth submission).
-- `ReleaseEyeImage()`: fills `XrCompositionLayerDepthInfoKHR`, chains it to the projection view via `next`, then releases the depth swapchain image. Reversed depth encoding: `minDepth=1.0 → nearZ=0.01m`, `maxDepth=0.0 → farZ=10000m`.
-
-The fallback RBO (`GL_DEPTH24_STENCIL8`) is kept and used whenever the depth extension is unavailable or a depth acquire fails, so the stencil-based weapon masking always works.
-
-**Result**: depth submission did not visibly fix the weapon smear during frame drops. The smear under load is a fundamental limitation of rendering HUD elements into the world-locked projection layer — ASW warps the weapon as if it were world geometry regardless of its depth value. The proper fix is to render the weapon to a separate `XrCompositionLayerQuad` with `XR_COMPOSITION_LAYER_FLAG_BLEND_TEXTURE_SOURCE_ALPHA_BIT` submitted above the projection layer, or (simpler) to eliminate the frame drops themselves via CPU/GPU performance work. Depth submission is still retained as it improves reprojection quality for world geometry.
+**Limitation**: Depth submission improves reprojection quality for world geometry but does not eliminate weapon smear under frame drops. Proper fix requires rendering weapon to separate `XrCompositionLayerQuad` submitted above projection layer, or eliminating frame drops via performance work.
 
 ## VR performance
 
-### Fixes applied
+### Optimizations applied
 
-**Per-frame `PrintLog` spam in `DrawScene`** (`Hunt2.cpp`): Eight `PrintLog("DS:xxx\n")` calls guarded by `XR::StereoActive()` fired on every `DrawScene` call. Since `DrawScene` ran 3× per VR frame (eye 0, eye 1, companion), this was 24 file-write/flush operations per frame — ~1728/s at 72 Hz. Each `PrintLog` forces a file flush, causing measurable CPU stalls under load. **Removed**; `drawSceneStage` breadcrumbs kept for crash diagnosis. **Impact: Eliminates per-frame file I/O stalls.** Confirmed: CPU stall spikes eliminated during VR frame render.
+**Removed debug spam** (`DrawScene`): Eight debug `PrintLog` calls per frame caused file flushes (24/frame × 72 Hz = 1728/s). Eliminated CPU stalls.
 
-**Companion window triple scene render** (`Hunt2.cpp`): In VR, `DrawScene` was called for eye 0, eye 1, and the SDL companion window — 3× CPU terrain projection + GPU render per frame. The companion window (`DrawPostObjects` + `ShowControlElements` included) already ran per-eye; re-rendering it from scratch for the monitor was pure waste. **Fixed by:**
-- Blitting eye 1's FBO to the default SDL framebuffer inside the eye loop, immediately before `XR::ReleaseEyeImage(1)` while the swapchain image is still valid.
-- Replacing the companion `DrawScene` call with a depth+stencil clear only (color left from blit).
-- Skipping the post-loop `DrawHMap` / `DrawPostObjects` / `ShowControlElements` that would have overdrawn the blit and double-rendered the weapon.
+**Companion window rendering**: In VR, `DrawScene` ran 3× per frame (eye 0, eye 1, companion) — pure waste since post-effects already ran per-eye. **Fix**: Blit eye 1's FBO to SDL default framebuffer; skip companion `DrawScene`. **Result**: `DrawScene` now runs 2× per frame (~33% CPU+GPU overhead reduction).
 
-**Result**: `DrawScene` now runs twice per frame (one per eye) instead of three times. **Impact: ~33% reduction in per-frame CPU+GPU scene rendering overhead.** Confirmed: noticeable frame rate improvement in dense scenes (many dinosaurs).
+### Render distance cap in VR
 
-### Architecture notes for future optimisation
+**Problem**: Terrain rendering happens in a per-eye loop (Hunt2.cpp lines 2037–2180). Terrain tiles grow quadratically by distance O(r²). In stereo, this workload is doubled. Example: increasing `ctViewR` from 50 to 62 (24% increase) yields ~20,000 tiles per eye, totaling ~40,000 tiles per frame. At 30 FPS, user perceives a **sharp framerate cliff**—small slider adjustments cause dramatic FPS drops (60 FPS → 30 FPS with +10% distance).
 
-**`PreCashGroundModel` runs per eye**: The `(2*(ctViewR+3))²` terrain-scan loop (up to ~256k iterations at `ctViewR=250`) runs once per `DrawScene` → twice per VR frame. The loop projects tile positions into camera space using per-eye camera position (IPD-offset). Caching eye 0's result for eye 1 would introduce ~5 px stereo position error for tiles at 256 GU — noticeable as flat/incorrect stereo depth for near terrain. Not safe to skip without a purpose-built low-error approximation.
+**Optimization attempts that failed**:
+1. **Terrain LOD (ProcessMap2 for distant tiles)**: Caused visible height popping, texture popping as camera moves, and grey holes in geometry where coarse (2×2) and detailed (1×1) tile grids don't align.
+2. **Height morphing in transition zone**: Reduced but didn't eliminate artifacts; complex to tune without visual impact.
+3. **Aggressive FOV culling**: Simple world-space offset culling (`if (fabs(x) < r * fovFactor)`) doesn't account for perspective projection, resulting in visible grey grid lines at screen edges.
 
-**`CreateChMorphedModel` per character per eye**: `Render3DHardwarePosts` calls `CreateChMorphedModel` for every visible character (dinosaur) on every `DrawScene` call. The morph result for a given animation frame is identical between eyes. Adding a per-character `lastMorphedFrame` guard (like the `LastAniTime` guard on static animated objects in `_RenderObject`) would halve the morph CPU cost at the expense of a small struct change to `TCharacter`.
+**Solution**: Cap `ctViewR ≤ 110` in VR mode (`Game.cpp::ApplyViewRange()`). Flatscreen max is 250; VR cap trades visibility for stable 90 FPS. The cap is applied based on `XR::StereoActive()` check. Users at ~78% slider position (ctViewR ≈ 62) see ~30 FPS without cap; with cap and no LOD, achieve playable performance with clean visuals.
 
-**Head-locked weapon layer**: The weapon smear during ASW (frame drops) cannot be fixed at the depth-submission level — the weapon must be submitted as a separate `XrCompositionLayerQuad` with a head-locked pose rather than baked into the world-locked projection layer. Requires rendering the weapon to a dedicated small FBO each frame and submitting it as a second layer in `EndFrame`.
+**Trade-off accepted**: Full visual fidelity (no LOD popping) at the cost of lower max render distance in VR. Matches real-world VR expectations (Quest 3 LOD distances are similarly constrained).
+
+### Future optimisation opportunities
+
+**`PreCashGroundModel` per-eye caching**: Currently scans terrain per-eye (2× per frame) for IPD-correct positioning. Caching eye 0 for eye 1 would introduce stereo-depth error (~5 px for tiles at 256 GU). Feasible only with dedicated low-error approximation.
+
+**`CreateChMorphedModel` caching**: Currently called per character per eye, but morph results are identical. Adding frame guard would halve CPU cost (small `TCharacter` struct change).
+
+**Head-locked weapon layer**: Weapon smear during ASW requires separate `XrCompositionLayerQuad` with head-locked pose, not baked into projection layer. Needs weapon-only FBO per frame.
 
 ## HUD overlay positioning for VR
 
-2D screen-space HUD overlays (pause menu, exit popup, map) require special handling in VR to avoid convergence issues and double-image artifacts:
+Screen-space HUD (pause, exit popup, map) requires special handling to avoid convergence/double-image artifacts:
 
-**Per-eye principal point centering** (`Hunt2.cpp` `DrawPostObjects`):
-- Exit popup (`EXITMODE`): use `VideoCX - dw/2` for X centering, not `(WinW - dw)/2`. Each eye has a different principal point (`VideoCX` varies per-eye); centering at screen midpoint causes the overlay to appear off-center in one eye. Positioned at `WinH / 2.75` for eye-level placement. On VR: scaled to 45% for perspective depth. On flatscreen: 100% scale for visibility.
-- Map (`DrawHMap` in `renderd3d.cpp`): scale down to 85% in VR (`if (XR::StereoActive()) mapScaleF *= 0.85f`) to push further from player's face.
-- Call icon (`ChCallTime` in `DrawPostObjects`): On VR, positioned using angular offset system aligned with compass/wind indicators: `X = callerCX + 0.48*CameraW` (right side, 27.5° right of forward) and `Y = callerCY - 0.20*CameraH` (above eye level), using native resolution. On flatscreen, positioned at top-right corner (original position: 10px from right edge, 7px from top), scaled to 140% for visibility.
+**Asymmetric principal point**: Each eye has different `VideoCX` (screen-space center). Overlays must center on per-eye principal point, not screen center, so they appear centered in each eye's view independently.
 
-**Single-pass HUD rendering** (`Hunt2.cpp` `DrawPostObjects`):
-- Pause/exit overlays only render when `!g_vrSecondEyePass` to avoid per-eye duplication. The first eye's rendering is used for both eyes' display, preventing double images and texture coordinate divergence.
-- Exception: overlays that need to be dynamically positioned (like the exit popup) should render in both eyes if centered correctly relative to per-eye principal points, so each eye sees the overlay centered in its own view.
+**Single-pass rendering**: Overlays render only on first eye (`!g_vrSecondEyePass`); second eye reuses first eye's rendering to avoid duplication. Exceptions: dynamically positioned overlays (like exit popup) may render per-eye if principal-point centered correctly.
 
-**Menu quads (world-locked)** (`XR.cpp` `AcquireMenuImage`):
-- World-locked menu distance: 2.5m in front of player is comfortable (increased from original 2m). Greater distances (3.5m) feel too far; closer distances cause convergence strain.
+**Scaling**: Overlays scaled down in VR (map 85%, exit popup 45%) for depth perception. Flatscreen uses larger scale (100%, 140%) for visibility.
+
+**World-locked menus** (2.5m in front of player) are comfortable for VR convergence. Closer distances strain eyes; farther feels too distant.
+
+## VR Binoculars Enhancement
+
+When using binoculars in VR, the view magnifies via camera zoom (BinocularPower: 1.5–3.0×, +/- keys). Edge vignetting frames the view as realistic binocular:
+
+**Vignette masking** (`Hunt2.cpp`):
+- Four black bars (top/bottom/left/right) prevent peripheral world visibility
+- Top bar 15% of screen height, bottom 35%, left/right 25% of width
+- Rendered with `FillRect()` + GL_BLEND inside per-eye loop (active only `BINMODE=true`)
+
+**Zoom mechanism**:
+- `BinocularPower` global stores magnification level
+- Applied to per-eye camera in eye loop: `CameraW/H *= BinocularPower` after per-eye setup
+- Flatscreen applies same zoom earlier in render path
 
 ## Head roll (camera tilt) — rendering architecture
 
-Head roll (`CameraGamma`, globals `cg`/`sg`) is a rotation around the depth axis. Applying it correctly requires understanding the two separate vertex-transform pipelines:
+Head roll (`CameraGamma`, globals `cg`/`sg`) rotates around depth axis. Proper implementation requires understanding two separate pipelines:
 
-### RotateVector vs RotateVVector
+**Roll extraction from quaternion**: Use `asinf(ry)` where `ry = 2*(qx*qy + qw*qz)`. Do NOT use `atan2f(ry, rx)` — it returns π for pure 180° yaw (no physical tilt), causing world flip. `asinf(ry)` correctly returns 0 for any yaw+pitch-only quaternion.
 
-The engine has two rotation functions with **opposite yaw sign conventions**:
+**Vertex displacement vs center**: Model/shadow centers are correctly rotated by `RotateVector`, but per-vertex displacements were added without roll transformation. This caused models to "dance" when player tilted head. **Fix**: Apply same roll formula to displacement before adding center. Five vertex loops affected: one in `RenderModel`, three in `RenderModelClip`/`RenderModelClipEnvMap`, one in `RenderShadowClip`.
 
-| Function | File | Yaw x-term | Used for |
-|---|---|---|---|
-| `RotateVector` | `mathematics.cpp` | `+v.z * sa` | Terrain tiles, water, object billboard positions |
-| `RotateVVector` | `renderd3d.cpp` | `−v.z * sa` | Sky/cloud plane tangent vectors (software renderer only) |
-
-Because the yaw signs are opposite, the same roll formula applied to both produces **opposite horizontal displacement** on screen. `RotateVVector` is effectively dead code in the GL/VR path — no model rendering calls it — so its formula does not matter for VR.
-
-### Roll extraction — use `asinf(ry)`, not `atan2f(ry, rx)`
-
-In `XR.cpp` `GetHeadOrientation` and `GetEyeCameraSetup`, roll is extracted from the right-vector Y-component `ry = 2*(qx*qy + qw*qz)`:
-
-```cpp
-gamma = asinf(fmaxf(-1.f, fminf(1.f, ry)));   // CORRECT
-// gamma = atan2f(ry, rx);                      // WRONG — gives π for pure 180° yaw
-```
-
-`atan2f(ry, rx)` returns π whenever `rx = −1, ry = 0` (which happens at any pure 180° yaw with zero actual tilt), causing the entire world to flip upside down when turning around. `asinf(ry)` is always 0 for any pure yaw+pitch quaternion because `ry` is algebraically zero when no physical tilt is present.
-
-### Roll in model and shadow rendering — vertex displacement, not center
-
-`RenderModel` / `RenderModelClip` / `RenderShadowClip` (`renderd3d.cpp`) receive the model/shadow center position `(x0, y0, z0)` already in rolled camera space (computed by `RotateVector`). They then compute per-vertex displacements using model yaw (`al`) and camera pitch (`bt`), but the displacement is added directly to the rolled center without itself being rolled:
-
-```
-rVertex.x = (p.x*ca + p.z*sa) + x0   ← x0 is rolled, displacement is NOT
-rVertex.y = (p.y*cb − vz*sb)  + y0   ← same
-```
-
-This makes every vertex sit in the wrong position relative to its (correctly-rolled) center — models and shadows visually "dance" when the player tilts their head while terrain stays correct.
-
-**Fix**: apply the same roll formula (`dx*cg + dy*sg`, `dy*cg − dx*sg`) to the displacement before adding the center. Inside these functions, `ca`/`sa`/`cb`/`sb` are **local** variables (shadowing globals), but `cg`/`sg` are **not** declared locally and correctly resolve to the global camera roll. There are five vertex loops that needed this fix — one in `RenderModel`, three across `RenderModelClip`/`RenderModelClipEnvMap`, and one in `RenderShadowClip`.
-
-### Yaw sign consistency (`GetHeadOrientation` vs `GetEyeCameraSetup`)
-
-`GetHeadOrientation` feeds `PlayerAlpha` (locomotion direction); `GetEyeCameraSetup` feeds `CameraAlpha` (render direction). Both must use the same sign for yaw:
-
-```cpp
-yaw = atan2f(fx, -fz);   // CORRECT — both functions
-// yaw = -atan2f(fx, -fz); // WRONG — negating in one but not the other makes the
-                           //   player run backwards relative to the camera direction
-```
+**Yaw sign consistency**: `GetHeadOrientation` (locomotion) and `GetEyeCameraSetup` (rendering) must extract yaw with same sign formula. Opposite signs cause player to run backwards relative to head direction.
 
 ## 6DoF roomscale tracking
 
-Head position from `XR::GetHeadCenterPos` (OpenXR reference space, metres) is converted to game units (`kGUperM = 220/1.65 ≈ 133`) and accumulated as a room offset relative to a reference anchor captured at session start. The XZ offset is rotated by `g_vrBodyYaw` so leaning forward always moves in the body-facing direction regardless of where the HMD is looking.
-
-The offset is applied **per-eye** to the camera position alongside the IPD displacement:
-
-```cpp
-CameraX = saveX + eyeDX + g_vrRoomOffsetX;
-CameraY = saveY + eyeDY + g_vrRoomOffsetY;
-CameraZ = saveZ + eyeDZ + g_vrRoomOffsetZ;
-```
-
-`g_vrHeadRefSet` is reset when the VR session starts; the first frame with valid views anchors the reference.
+Head position from OpenXR (metres) is converted to game units and accumulated as room offset relative to session-start anchor. XZ offset is rotated by body yaw so forward movement respects player facing, not HMD looking direction. Offset is applied per-eye alongside IPD displacement. Reference resets on session start; first frame with valid pose anchors baseline.
 
 ## Independent weapon aiming (controller-relative pointing)
 
@@ -288,44 +198,23 @@ Allow the weapon to be positioned and aimed based on **controller pose** (6DoF h
 
 ## Graphics Quality Options
 
-Added two new global graphics options to Video Options that apply to both flatscreen and VR:
+Two graphics quality settings added to Video Options (both flatscreen and VR):
 
-### Implemented UI controls (`Menu.cpp` lines 1631–1815)
+**Anisotropy** (slider 1–4): Low/Medium/High/Max = 2x/4x/8x/hardware max. Level 4 queries GPU capability via `GL_MAX_TEXTURE_MAX_ANISOTROPY` (OpenGL standard max 16x).
 
-Added to the standard VIDEO panel after Brightness:
-1. **Anisotropy**: Slider 1–4 (Low/Medium/High/Max = 2x/4x/8x/hardware max). Levels 1-3 fixed; level 4 queries GPU capability via `GL_MAX_TEXTURE_MAX_ANISOTROPY` (OpenGL standard max is 16x).
-2. **Supersampling**: Slider 100–200% (default 100%). Applies to both flatscreen and VR: render at `OptSSFactor%` of native resolution, downscale to native for display.
+**Supersampling** (slider 100–200%, default 100%): Render at `OptSSFactor%` of native resolution, downscale for display.
 
-### Persistence (`Game.cpp`)
+### Architecture
 
-- **SaveDisplayConfig()**: Appends quality options (aniso, supersampling) to `display.cfg`.
-- **LoadDisplayConfig()**: Reads quality options with version-aware fallback — v2 configs load with sensible defaults (aniso=2, supersampling=100%).
-- **Version bump**: `kDisplayVer` changed from 2 to 3 for forward compatibility.
+Settings are stored in globals (`OptAnisoLevel`, `OptSSFactor`) and persisted to `display.cfg` with version-aware fallback. Config version bumped for forward compatibility.
 
-### Variables (`Hunt.h`)
+**Anisotropy**: Maps option level (1–3) to fixed values (2x/4x/8x); level 4 queries hardware max. Implementation in RendererGL; can be toggled via code comment.
 
-```c
-_EXTORNOT int  OptAnisoLevel;   // 1=Low (2x), 2=Med (4x), 3=High (8x), 4=Max (16x)
-_EXTORNOT int  OptSSFactor;     // 100–200, eye FBO supersampling multiplier
-```
+**Supersampling**:
+- **VR**: ✓ Enabled — Eye FBO scaled by multiplier; OpenXR compositor downscales for display.
+- **Flatscreen**: Disabled — FBO approach caused rendering failures; requires architectural redesign.
 
-### Notes
-
-- **Map Scale**: Kept hardcoded at 45% in VR (line 5577 `renderd3d.cpp`) — not user-tunable.
-- **Fog**: Uses global `FOGENABLE` toggle for both modes; no separate VR fog control.
-
-### Rendering Integration Status
-
-**Menu UI & Configuration**: ✓ Complete
-- Sliders added to Video Options menu (Menu.cpp lines 1796–1828)
-- Global variables declared (Hunt.h line 934)
-- Defaults initialized and config persistence implemented (Game.cpp)
-
-**Rendering Code**:
-- **Anisotropy**: Code implemented (RendererGL.cpp lines 814–839) but currently disabled via commented-out code block. Maps `OptAnisoLevel` (1–3) to fixed values (2x, 4x, 8x); level 4 queries hardware maximum via `GL_MAX_TEXTURE_MAX_ANISOTROPY` (OpenGL standard max is 16x across all vendors). Can be re-enabled when anisotropy query in Init() is uncommented.
-- **Supersampling**:
-  - **VR**: ✓ Enabled — Eye FBO dimensions scaled by `OptSSFactor / 100.0f` in `XR.cpp` (lines 961–965). OpenXR compositor downscales rendered textures for display.
-  - **Flatscreen**: ⏸ Disabled — FBO-based rendering code is present (RendererGL.cpp lines 1510–1577) but commented out. The flatscreen FBO rendering approach caused black-screen rendering failures and requires architectural redesign for safe implementation. Default to native resolution rendering until fixed.
+**Fog & Map Scale**: Fog uses global toggle; map scale remains hardcoded (not user-tunable).
 
 ## Remaining work
 - Input abstraction: SDL3 or OpenXR input layer to replace `_KeyFlags` bitfield with an action-binding layer so VR controllers, gamepads, and rebindable keyboards all route through it.

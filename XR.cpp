@@ -2574,10 +2574,33 @@ bool GetControllerMenuCursor(int hand,
     if (hand < 0 || hand > 1) return false;
     if (!g_actionsReady || !g_ctrl[hand].aimValid) return false;
 
+    // SOURCEPORT: smooth controller pose to reduce jitter in menu cursor
+    static XrPosef smoothedAim[2] = {};
+    static bool firstFrame[2] = {true, true};
+    const float SMOOTH_FACTOR = 0.35f;  // 0.0-1.0; lower = more smoothing, less responsive
+
+    XrPosef& smoothAim = smoothedAim[hand];
     const XrPosef& aim = g_ctrl[hand].aimPose;
-    float ox = aim.position.x, oy = aim.position.y, oz = aim.position.z;
-    float qx = aim.orientation.x, qy = aim.orientation.y;
-    float qz = aim.orientation.z, qw = aim.orientation.w;
+
+    if (firstFrame[hand]) {
+        smoothAim = aim;
+        firstFrame[hand] = false;
+    } else {
+        // Exponential moving average on position
+        smoothAim.position.x += (aim.position.x - smoothAim.position.x) * SMOOTH_FACTOR;
+        smoothAim.position.y += (aim.position.y - smoothAim.position.y) * SMOOTH_FACTOR;
+        smoothAim.position.z += (aim.position.z - smoothAim.position.z) * SMOOTH_FACTOR;
+
+        // SLERP on orientation (simplified lerp for quaternion is sufficient for small deltas)
+        smoothAim.orientation.x += (aim.orientation.x - smoothAim.orientation.x) * SMOOTH_FACTOR;
+        smoothAim.orientation.y += (aim.orientation.y - smoothAim.orientation.y) * SMOOTH_FACTOR;
+        smoothAim.orientation.z += (aim.orientation.z - smoothAim.orientation.z) * SMOOTH_FACTOR;
+        smoothAim.orientation.w += (aim.orientation.w - smoothAim.orientation.w) * SMOOTH_FACTOR;
+    }
+
+    float ox = smoothAim.position.x, oy = smoothAim.position.y, oz = smoothAim.position.z;
+    float qx = smoothAim.orientation.x, qy = smoothAim.orientation.y;
+    float qz = smoothAim.orientation.z, qw = smoothAim.orientation.w;
     // Forward = R(q) * (0,0,-1)
     float dx = -2.f*(qx*qz + qw*qy);
     float dy =  2.f*(qw*qx - qy*qz);

@@ -1,0 +1,24 @@
+# Build artifacts
+build/
+out/
+x64/
+
+# Dependencies (third-party, not authored here)
+deps/
+
+# Code analysis artifacts
+code analysis/
+code_analysis.ruleset
+
+# Runtime/user-generated files
+*.log
+*.sav
+*.cfg
+*.png
+
+# Legacy MSVC 6.0 project files
+*.dsp
+*.dsw
+*.MAK
+*.opt
+*.PLG

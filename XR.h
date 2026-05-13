@@ -145,7 +145,7 @@ int PollVRBtnEdge();
     //   VideoCX = (int)(vcxFrac * WinW), VideoCY = (int)(vcyFrac * WinH).
     //   For a symmetric display both are 0.5; Quest 3 is ~0.62/0.38 horizontally.
     void GetEyeCameraSetup(int eye,
-        float& alpha, float& beta,
+        float& alpha, float& beta, float& gamma,
         float& dx,    float& dy,    float& dz,
         float& cw,    float& ch,    float& fovk,
         float& vcxFrac, float& vcyFrac);
@@ -210,11 +210,13 @@ int PollVRBtnEdge();
 
     // ── Fix 2: HMD orientation → player look direction ────────────────────────
 
-    // Returns the HMD centre yaw (alpha) and pitch (beta) in radians,
+    // Returns the HMD centre yaw (alpha), pitch (beta), and roll (gamma) in radians,
     // derived from the left-eye orientation quaternion (both eyes share the
     // same orientation; they differ only in IPD translation).
     // Intended for use in ProcessPlayerMovement() to replace mouse/key look
     // when StereoActive() is true.
-    // Returns false (leaves yaw/pitch unchanged) if ViewsValid() is false.
-    bool GetHeadOrientation(float& yaw, float& pitch);
+    // Returns false (leaves angles unchanged) if ViewsValid() is false.
+    bool GetHeadOrientation(float& yaw, float& pitch, float& roll);
+    // Returns HMD centre position in OpenXR reference-space metres.
+    bool GetHeadCenterPos(float& x, float& y, float& z);
 }

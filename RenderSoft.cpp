@@ -2154,7 +2154,7 @@ void DrawHMap()
 
 
 
-void DrawTrophyText(int x0, int y0)
+void DrawTrophyText(int x0, int y0, float textScale = 1.0f)
 {
 	int x;
 

@@ -773,7 +773,7 @@ void FXTextOut(int x, int y, LPSTR t, int color)
 }
 
 
-void DrawTrophyText(int x0, int y0)
+void DrawTrophyText(int x0, int y0, float textScale = 1.0f)
 {
 	int x;
 	SmallFont = TRUE;
