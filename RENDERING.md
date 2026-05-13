@@ -23,78 +23,37 @@ The renderer intercepts texture uploads to support high-res PNG/TGA/BMP/JPG over
 - When a character dies (`Health==0`), shadows fade out during the death animation. Previously, an early return on the last animation frame prevented shadow rendering entirely, causing dead dinosaurs laying on the ground to cast no shadows.
 - **Fix**: Removed the early return so shadows continue fading through the complete death animation cycle, including after the animation ends.
 
-## Shader Enhancement Plan
+## Post-Processing Pipeline (Phase 1 ✅ Complete)
 
-### Phase 1: Post-Processing Pipeline Infrastructure
-Build optional, opt-in post-processing framework for advanced visual effects:
+**Infrastructure** — Ready for Phase 2 effect implementation:
+- `PostProcessing.h/cpp` — FBO management, effect registry, shader infrastructure
+  - `FramebufferObject` — Color/depth textures, blitting, composition
+  - `PostProcessingPipeline` — Effect lifecycle, enable/disable toggles, composition modes
+  - Composition modes: REPLACE, ADDITIVE, ALPHA_BLEND, SCREEN, MULTIPLY, OVERLAY
+- `Hunt.h` — Global toggles (disabled by default, menu-controllable):
+  - `g_enableBloom`, `g_bloomIntensity`, `g_bloomThreshold`, `g_bloomKnee`
+  - `g_enableToneMapping`, `g_tonemapExposure`
+  - `g_enableSSR`, `g_ssrIntensity`
+  - `g_enableShadows`, `g_shadowQuality`
+- Integration:
+  - `RendererGL::Init()` — pipeline initialization
+  - `Hunt2.cpp` — `ApplyEffects()` calls in flatscreen and VR render paths
+  - `IRenderer` interface — virtual accessor for pipeline
 
-**Architecture:**
-- Render scene to G-Buffer (color, position, normal, depth, albedo)
-- Chain post-processing shaders as full-screen passes
-- Compositing system to blend effects
-- Config/menu option to enable/disable (disabled by default)
+**Shaders** — Placeholder files ready for Phase 2:
+- `shaders/postprocess/quad.vert` — Fullscreen quad vertex shader
+- `shaders/postprocess/bloom_threshold.frag` — Bright pixel extraction
+- `shaders/postprocess/bloom_blur_h.frag`, `bloom_blur_v.frag` — Separable Gaussian blur
+- `shaders/postprocess/tonemap.frag` — Reinhard tone mapping (HDR→SDR)
+- `shaders/postprocess/shadows.frag` — PCF shadow lookup (placeholder)
+- `shaders/postprocess/ssr.frag` — Ray-marched screen-space reflections (placeholder)
+- `shaders/postprocess/desaturate.frag` — Test shader proving pipeline works
 
-**Files to create/modify:**
-- `renderer/PostProcessing.h` / `PostProcessing.cpp` — pipeline management
-- `renderer/Shaders/postprocess/` — post-effect GLSL shaders
-- `RendererGL.cpp` — integrate post-processing into main render loop
-- Config option: `enable_postprocessing` (default: false)
+## Phase 2 Roadmap (In Progress)
+- **Phase 2.1**: Dynamic Shadow Mapping — Cascaded PCF shadows from sun light (5-6 hours)
+- **Phase 2.2**: Bloom + Tone Mapping — Bright-pixel bloom, Reinhard tone curve (4-5 hours)
+- **Phase 2.3**: Screen-Space Reflections — Ray-marched reflections on shiny surfaces (4-5 hours)
+- **Phase 2.4**: Normal Mapping Quality — Parallax mapping, PBR parameters (2-3 hours)
 
-**Effort:** ~8-10 hours
-
-### Phase 2: Shader Pack — Visual Enhancement Effects
-Modular shader pack with four high-impact effects (all disabled by default, config-driven):
-
-**1. Dynamic Shadow Mapping**
-- Shadow map rendering from light source
-- PCF filtering for soft shadows
-- Cascaded shadows (near/far quality tiers)
-- Shader: `postprocess/shadows.frag`
-- Config: `enable_shadows` (default: false)
-
-**2. Post-Processing Bloom + Tone Mapping**
-- Bloom: blur bright pixels, composite back
-- Tone mapping: HDR → SDR color space conversion
-- Color grading: user-tunable color adjustments
-- Shaders: `postprocess/bloom.frag`, `postprocess/tonemap.frag`
-- Config: `enable_bloom`, `enable_tonemapping` (default: false)
-
-**3. Screen-Space Reflections (SSR)**
-- Trace rays on-screen using depth/normal buffers
-- Reflects geometry without full raytracing cost
-- Water surfaces, puddles, polished metal
-- Shader: `postprocess/reflections.frag`
-- Config: `enable_ssr` (default: false)
-
-**4. Normal Mapping Quality Pass**
-- Improved normal mapping implementation per-asset
-- Parallax mapping for depth illusion
-- Enhanced PBR shading model
-- Materials: per-asset `.material` files + improved `.normal.png` treatment
-- Config: enabled via material system (no global flag needed)
-
-**Effort per effect:** 3-5 hours each = ~16-20 hours total
-
-### Phase 3: User Configuration
-Add menu/config options:
-- **Options → Video → Advanced Graphics** submenu
-- Toggles for: Shadows, Bloom, Tone Mapping, SSR, Color Grade
-- Sliders for: shadow quality, bloom intensity, reflection strength
-- Persist to `display.cfg`
-
-**Effort:** ~4-6 hours
-
----
-
-## Rendering Roadmap
-- ✅ Texture override registry (PNG/TGA/BMP at any resolution)
-- ✅ Anisotropic filtering & trilinear mipmapping
-- ✅ Per-texture LOD bias tuning
-- ⏳ **Post-processing pipeline** (Phase 1)
-- ⏳ **Dynamic shadows** (Phase 2.1)
-- ⏳ **Bloom + Tone Mapping** (Phase 2.2)
-- ⏳ **Screen-Space Reflections** (Phase 2.3)
-- ⏳ **Normal Mapping quality improvements** (Phase 2.4)
-- ⏳ **Advanced graphics menu** (Phase 3)
-- Future: Sky dome 3D model (replaces flat-plane rendering)
-- Future: Formalize renderer abstraction for Vulkan/Metal/WebGPU backends
+## Long-term Roadmap
+- Formalize the renderer abstraction: move all `d3d*` functions behind the `Renderer` interface entirely, kill `renderd3d.cpp` glue so Vulkan/Metal/WebGPU backends become drop-in.

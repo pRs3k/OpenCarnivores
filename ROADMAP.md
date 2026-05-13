@@ -9,20 +9,24 @@
 - Dinosaurs killed swimming in water should sink to the ground
 - The sky renders correctly when looking straight up, but ripples/waves distort it when it gets very close to the horizon/furthest away from the player
 - **In VR, sky textures shift when turning head.** Root cause: flat-plane UV math couples sky appearance to camera yaw. Attempted fixes (cylindrical UV, fixed world position, pitch-only vbase) all failed. Solution: replace with 3D dome model rendered at fixed world position through normal geometry pipeline.
+- Remove any dead code
 
-## Graphics and shaders
-- **Phase 1: Post-Processing Pipeline** — build framebuffer infrastructure for full-screen effects (G-Buffer, effect chaining, compositing)
-- **Phase 2: Shader Pack** — implement optional visual enhancement effects:
-  - Dynamic shadow mapping (cascaded, PCF filtering)
-  - Bloom + tone mapping + color grading
-  - Screen-space reflections (SSR)
-  - Normal mapping quality improvements & parallax mapping
-  - All effects disabled by default, user-configurable via menu/config
-- **Phase 3: Advanced Graphics Menu** — add Options → Video → Advanced Graphics with toggles/sliders for effect intensity
-- See [RENDERING.md](RENDERING.md) for full shader enhancement plan and effort estimates
+## Graphics and Rendering
+- **Phase 1 — Post-processing Infrastructure ✅ Complete**
+  - FBO management, effect registry, shader loading system
+  - Global toggles for Bloom, Tone Mapping, SSR, Shadow Mapping (all disabled by default)
+  - Integration in flatscreen and VR render paths
+  - See [RENDERING.md](RENDERING.md) for details
+
+- **Phase 2 — Visual Enhancement Effects** (In Progress)
+  - Dynamic Shadow Mapping — cascaded PCF shadows from sun light
+  - Bloom + Tone Mapping — bright-pixel bloom, HDR→SDR Reinhard curve
+  - Screen-Space Reflections — ray-marched reflections on shiny surfaces
+  - Normal Mapping Quality — parallax mapping, PBR parameters
+  - See [RENDERING.md](RENDERING.md) Phase 2 roadmap
 
 ## Specialized domains
-- [RENDERING.md](RENDERING.md) — renderer abstraction, texture overrides, shader enhancement plan.
+- [RENDERING.md](RENDERING.md) — renderer abstraction, multi-backend support, post-processing.
 - [AUDIO.md](AUDIO.md) — EFX reverb zones, HRTF, terrain occlusion.
 - [VR.md](VR.md) — full VR pipeline, OpenXR, comfort features.
 
