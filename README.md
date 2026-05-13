@@ -20,10 +20,28 @@ Copy `OpenCarnivores.exe` (and the `.dll` files and `shaders/` folder next to it
 ### Step 4 — Double-click `OpenCarnivores.exe`
 That's it. The game should launch at your monitor's native resolution.
 
+### Graphics settings
+
+Open **Options → Video** to adjust:
+
+- **Brightness** — live preview; saved to `display.cfg`
+- **Display** — fullscreen / windowed, resolution (any supported by your monitor)
+- **VSync** — adaptive (recommended) or off (uncapped framerate)
+- **Shadows** — on/off; higher quality shadows may impact performance
+- **Fog** — on/off; affects terrain visibility and atmosphere
+- **Anisotropic Filtering** — Low (2x) / Medium (4x) / High (8x) / Max (GPU max, usually 16x). Higher values reduce texture shimmering at distance and oblique angles. Minimal performance impact on modern GPUs.
+
+In VR (OpenXR headset detected), a **VR Graphics** submenu appears with VR-specific settings:
+- **Render Distance** — affects how far terrain is drawn; capped at 110 to maintain 90 FPS
+- **Map Scale** — adjusts world size perception
+- **Supersampling** — render above headset native resolution (100–200%); trades visual quality for framerate
+
 ### Troubleshooting
 - **"Missing file" or black screen on launch** — you probably don't have the `HUNTDAT` folder next to `OpenCarnivores.exe`. Re-check Step 3.
 - **Game is too dark or too bright** — open the in-game Options menu and adjust the Brightness slider; it updates live.
-- **Resolution looks wrong** — open Options → Display and pick a resolution from the list. The choice is saved to `display.cfg`.
+- **Resolution looks wrong** — open Options → Video and pick a resolution from the list. The choice is saved to `display.cfg`.
+- **Terrain looks shimmery or blurry at distance** — increase Anisotropic Filtering in Video Options (Medium or High recommended).
+- **VR performance drops when zooming out** — Render Distance in VR is capped at 110 units; increasing the in-game view range slider beyond ~78% will maintain the cap but won't draw more terrain.
 
 ---
 
@@ -31,8 +49,10 @@ That's it. The game should launch at your monitor's native resolution.
 
 - **Runs on modern Windows** without compatibility shims, wrappers, or dgVoodoo2
 - **Any resolution, any aspect ratio** — widescreen Hor+ FOV, 4K, HiDPI-aware
-- **Adaptive VSync** and uncapped framerate
-- **OpenGL 3.3 renderer** with hardware trilinear mipmapping (no more terrain texture pop, no more foliage shimmer)
+- **VR support** — OpenXR runtime, tested on Meta Quest 3, with head-tracking, 6DoF, and controller aiming
+- **Adaptive VSync** and uncapped framerate, with 90 FPS VR mode for stable HMD performance
+- **OpenGL 3.3 renderer** with hardware trilinear mipmapping, anisotropic filtering, and per-texture LOD bias tuning (no more terrain texture pop, no more foliage shimmer)
+- **Graphics settings** — adjustable anisotropic filtering (2x/4x/8x/max), render distance, and supersampling for VR
 - **OpenAL Soft audio** — 3D positional audio, terrain occlusion, ready for HRTF and EFX reverb
 - **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)
 - **glTF / OBJ model overrides** alongside the retail `.CAR` files
@@ -264,16 +284,31 @@ Everything that reads game assets: character `.CAR`, standalone `.3DF`, area `.R
 
 ---
 
+## VR (OpenXR)
+
+**Tested on:** Meta Quest 3 with OpenXR runtime
+
+Full stereoscopic 6-degree-of-freedom VR rendering with per-eye asymmetric FOV compensation, head-tracking as camera source, and controller-based aiming. The game renders at 90 FPS per eye with adaptive reprojection for dropped frames. Graphics options menu includes:
+
+- **Render Distance** — capped at 110 game units in VR to maintain stable 90 FPS framerate (vs. 250 units on flatscreen)
+- **Anisotropic Filtering** — reduces terrain shimmering at distance
+- **Supersampling** — render above native resolution for crisper image quality
+
+Comfort features include 6DoF locomotion, configurable snap-turn options, and world-space UI scaling for convergence comfort.
+
+---
+
 ## Coming next
 
-Planned additions that will further expand what modders can do (see `CLAUDE.md` for the full roadmap):
+Planned additions that will further expand what modders and players can do (see `CLAUDE.md` for the full roadmap):
 
+- Sky dome 3D model (replaces current flat-plane sky rendering)
 - Zip-archive mounting alongside the existing `mods/` folder support
 - Expanded Lua API (more hooks, richer Character mutation, AI behaviour tree overrides)
 - Behavior-tree AI and NavMesh pathfinding
 - Physics integration (ragdoll, foliage interaction)
 - EFX reverb zones and HRTF toggle in OpenAL
-- VR support (OpenXR)
+- Independent weapon aiming (controller-relative pointing in VR)
 
 ---
 
