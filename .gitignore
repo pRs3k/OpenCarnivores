@@ -13,6 +13,7 @@ reshade-shaders/
 /OpenCarnivores.map
 /SDL2.dll
 /OpenAL32.dll
+/openxr_loader.dll
 /display.cfg
 
 # dgVoodoo2 wrapper (downloaded separately)

@@ -2,6 +2,24 @@
 
 OpenXR stereo rendering is fully implemented. The stereo eye loop lives in `Hunt2.cpp` (`ShowVideo` VR branch) and renders the scene twice per frame with per-eye projection matrices into runtime-allocated swapchain FBOs.
 
+## Setup: openxr_loader.dll requirement
+
+**CRITICAL**: VR mode requires `openxr_loader.dll` in the build output directory (`build/Debug/` or `build/Release/`). This DLL is provided by Meta's OpenXR runtime.
+
+### How to get openxr_loader.dll
+
+**Option 1** (Recommended): Install **Meta Horizon Link** (formerly Meta Quest Link)
+- Download from [Meta Developer](https://www.meta.com/developers/webxr/)
+- Installs to: `C:/Program Files/Meta/MetaXREngine/openxr_loader.dll`
+- CMakeLists.txt will auto-detect and copy it during build
+
+**Option 2**: Manual copy
+- Locate `openxr_loader.dll` from any OpenXR-enabled application or Meta runtime installation
+- Copy to `build/Debug/` and `build/Release/` directories
+- CMakeLists.txt will recognize it and include in build
+
+**If DLL is missing**: The build will warn you, and VR will not launch (flatscreen still works). You'll see "Run-Time Check failure" or Meta Horizon Link failing to launch the game.
+
 ## Implemented components
 
 - **OpenXR session**: `XR.cpp` — opens an XR session, samples HMD pose + per-eye projection matrices, manages swapchain textures, submits rendered eye textures to the runtime for compositor distortion.
