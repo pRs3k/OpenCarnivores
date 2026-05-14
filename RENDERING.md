@@ -14,8 +14,19 @@ The renderer intercepts texture uploads to support high-res PNG/TGA/BMP/JPG over
 - Upload paths (`gl_UploadTexture16` → shared `gl_UploadRGBA` in renderd3d.cpp; `RendererGL::SetTexture` in RendererGL.cpp) check registry first.
 - On hit: 32-bit override uploaded at any resolution with full 8-bit alpha and hardware mipmaps.
 - On miss: existing 16-bit path runs unchanged.
-- Foliage mip-fix preserved: transparent pixels filled with avg opaque color for levels 1..N, original at level 0.
+- Mipmaps generated directly from original transparent data for authentic foliage appearance.
 - Loaders call `TextureOverrides::TryRegisterSibling(ptr, filePath)` or `TryRegisterWithExts(ptr, basePath)` immediately after loading 16-bit data (tries `.png`, `.tga`, `.bmp`, `.jpg` in order).
+
+## Foliage Rendering
+
+**Foliage Transparency** (in progress):
+- **Issue**: Foliage (bushes, trees) appeared overly solid/"puffy" compared to original game, lacking individual leaf detail.
+- **Root Cause**: Mipmap generation was aggressively filling transparent pixels with nearby opaque colors (commit d16a69c), eliminating fine transparency detail between leaves at all LOD levels.
+- **Partial Fix**: Commented out pixel-fill logic in `CreateMipMapMT()` and `CreateMipMapMT2()` (Resources.cpp lines 1034-1036, 1062-1064) for both 256→128 and 128→64 mipmap levels. This restored individual leaf outlines and detail.
+- **Remaining Issue**: Black gaps now appear between leaves where transparency should show through. Likely causes:
+  - GL mipmap generation (`rgl_GenerateLinearMipmaps`) still blending black color-key pixels into leaf colors
+  - Shader alpha test threshold (0.5) filtering out legitimate semi-opaque edge pixels
+  - Color-key (black = transparent) not properly distinguished from actual geometry during downsampling
 
 ## Character rendering
 
