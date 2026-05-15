@@ -50,9 +50,15 @@ public:
     // Resize all FBOs if screen resolution changes
     void Resize(int screenWidth, int screenHeight);
 
-    // Apply post-processing effects to the current framebuffer
-    // Should be called after scene rendering, before UI/weapon rendering
+    // Bind the scene capture FBO; call once at start of frame before DrawScene.
+    // Has no effect when in VR mode (VR uses its own per-eye FBOs).
+    void BeginCapture();
+
+    // Apply post-processing effects and composite to screen.
+    // Call after the full frame (scene + HUD) is rendered.
     void ApplyEffects();
+
+    bool IsInitialized() const { return m_initialized; }
 
     // Load/reload post-processing shaders from disk
     void HotReloadShaders();
@@ -91,6 +97,7 @@ private:
 
     int m_width, m_height;
     bool m_initialized;
+    bool m_captureActive = false;
 
     // Utility: render full-screen quad with given shader
     void RenderFullscreenQuad(uint32_t shaderProgram);

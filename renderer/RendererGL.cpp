@@ -18,6 +18,8 @@
 #include <cstdio>
 #include <string>
 
+namespace XR { bool StereoActive(); }
+
 // Global renderer instance
 IRenderer* g_Renderer = nullptr;
 
@@ -670,10 +672,13 @@ void RendererGL::BeginFrame() {
     // same screen-space projection to render pre-transformed vertices correctly.
     std::memcpy(m_projMatrix, proj, sizeof(proj));
 
-    // SOURCEPORT: flatscreen supersampling disabled — causes black screen rendering
-    // FBO-based rendering pipeline needs architectural redesign. Use VR supersampling instead.
-    // Future: implement via compute shader downsampling or native resolution scaling.
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Route scene into the post-processing FBO when in flatscreen mode.
+    // VR skips this: XR::BeginEye() binds per-eye FBOs instead.
+    if (m_postProcessingPipeline && m_postProcessingPipeline->IsInitialized() && !XR::StereoActive()) {
+        m_postProcessingPipeline->BeginCapture();
+    } else {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
     glViewport(0, 0, WinW, WinH);
 
     m_frameCounter++;

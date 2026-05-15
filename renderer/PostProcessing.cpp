@@ -5,9 +5,33 @@
 #include <fstream>
 #include <string>
 
-// Forward declarations from RendererGL
-extern uint32_t CompileShaderProgram(const char* vertSource, const char* fragSource);
 extern void PrintLog(char* msg);
+
+static GLuint CompilePostShader(GLenum type, const char* src) {
+    GLuint s = glCreateShader(type);
+    glShaderSource(s, 1, &src, nullptr);
+    glCompileShader(s);
+    GLint ok; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[512]; glGetShaderInfoLog(s, sizeof(log), nullptr, log);
+        PrintLog(log);
+    }
+    return s;
+}
+
+static GLuint LinkPostProgram(GLuint vs, GLuint fs) {
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs); glAttachShader(p, fs);
+    glLinkProgram(p);
+    GLint ok; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[512]; glGetProgramInfoLog(p, sizeof(log), nullptr, log);
+        PrintLog(log);
+        glDeleteProgram(p); p = 0;
+    }
+    glDeleteShader(vs); glDeleteShader(fs);
+    return p;
+}
 
 // ─── FramebufferObject ────────────────────────────────────────────────────────
 
@@ -205,28 +229,114 @@ void PostProcessingPipeline::Resize(int screenWidth, int screenHeight) {
 }
 
 void PostProcessingPipeline::ApplyEffects() {
-    if (!m_initialized) return;
+    if (!m_initialized || !m_captureActive) return;
+    m_captureActive = false;
 
-    // SOURCEPORT: Phase 2 bloom & tone mapping effects
-    // Load shaders on first call
-    static uint32_t thresholdProgram = 0;
-    static uint32_t blurHProgram = 0;
-    static uint32_t blurVProgram = 0;
-    static uint32_t tonemapProgram = 0;
+    static uint32_t thresholdProg = 0, blurHProg = 0, blurVProg = 0;
+    static uint32_t tonemapProg = 0, compositeProg = 0;
     static bool shadersLoaded = false;
-
     if (!shadersLoaded) {
-        thresholdProgram = LoadPostProcessShader("bloom_threshold");
-        blurHProgram = LoadPostProcessShader("bloom_blur_h");
-        blurVProgram = LoadPostProcessShader("bloom_blur_v");
-        tonemapProgram = LoadPostProcessShader("tonemap");
+        thresholdProg = LoadPostProcessShader("bloom_threshold");
+        blurHProg     = LoadPostProcessShader("bloom_blur_h");
+        blurVProg     = LoadPostProcessShader("bloom_blur_v");
+        tonemapProg   = LoadPostProcessShader("tonemap");
+        compositeProg = LoadPostProcessShader("bloom");
         shadersLoaded = true;
     }
 
-    // SOURCEPORT: Phase 2 post-processing effects (currently minimal/disabled for stability)
-    // Note: Bloom and tone mapping are disabled by default; infrastructure is in place
-    // but effects composition requires additional work for proper framebuffer handling.
-    // Effects can be safely enabled once compositing architecture is refined.
+    extern bool  g_enableBloom, g_enableToneMapping;
+    extern float g_bloomThreshold, g_bloomKnee, g_bloomIntensity, g_tonemapExposure;
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_BLEND);
+    glBindVertexArray(m_fsQuadVao);
+
+    GLuint sceneTex = m_sourceFBO.GetColorTexture();
+    GLuint bloomTex = 0;
+
+    // Bloom extraction + separable blur at half resolution
+    if (g_enableBloom && thresholdProg && blurHProg && blurVProg) {
+        m_bloomDownsampled.Bind();
+        glUseProgram(thresholdProg);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(thresholdProg, "uScreenColor"), 0);
+        glUniform1f(glGetUniformLocation(thresholdProg, "uThreshold"), g_bloomThreshold);
+        glUniform1f(glGetUniformLocation(thresholdProg, "uKnee"), g_bloomKnee);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        m_bloomBlurH.Bind();
+        glUseProgram(blurHProg);
+        glBindTexture(GL_TEXTURE_2D, m_bloomDownsampled.GetColorTexture());
+        glUniform1i(glGetUniformLocation(blurHProg, "uScreenColor"), 0);
+        glUniform1i(glGetUniformLocation(blurHProg, "uBlurRadius"), 8);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        m_bloomBlurV.Bind();
+        glUseProgram(blurVProg);
+        glBindTexture(GL_TEXTURE_2D, m_bloomBlurH.GetColorTexture());
+        glUniform1i(glGetUniformLocation(blurVProg, "uScreenColor"), 0);
+        glUniform1i(glGetUniformLocation(blurVProg, "uBlurRadius"), 8);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        bloomTex = m_bloomBlurV.GetColorTexture();
+    }
+
+    // Output to screen: tonemap and/or composite bloom
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_width, m_height);
+
+    if (g_enableToneMapping && g_enableBloom && tonemapProg && compositeProg && bloomTex) {
+        // Tonemap into intermediate, then composite bloom on top
+        m_intermediate1.Bind();
+        glUseProgram(tonemapProg);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(tonemapProg, "uScreenColor"), 0);
+        glUniform1f(glGetUniformLocation(tonemapProg, "uExposure"), g_tonemapExposure);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, m_width, m_height);
+        glUseProgram(compositeProg);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_intermediate1.GetColorTexture());
+        glUniform1i(glGetUniformLocation(compositeProg, "uScreenColor"), 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, bloomTex);
+        glUniform1i(glGetUniformLocation(compositeProg, "uBloomColor"), 1);
+        glUniform1f(glGetUniformLocation(compositeProg, "uIntensity"), g_bloomIntensity);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    } else if (g_enableToneMapping && tonemapProg) {
+        glUseProgram(tonemapProg);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(tonemapProg, "uScreenColor"), 0);
+        glUniform1f(glGetUniformLocation(tonemapProg, "uExposure"), g_tonemapExposure);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    } else if (g_enableBloom && compositeProg && bloomTex) {
+        glUseProgram(compositeProg);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(compositeProg, "uScreenColor"), 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, bloomTex);
+        glUniform1i(glGetUniformLocation(compositeProg, "uBloomColor"), 1);
+        glUniform1f(glGetUniformLocation(compositeProg, "uIntensity"), g_bloomIntensity);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    } else {
+        // No effects active: blit scene directly to screen
+        m_sourceFBO.BlitTo(nullptr);
+    }
+
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
 }
 
 void PostProcessingPipeline::SetEffectEnabled(const char* effectName, bool enabled) {
@@ -265,8 +375,28 @@ void PostProcessingPipeline::RenderFullscreenQuad(uint32_t shaderProgram) {
 }
 
 uint32_t PostProcessingPipeline::LoadPostProcessShader(const char* shaderName) {
-    // SOURCEPORT: Shader loading disabled for now
-    return 0;
+    auto readFile = [](const char* path) -> std::string {
+        std::ifstream f(path);
+        if (!f) return {};
+        return { std::istreambuf_iterator<char>(f), {} };
+    };
+    std::string vert = readFile("shaders/postprocess/quad.vert");
+    std::string frag = readFile((std::string("shaders/postprocess/") + shaderName + ".frag").c_str());
+    if (vert.empty() || frag.empty()) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "ERROR: [PostProcessing] Could not load shader: %s\n", shaderName);
+        PrintLog(msg);
+        return 0;
+    }
+    GLuint vs = CompilePostShader(GL_VERTEX_SHADER,   vert.c_str());
+    GLuint fs = CompilePostShader(GL_FRAGMENT_SHADER, frag.c_str());
+    return LinkPostProgram(vs, fs);
+}
+
+void PostProcessingPipeline::BeginCapture() {
+    if (!m_initialized) return;
+    m_sourceFBO.Bind();
+    m_captureActive = true;
 }
 
 void PostProcessingPipeline::Compose(FramebufferObject* src, FramebufferObject* dst, CompositionMode mode) {
