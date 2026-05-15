@@ -12,6 +12,7 @@ Source port of Carnivores 2 — clean, maintainable engine on modern systems wit
 - Keep original file/function names (traceability).
 - Comment behavioral changes: `// SOURCEPORT: <description>`
 - Use shell variables and relative paths, never hardcoded absolute paths.
+- **Build system**: Use CMake only; do not create Visual Studio project files (.sln, .vcxproj). These are hand-maintained and become stale; the CMake toolchain is the source of truth.
 - **Mod compatibility**: all asset loaders are additive; never remove retail format parsers (.CAR, .3DF, .RSC, .MAP, .TGA, .WAV). New formats slot beside originals, never replace.
 
 ## Core files and architecture
