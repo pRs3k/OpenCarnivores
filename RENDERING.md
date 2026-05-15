@@ -14,6 +14,20 @@ The renderer intercepts texture uploads to support high-res PNG/TGA/BMP/JPG over
 - Mipmaps generated directly from original transparent data for authentic foliage appearance.
 - Loaders call `TextureOverrides::TryRegisterSibling(ptr, filePath)` or `TryRegisterWithExts(ptr, basePath)` immediately after loading 16-bit data (tries `.png`, `.tga`, `.bmp`, `.jpg` in order).
 
+## Texture cache (`RendererGL::SetTexture`)
+`SetTexture` maintains an LRU cache of up to 128 GL texture objects (`m_texCache` in `RendererGL.h`).
+
+- **Key**: FNV-1a content hash of the raw 16-bit pixel buffer, computed by sampling 96 bytes from the start, middle, and end of the data plus the dimensions. ~100 cycles constant cost regardless of texture size.
+- **Why not pointer**: The game reuses heap addresses for different texture data across frames, causing pointer-keyed entries to serve stale GL textures. Content hashing means identical data always hits and changed content always misses.
+- **Eviction**: When the cache exceeds 128 entries the least-recently-used entry is deleted via `glDeleteTextures`. The `lastUsed` field stores the frame counter at last access.
+- **Override interaction**: `TextureOverrides::GetCompressed` / `Get` still receive the original CPU pointer (they maintain their own pointer-keyed registry registered at load time). The GL cache key is independent of that registry.
+
+## Vertex staging buffer
+`MAX_MAIN_VERTICES` (`RendererGL.h`) controls the size of both the CPU staging array (`m_mainBuffer`) and the GPU VBO allocated at init (`glBufferData` in `RendererGL.cpp`). The D3D fallback path (`g_mainVertices` in `renderd3d.cpp`) must match this value. Currently **4096 triangles**. The terrain rendering accumulates faces until a texture change or section boundary triggers `d3dFlushBuffer` / `UnlockAndDrawTriangles`; a larger buffer reduces the number of flushes per terrain ring.
+
+## Anisotropic filtering
+Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `GL_EXT_texture_filter_anisotropic` is available. Level is controlled by `OptAnisoLevel` (menu setting): 1=2×, 2=4×, 3=8×, 4=hardware maximum. The hardware cap is queried once at init into `m_maxAnisotropy`; if the extension is absent, `m_maxAnisotropy` is 1 and filtering is skipped.
+
 ## Foliage Rendering
 
 **Foliage Transparency** (partial ✅, limitations understood):
