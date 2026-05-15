@@ -23,8 +23,7 @@ bool ShowFaces = true;
 void UploadGeometry()
 {
 	int x,y,xx,yy;
-    byte temp;
-    
+
 	AudioFCount = 0;
 
 	int MaxView = 18;
@@ -289,8 +288,8 @@ BOOL PointUnBound(float &H, float px, float py, float cx, float cy, float oy, TB
 
 float GetLandCeilH(float CameraX, float CameraZ)
 {
-  float h,hh;
-  
+  float h;
+
    h = GetLandH(CameraX, CameraZ) + 20480;
 
    int ccx = (int)CameraX / 256;

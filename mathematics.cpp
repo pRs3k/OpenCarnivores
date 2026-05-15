@@ -809,9 +809,8 @@ void CalcGouraud(TModel* mptr, Vector3d *nvs)
 void CalcNormals(TModel* mptr, Vector3d *nvs)
 {
 	int VCount = mptr->VCount;
-	int FCount = mptr->FCount;    
-	float c;	
-	Vector3d a, b, nv, rv;    	
+	int FCount = mptr->FCount;
+	Vector3d a, b, nv;
 	FillMemory(nvs,   3*4*VCount, 0);
 
     for (int f=0; f<FCount; f++) {
