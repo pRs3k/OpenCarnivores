@@ -865,9 +865,9 @@ void InitEngine()
     InitClips();
    
     TrophyRoom.RegNumber=0;
-	
-    PlayerX = (gMapSize / 3) * 256;
-	PlayerZ = (gMapSize / 3) * 256;
+
+    PlayerX = ((float)gMapSize / 3.f) * 256.f;
+	PlayerZ = ((float)gMapSize / 3.f) * 256.f;
 
     ProcessCommandLine();
 
