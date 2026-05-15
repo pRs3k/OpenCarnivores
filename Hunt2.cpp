@@ -827,11 +827,13 @@ SKIPWEAPON:
 	  if (TrophyBody!=-1) {
 		int dw = TrophyPic.W * WinH / 480;
 		int dh = TrophyPic.H * WinH / 480;
-		int x0 = WinW - dw - 16;
-		int y0 = WinH - dh - 12;
+		int x0 = (WinW - dw) / 2;
+		int y0 = WinH - dh - (int)(40 * WinH / 480);  // Bottom-center with margin
 		float textScale = 1.0f;
-		if (!TrophyMode) {
-			// SOURCEPORT: in VR, position and scale trophy like the exit graphic (centered, eye level, smaller)
+		bool isVR = false;
+		// SOURCEPORT: in VR (during TrophyTime fade-out), position and scale trophy like the exit graphic (centered, eye level, smaller).
+		if (!TrophyMode && XR::StereoActive() && TrophyTime) {
+			isVR = true;
 			textScale = 0.10f;
 			dw = dw * 65 / 100;
 			dh = dh * 65 / 100;
@@ -840,7 +842,12 @@ SKIPWEAPON:
 		}
 
         DrawPictureScaled(x0, y0, dw, dh, TrophyPic);
-        DrawTrophyText(x0, y0, textScale);
+		// SOURCEPORT: position text inside graphic box (flatscreen) or near top of graphic (VR).
+		int textY = y0 + (int)(15 * WinH / 480);  // Text positioned inside box
+		if (isVR) {
+			textY = y0 + (int)(5 * WinH / 480);  // VR: text near top of smaller graphic
+		}
+        DrawTrophyText(x0, textY, textScale, isVR);
 
 		if (TrophyTime) {
 			if (!g_vrSecondEyePass) {
@@ -1987,7 +1994,9 @@ void ProcessGame()
         // This lets the player lean, crouch, and walk in the physical room and have the
         // in-game camera follow. The reference is captured on the first valid VR frame.
         {
-            static constexpr float kGUperM = 220.f / 1.65f;
+            // SOURCEPORT: world scale adjusted slightly (from 133.33 to ~143 GU/m, ~7% smaller world)
+            // to improve perceived resolution and reduce "too large" sensation in VR.
+            static constexpr float kGUperM = 220.f / 1.54f;
             float hx, hy, hz;
             if (XR::GetHeadCenterPos(hx, hy, hz)) {
                 if (!g_vrHeadRefSet) {
@@ -2161,26 +2170,15 @@ void ProcessGame()
                 }
             }
 
-            // SOURCEPORT: blit eye 1 to the SDL companion window while the swapchain
-            // image is still valid (before ReleaseEyeImage hands it to the compositor).
-            // This replaces the post-loop DrawScene for the companion window, saving a
-            // full CPU+GPU scene render — the single largest per-frame VR overhead item.
-            // Eye 1 already contains DrawScene + DrawPostObjects + ShowControlElements
-            // so the monitor shows a complete right-eye view without re-rendering.
-            if (xrEye == 1) {
-                glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)fbo);
-                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                glBlitFramebuffer(0, 0, WinW, WinH,
-                                  0, 0, savedWinW, savedWinH,
-                                  GL_COLOR_BUFFER_BIT, GL_LINEAR);
-                glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo);
-            }
             // SOURCEPORT: restore full color mask before releasing the eye image.
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             XR::ReleaseEyeImage(xrEye);
         }
 
-        // Restore flat-screen state for companion window.
+        // SOURCEPORT: render companion window with proper flatscreen camera (centered, symmetric FOV).
+        // VR eye FBOs use per-eye projection (asymmetric FOV, offset principal point) which causes
+        // squished/offset output if blitted directly to monitor. Render scene again with flatscreen
+        // settings for correct aspect ratio and centering.
         WinW = savedWinW; WinH = savedWinH;
         WinEX = savedWinEX; WinEY = savedWinEY;
         CameraAlpha = saveA; CameraBeta = saveB; CameraGamma = saveG;  // SOURCEPORT: include head tilt
@@ -2204,11 +2202,15 @@ void ProcessGame()
             };
             d3dUpdateProjection(proj);
         }
-        // SOURCEPORT: companion window content was blitted from eye 1 in the eye loop.
-        // Skip DrawScene (saves a full CPU+GPU scene render per VR frame).
-        // Clear depth+stencil so any subsequent GL draws on the default FBO (ShowVideo
-        // SDL swap) start from a clean state; color is already set by the blit.
-        glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        DrawScene();
+        // SOURCEPORT: render companion HUD pass with flatscreen camera.
+        // g_vrSecondEyePass gates state-advancing code so firing/timers don't double-advance.
+        g_vrSecondEyePass = true;
+        if (!TrophyMode) if (MapMode) DrawHMap();
+        DrawPostObjects();
+        ShowControlElements();
+        g_vrSecondEyePass = false;
     } else
 #endif
     {

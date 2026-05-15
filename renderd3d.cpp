@@ -1,6 +1,7 @@
 #if defined(_d3d) || defined(_opengl)
 #include "Hunt.h"
 
+#include <algorithm>
 #include "stdio.h"
 
 #ifdef _opengl
@@ -1805,6 +1806,7 @@ static inline float linear_to_srgb(float c)
 // coverage, not light).
 static void gl_GenerateLinearMipmaps(const uint32_t* level0, int w0, int h0)
 {
+
     std::vector<uint32_t> src(level0, level0 + w0 * h0);
     int w = w0, h = h0;
     for (int lv = 1; w > 1 || h > 1; ++lv) {
@@ -1813,27 +1815,44 @@ static void gl_GenerateLinearMipmaps(const uint32_t* level0, int w0, int h0)
         std::vector<uint32_t> dst(nw * nh);
         for (int y = 0; y < nh; ++y) {
             for (int x = 0; x < nw; ++x) {
-                float r = 0, g = 0, b = 0, a = 0;
-                int cnt = 0;
+                float r = 0, g = 0, b = 0;
+                int opaqueCnt = 0, transparentCnt = 0;
+
+                // SOURCEPORT: For foliage transparency, use majority-voting on alpha
+                // instead of averaging. This preserves transparency in mipmaps rather
+                // than creating semi-opaque averaged pixels.
                 for (int dy = 0; dy < 2 && (y*2+dy) < h; ++dy) {
                     for (int dx = 0; dx < 2 && (x*2+dx) < w; ++dx) {
                         uint32_t c = src[(y*2+dy)*w + (x*2+dx)];
-                        r += srgb_to_linear((c        & 0xFF) / 255.0f);
-                        g += srgb_to_linear(((c >> 8) & 0xFF) / 255.0f);
-                        b += srgb_to_linear(((c >>16) & 0xFF) / 255.0f);
-                        a += ((c >> 24) & 0xFF) / 255.0f;
-                        ++cnt;
+                        uint8_t alpha = (c >> 24) & 0xFF;
+                        if (alpha > 127) {
+                            // Opaque: accumulate color
+                            r += srgb_to_linear((c        & 0xFF) / 255.0f);
+                            g += srgb_to_linear(((c >> 8) & 0xFF) / 255.0f);
+                            b += srgb_to_linear(((c >>16) & 0xFF) / 255.0f);
+                            ++opaqueCnt;
+                        } else {
+                            ++transparentCnt;
+                        }
                     }
                 }
-                float inv = 1.0f / cnt;
+
                 auto pack = [](float v) -> uint32_t {
                     int i = (int)(v * 255.5f);
                     return (uint32_t)(i < 0 ? 0 : i > 255 ? 255 : i);
                 };
-                dst[y*nw + x] = pack(linear_to_srgb(r*inv))
-                              | (pack(linear_to_srgb(g*inv)) << 8)
-                              | (pack(linear_to_srgb(b*inv)) << 16)
-                              | (pack(a*inv)                 << 24);
+
+                // Majority voting: if more opaque than transparent, output averaged opaque color.
+                // Otherwise output fully transparent.
+                if (opaqueCnt > transparentCnt && opaqueCnt > 0) {
+                    float inv = 1.0f / opaqueCnt;
+                    dst[y*nw + x] = pack(linear_to_srgb(r*inv))
+                                  | (pack(linear_to_srgb(g*inv)) << 8)
+                                  | (pack(linear_to_srgb(b*inv)) << 16)
+                                  | (255 << 24);  // Fully opaque
+                } else {
+                    dst[y*nw + x] = 0;  // Fully transparent
+                }
             }
         }
         glTexImage2D(GL_TEXTURE_2D, lv, GL_RGBA8, nw, nh, 0,
@@ -1884,78 +1903,71 @@ static GLuint gl_UploadRGBA(const uint32_t* rgba, int w, int h)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
     if (hasTransparency) {
-        // SOURCEPORT: Fix mip-level brightness strobe on transparent textures (foliage,
-        // bushes, grass clumps).  glGenerateMipmap uses straight per-channel averaging:
-        // transparent pixels (alpha=0, RGB=0) drag mip-level colors dark, making foliage
-        // dimmer at distance.  As the camera moves, the sampled mip level oscillates →
-        // brightness strobes.
-        //
-        // Fix: compute the average opaque-pixel color, upload a version with transparent
-        // pixels filled with that color (alpha still 0) so mip generation averages the
-        // correct brightness.  Then re-upload the ORIGINAL data at mip level 0 so that
-        // close-up rendering (which uses mip 0 or additive fproc1 passes like the sun)
-        // sees the unmodified texture — transparent = black, correct for additive blending
-        // and for alpha-test at full resolution.
-        uint64_t rSum = 0, gSum = 0, bSum = 0;
-        int cnt = 0;
-        for (int i = 0; i < w * h; i++) {
-            if ((rgba[i] >> 24) != 0) {
-                rSum += rgba[i] & 0xFF;
-                gSum += (rgba[i] >> 8) & 0xFF;
-                bSum += (rgba[i] >> 16) & 0xFF;
-                cnt++;
+        // SOURCEPORT: Alpha dilation — fill transparent pixels with the color of their
+        // nearest opaque neighbor (alpha stays 0). This prevents bilinear filtering from
+        // blending leaf colors with black (transparent) pixels at leaf edges, which
+        // caused dark fringes. With dilation, bilinear sampling near a leaf edge picks
+        // up the correct leaf color instead of black, giving clean smooth edges.
+        // Mipmap generation uses majority-voting so mipmaps stay fully opaque or
+        // fully transparent — no semi-opaque artifacts at distance.
+        std::vector<uint32_t> dilated(rgba, rgba + w * h);
+        // 2-pass dilation: repeat to propagate colors a few pixels into transparent areas
+        for (int pass = 0; pass < 2; ++pass) {
+            std::vector<uint32_t> tmp = dilated;
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    if ((dilated[y*w+x] >> 24) != 0) continue; // already opaque, skip
+                    // Sample 4 neighbors; pick first opaque one
+                    int nx[] = {x-1, x+1, x,   x  };
+                    int ny[] = {y,   y,   y-1, y+1};
+                    for (int n = 0; n < 4; ++n) {
+                        int cx = nx[n], cy = ny[n];
+                        if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+                        uint32_t nc = dilated[cy*w+cx];
+                        if ((nc >> 24) != 0) {
+                            // Copy neighbor's RGB, keep alpha=0
+                            tmp[y*w+x] = (nc & 0x00FFFFFF);
+                            break;
+                        }
+                    }
+                }
             }
+            dilated = tmp;
         }
-        if (cnt > 0) {
-            // Build filled copy: transparent pixels get avg opaque RGB, alpha stays 0
-            std::vector<uint32_t> filled(rgba, rgba + w * h);
-            uint32_t fill = ((uint32_t)(bSum/cnt) << 16) | ((uint32_t)(gSum/cnt) << 8) | (uint32_t)(rSum/cnt);
-            for (int i = 0; i < w * h; i++)
-                if ((filled[i] >> 24) == 0) filled[i] = fill;
-            // Upload filled version → generate mip levels 1..N with sRGB-correct averages
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, filled.data());
-            gl_GenerateLinearMipmaps(filled.data(), w, h);
-            // SOURCEPORT: restore ORIGINAL data at level 0 (transparent pixels RGB=0).
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        } else {
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-            gl_GenerateLinearMipmaps(rgba, w, h);
-        }
+        // Upload dilated version at all levels — transparent pixels have alpha=0 so the
+        // alpha-test still discards them, but bilinear sampling near leaf edges sees leaf
+        // color (not black), giving clean smooth edges without dark fringes.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, dilated.data());
+        gl_GenerateLinearMipmaps(dilated.data(), w, h);
     } else {
-        // SOURCEPORT: opaque textures (terrain, solid objects) — NO mipmaps.
-        // The original game used manual software LOD (DataA 128×128 / DataB 64×64)
-        // rather than hardware mip chains.  Hardware mipmaps cause a GPU-driver-specific
-        // brightness variation: NVIDIA drivers clamp GL_TEXTURE_LOD_BIAS to ≥ 0 by default
-        // (Control Panel "Negative LOD bias: Clamp"), silently discarding the -0.75 bias
-        // we apply in gl_SetAnisotropy.  Without the bias correction, higher mip levels
-        // (selected as the camera bobs and UV derivatives shift) are perceptually darker,
-        // producing a moving "headlamp" circle on terrain and general dimming while walking.
-        // Intel/AMD integrated GPUs don't apply the clamp, which is why the artifact is
-        // NVIDIA-only.  Fix: GL_LINEAR (no mip chain) for opaque textures — always samples
-        // mip 0, driver cannot override, perfectly matches the original DataA behaviour.
+        // SOURCEPORT: opaque textures (terrain, solid objects) — hardware mipmaps via
+        // glGenerateMipmap.  Previously disabled because NVIDIA drivers clamp
+        // GL_TEXTURE_LOD_BIAS to ≥ 0 (Control Panel "Negative LOD bias: Clamp"), which
+        // meant any negative bias we set was silently dropped, leaving higher mip levels
+        // (darker on average) selected as the camera bobbed, producing a moving headlamp.
+        // That constraint no longer applies: the fragment shader calls textureLod() with
+        // an explicitly computed screen-space-derivative LOD, completely bypassing the
+        // driver's LOD_BIAS machinery.  Hardware mipmaps now correctly eliminate the
+        // high-frequency moire / aliasing on terrain at medium and far distances.
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        // No glGenerateMipmap — mips unused with GL_LINEAR min filter below.
+        glGenerateMipmap(GL_TEXTURE_2D);
     }
 
-    // SOURCEPORT: Set GL_TEXTURE_MAX_LEVEL to the actual mip count so textureLod()
-    // in the fragment shader clamps correctly.  For opaque textures (level 0 only)
-    // any LOD > 0 clamps to 0.  For transparent textures the full chain is present.
+    // SOURCEPORT: Set GL_TEXTURE_MAX_LEVEL to the actual mip count.
     {
         int maxLvl = 0;
         for (int s = (w > h ? w : h); s > 1; s >>= 1, maxLvl++);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, hasTransparency ? maxLvl : 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, maxLvl);
     }
-    // SOURCEPORT: always use trilinear for both transparent and opaque textures.
-    // Mipmaps reduce aliasing at distance; per-texture LOD bias set below.
+    // SOURCEPORT: transparent textures use LINEAR for smooth leaf appearance.
+    // Alpha dilation (above) fills transparent pixels with nearby leaf colors so
+    // bilinear filtering at leaf edges sees correct color instead of black.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, LINEARFILTER ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, LINEARFILTER ? GL_LINEAR : GL_NEAREST);
 
-    // SOURCEPORT: per-texture LOD bias — foliage sharp, terrain soft to reduce shimmer
-    if (hasTransparency) {
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -2.0f);  // Foliage: very sharp detail on leaves/bushes
-    } else {
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, +1.0f);  // Terrain: very soft to reduce shimmer
-    }
+    // SOURCEPORT: LOD bias only affects automatic texture() LOD selection, not our
+    // explicit textureLod() calls.  Set 0 for all — no driver-side bias interference.
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, 0.0f);
 
     gl_SetAnisotropy();
     return tex;
@@ -1966,14 +1978,30 @@ static GLuint gl_UploadTexture16(void* data, int w, int h)
 {
     std::vector<uint32_t> rgba(w * h);
     uint16_t* src = (uint16_t*)data;
+    int transparentCount = 0, sampleIdx = 0;
+    uint16_t firstSamples[16];
+    uint32_t firstRGBA[16];
+
     for (int i = 0; i < w * h; i++) {
         uint16_t c = src[i];
-        if (c == 0) { rgba[i] = 0x00000000; continue; }
-        uint32_t r = ((c >> 10) & 0x1F) * 255 / 31;
-        uint32_t g = ((c >> 5)  & 0x1F) * 255 / 31;
-        uint32_t b = ((c)       & 0x1F) * 255 / 31;
-        rgba[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+        if (c == 0) {
+            rgba[i] = 0x00000000;
+            transparentCount++;
+        } else {
+            // RGB555 extraction: bits 10-14 = R, bits 5-9 = G, bits 0-4 = B
+            uint32_t r = ((c >> 10) & 0x1F) * 255 / 31;
+            uint32_t g = ((c >> 5)  & 0x1F) * 255 / 31;
+            uint32_t b = ((c)       & 0x1F) * 255 / 31;
+            rgba[i] = 0xFF000000 | (b << 16) | (g << 8) | r;
+        }
+        // Sample first 16 pixels for debug
+        if (sampleIdx < 16) {
+            firstSamples[sampleIdx] = src[i];
+            firstRGBA[sampleIdx] = rgba[i];
+            sampleIdx++;
+        }
     }
+
     return gl_UploadRGBA(rgba.data(), w, h);
 }
 
@@ -2570,7 +2598,7 @@ void ddTextOut(int x, int y, LPSTR t, int color)
 }
 
 
-void DrawTrophyText(int x0, int y0, float textScale)
+void DrawTrophyText(int x0, int y0, float textScale, bool isVR)
 {
 	int x;
 	SmallFont = TRUE;
@@ -2586,11 +2614,12 @@ void DrawTrophyText(int x0, int y0, float textScale)
 	float range = TrophyRoom.Body[tc].range;
 	char t[32];
 
-	// SOURCEPORT: scale offsets and line spacing proportionally to screen height and text scale
-	// Line spacing uses a larger multiplier to prevent overlap when text is scaled down
-	const int ls = (int)(90 * WinH / 480 * textScale);
-	x0 += (int)(60 * WinH / 480 * textScale);
-	y0 += (int)(100 * WinH / 480 * textScale);
+	// SOURCEPORT: for VR, apply original offsets; for flatscreen, use compact spacing inside box
+	const int ls = isVR ? (int)(90 * WinH / 480 * textScale) : (int)(17 * WinH / 480);
+	const int xOffset = isVR ? (int)(60 * WinH / 480 * textScale) : (int)(20 * WinH / 480);
+	const int yOffset = isVR ? (int)(100 * WinH / 480 * textScale) : 0;
+	x0 += xOffset;
+	y0 += yOffset;
     x = x0;
 	ddTextOut(x, y0      , "Name: ", 0x00BFBFBF);  x+=ddTextW("Name: ");
     ddTextOut(x, y0      , DinoInfo[dtype].Name, 0x0000BFBF);
@@ -3562,9 +3591,33 @@ void RenderObject(int x, int y)
 void RenderModelsList()
 {
   d3dEndBufferG(FALSE);
-  for (int o=0; o<ORLCount; o++)
-        _RenderObject(ORList[o].x, ORList[o].y);
+
+  // SOURCEPORT: sort objects by grid coordinates for stable rendering order.
+  // Without sorting, objects at similar distances might render in variable order
+  // between frames, causing them to pop back/forth at overlapping edges.
+  std::sort(ORList, ORList + ORLCount, [](const Vector2di& a, const Vector2di& b) {
+    if (a.y != b.y) return a.y < b.y;
+    return a.x < b.x;
+  });
+
+#ifdef _opengl
+  // SOURCEPORT: enable polygon offset and increment per-model so overlapping
+  // parts (e.g. bush leaves + stalk) render in consistent depth order.
+  glEnable(GL_POLYGON_OFFSET_FILL);
+#endif
+
+  for (int o=0; o<ORLCount; o++) {
+#ifdef _opengl
+    glPolygonOffset(0.5f, (float)o * 0.5f);
+#endif
+    _RenderObject(ORList[o].x, ORList[o].y);
+  }
   ORLCount=0;
+
+#ifdef _opengl
+  glDisable(GL_POLYGON_OFFSET_FILL);
+#endif
+
   d3dEndBufferG(TRUE);
 }
 
@@ -4412,20 +4465,38 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
    if (LOWRESTX) d = 14*256;
 
    if (MIPMAP && (d > 12*256)) d3dSetTexture(mptr->lpTexture2, 128, 128);
-                          else d3dSetTexture(mptr->lpTexture, 256, 256);      
+                          else d3dSetTexture(mptr->lpTexture, 256, 256);
 
    int PrevOpacity = 0;
    int NewOpacity = 0;
    int PrevTransparent = 0;
-   int NewTransparent = 0;   
-   
+   int NewTransparent = 0;
+
    d3dStartBuffer();
 
    int fproc1 = 0;
    int fproc2 = 0;
    f = Current;
    BOOL CKEY = FALSE;
-   while( f!=-1 ) {       
+
+   // DEBUG: Check foliage face flags
+   static bool debugLogged = false;
+   if (!debugLogged && mptr->FCount > 100) {
+       int t1 = 0, t2 = 0;
+       for (int ff = Current; ff != -1; ff = mptr->gFace[ff].Next) {
+           if (mptr->gFace[ff].Flags & (sfOpacity | sfTransparent)) t2++;
+           else t1++;
+       }
+       if (t2 == 0) {
+           debugLogged = true;
+           char buf[256];
+           sprintf(buf, "WARNING: Model has %d opaque, 0 transparent! Flags: sfOpacity=%d sfTransparent=%d\n",
+               t1, sfOpacity, sfTransparent);
+           PrintLog(buf);
+       }
+   }
+
+   while( f!=-1 ) {
      TFace *fptr = & mptr->gFace[f];
 	 f = mptr->gFace[f].Next;
 	 // SOURCEPORT: skip faces with any vertex behind camera (sentinel = 0xFFFFFF).
@@ -4734,9 +4805,9 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
     }
 	almask = 0xFF000000;
 	if (fptr->Flags & sfTransparent) almask = 0x70000000;
-	if (almask > alphamask) 
+	if (almask > alphamask)
 		almask = alphamask;
-                     
+
     for (u=0; u<vused-2; u++) {
 		 int _flight = flight + cp[0].ev.Light;   if (_flight > 255) _flight = 255;
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[0].ev.v.x / cp[0].ev.v.z * CameraW));
@@ -4772,7 +4843,7 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
          lpVertex++;
 
 	     if (fptr->Flags & (sfOpacity | sfTransparent)) fproc2++; else fproc1++;
-     }            
+     }
 LNEXT:
      f = mptr->gFace[f].Next;
    }

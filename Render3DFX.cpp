@@ -1,6 +1,7 @@
 #ifdef _3dfx
 #include "Hunt.h"
 
+#include <algorithm>
 #include <glide.h>
 #include <sst1vid.h>
 #include <stdio.h>
@@ -773,11 +774,11 @@ void FXTextOut(int x, int y, LPSTR t, int color)
 }
 
 
-void DrawTrophyText(int x0, int y0, float textScale = 1.0f)
+void DrawTrophyText(int x0, int y0, float textScale = 1.0f, bool isVR = false)
 {
 	int x;
 	SmallFont = TRUE;
-    HFONT oldfont = SelectObject(hdcMain, fnt_Small);  
+    HFONT oldfont = SelectObject(hdcMain, fnt_Small);
 	int tc = TrophyBody;
 
 	int   dtype = TrophyRoom.Body[tc].ctype;
@@ -1897,9 +1898,25 @@ void RenderWater()
 
 void RenderModelsList()
 {
-  for (int o=0; o<ORLCount; o++)
-        _RenderObject(ORList[o].x, ORList[o].y);
+  // SOURCEPORT: sort objects by grid coordinates for stable rendering order.
+  // Without sorting, objects at similar distances might render in variable order
+  // between frames, causing them to pop back/forth at overlapping edges.
+  std::sort(ORList, ORList + ORLCount, [](const Vector2di& a, const Vector2di& b) {
+    if (a.y != b.y) return a.y < b.y;
+    return a.x < b.x;
+  });
+
+  // SOURCEPORT: enable polygon offset and increment per-model so overlapping
+  // parts (e.g. bush leaves + stalk) render in consistent depth order.
+  glEnable(GL_POLYGON_OFFSET_FILL);
+
+  for (int o=0; o<ORLCount; o++) {
+    glPolygonOffset(0.5f, (float)o * 0.5f);
+    _RenderObject(ORList[o].x, ORList[o].y);
+  }
   ORLCount=0;
+
+  glDisable(GL_POLYGON_OFFSET_FILL);
 }
 
 
