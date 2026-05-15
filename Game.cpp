@@ -1551,7 +1551,7 @@ for (int eg=0; eg<ElCount; eg++) {
 		  break;
 	   
 	   default:	   
-		Elements[eg].EList[e].speed.y -= 9.8 * 256 * TimeDt / 1000.f;	   
+		Elements[eg].EList[e].speed.y -= 9.8f * 256.f * TimeDt / 1000.f;	   
 	    if (Elements[eg].EList[e].pos.y < h) {		  
 	      if (OnWater) AddWCircle(Elements[eg].EList[e].pos.x, Elements[eg].EList[e].pos.z, 0.6);
 		  Elements[eg].EDone++;
