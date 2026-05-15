@@ -179,11 +179,16 @@ void main() {
         float rho2 = max(dot(dt_x, dt_x), dot(dt_y, dt_y));
         lod = max(0.0, 0.5 * log2(max(rho2, 1e-10)) - 0.75);
     }
-    vec4 texel = textureLod(uTexture, vTC, lod);
+    // SOURCEPORT: NEAREST-equivalent snap for alpha-tested foliage; LOD 0 always
+    // (no mip blending for cutout geometry — matches original D3D NEAREST behaviour).
+    vec2 sampleUV = uAlphaTest
+        ? (floor(vTC * vec2(tsz)) + 0.5) / vec2(tsz)
+        : vTC;
+    float sampleLOD = uAlphaTest ? 0.0 : lod;
+    vec4 texel = textureLod(uTexture, sampleUV, sampleLOD);
 
     if (uAlphaTest && uDebugMode != 9) {
-        vec2 atUV = (floor(vTC * vec2(tsz)) + 0.5) / vec2(tsz);
-        if (textureLod(uTexture, atUV, 0.0).a < 0.5) discard;
+        if (texel.a < 0.5) discard;
     }
 
     vec4 color = texel * vColor;
@@ -193,10 +198,10 @@ void main() {
     if (uDebugMode == 3) { FragColor = vec4(vColor.rgb, 1.0); return; }
     if (uDebugMode == 4) { FragColor = vec4(texel.rgb,  1.0); return; }
     if (uDebugMode == 5) { FragColor = vec4(0.5, 0.5, 0.5, 1.0); return; }
-    if (uDebugMode == 6) { FragColor = vec4(textureLod(uTexture, vTC, 0.0).rgb, 1.0); return; }
+    if (uDebugMode == 6) { FragColor = vec4(textureLod(uTexture, sampleUV, 0.0).rgb, 1.0); return; }
     if (uDebugMode == 7) { float l = lod / 4.0; FragColor = vec4(l, 0.0, max(0.0,1.0-l), 1.0); return; }
     if (uDebugMode == 8) { FragColor = vec4(fract(vTC), 0.0, 1.0); return; }
-    if (uDebugMode == 9) { FragColor = vec4(textureLod(uTexture, vTC, lod).rgb, 1.0); return; }
+    if (uDebugMode == 9) { FragColor = vec4(textureLod(uTexture, sampleUV, sampleLOD).rgb, 1.0); return; }
     // SOURCEPORT: mode 10 = terrain texture in color, foliage/alpha-test geometry as solid gray.
     // If headlamp appears here, headlamp is in terrain. If not, headlamp is foliage-only.
     if (uDebugMode == 10) {
@@ -285,6 +290,8 @@ static inline uint32_t RGB565toRGBA(uint16_t c) {
     uint32_t r = ((c >> 11) & 0x1F) * 255 / 31;
     uint32_t g = ((c >> 5)  & 0x3F) * 255 / 63;
     uint32_t b = ((c)       & 0x1F) * 255 / 31;
+    // SOURCEPORT: RGB565 uses all 16 bits for color (no alpha channel).
+    // Alpha always 0xFF (opaque). Only RGB555 has alpha bit (0x8000).
     return (0xFF << 24) | (b << 16) | (g << 8) | r; // ABGR for GL
 }
 
@@ -309,6 +316,13 @@ RendererGL::~RendererGL() {
 bool RendererGL::Init(void* windowHandle, int width, int height) {
     // SOURCEPORT: Phase 4 — read display options from game globals
     extern int OptDisplayMode, OptVSync;
+
+    FILE* dbg = fopen("C:\\Users\\User\\Documents\\claude_code\\OpenCarnivores\\debug_renderer.txt", "a");
+    if (dbg) {
+        fprintf(dbg, "[OpenGL Renderer] Initializing RendererGL backend (GL 4.1 Core)\n");
+        fflush(dbg);
+        fclose(dbg);
+    }
 
     m_width  = width;
     m_height = height;
@@ -714,6 +728,13 @@ static inline float rgl_linear_to_srgb(float c)
 }
 static void rgl_GenerateLinearMipmaps(const uint32_t* level0, int w0, int h0)
 {
+    FILE* dbg = fopen("C:\\Users\\User\\Documents\\claude_code\\OpenCarnivores\\debug_renderer.txt", "a");
+    if (dbg) {
+        fprintf(dbg, "[rgl_GenerateLinearMipmaps] Generating mipmaps for %dx%d texture\n", w0, h0);
+        fflush(dbg);
+        fclose(dbg);
+    }
+
     std::vector<uint32_t> src(level0, level0 + w0 * h0);
     int w = w0, h = h0;
     for (int lv = 1; w > 1 || h > 1; ++lv) {
@@ -722,27 +743,40 @@ static void rgl_GenerateLinearMipmaps(const uint32_t* level0, int w0, int h0)
         std::vector<uint32_t> dst(nw * nh);
         for (int y = 0; y < nh; ++y) {
             for (int x = 0; x < nw; ++x) {
-                float r = 0, g = 0, b = 0, a = 0;
-                int cnt = 0;
+                float r = 0, g = 0, b = 0;
+                int opaqueCnt = 0, transparentCnt = 0;
                 for (int dy = 0; dy < 2 && (y*2+dy) < h; ++dy) {
                     for (int dx = 0; dx < 2 && (x*2+dx) < w; ++dx) {
                         uint32_t c = src[(y*2+dy)*w + (x*2+dx)];
-                        r += rgl_srgb_to_linear((c        & 0xFF) / 255.0f);
-                        g += rgl_srgb_to_linear(((c >> 8) & 0xFF) / 255.0f);
-                        b += rgl_srgb_to_linear(((c >>16) & 0xFF) / 255.0f);
-                        a += ((c >> 24) & 0xFF) / 255.0f;
-                        ++cnt;
+                        uint8_t alpha = (c >> 24) & 0xFF;
+                        // SOURCEPORT: For foliage with binary transparency, only average colors
+                        // from opaque pixels. Transparent pixels are skipped entirely.
+                        if (alpha > 127) {
+                            r += rgl_srgb_to_linear((c        & 0xFF) / 255.0f);
+                            g += rgl_srgb_to_linear(((c >> 8) & 0xFF) / 255.0f);
+                            b += rgl_srgb_to_linear(((c >>16) & 0xFF) / 255.0f);
+                            ++opaqueCnt;
+                        } else {
+                            ++transparentCnt;
+                        }
                     }
                 }
-                float inv = 1.0f / cnt;
+                // Majority voting: if more than half are opaque, output opaque with averaged color.
+                // Otherwise output fully transparent to avoid dark semi-transparent artifacts.
                 auto pack = [](float v) -> uint32_t {
                     int i = (int)(v * 255.5f);
                     return (uint32_t)(i < 0 ? 0 : i > 255 ? 255 : i);
                 };
-                dst[y*nw + x] = pack(rgl_linear_to_srgb(r*inv))
-                              | (pack(rgl_linear_to_srgb(g*inv)) << 8)
-                              | (pack(rgl_linear_to_srgb(b*inv)) << 16)
-                              | (pack(a*inv)                     << 24);
+                if (opaqueCnt > transparentCnt) {
+                    // Majority opaque: average the opaque colors, output as fully opaque
+                    float inv = 1.0f / opaqueCnt;
+                    uint32_t rb = pack(rgl_linear_to_srgb(r*inv));
+                    uint32_t gb = pack(rgl_linear_to_srgb(g*inv));
+                    uint32_t bb = pack(rgl_linear_to_srgb(b*inv));
+                    dst[y*nw + x] = rb | (gb << 8) | (bb << 16) | (255 << 24);  // Fully opaque
+                } else {
+                    dst[y*nw + x] = 0;  // Majority transparent or tie: output fully transparent
+                }
             }
         }
         glTexImage2D(GL_TEXTURE_2D, lv, GL_RGBA8, nw, nh, 0,
@@ -764,8 +798,30 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
     // Opaque textures use GL_LINEAR — no mip selection, driver LOD bias irrelevant.
     // See renderd3d.cpp::gl_UploadRGBA for the full explanation.
     bool hasTransparency = false;
-    for (int i = 0; i < w * h; i++)
-        if ((rgba[i] >> 24) == 0) { hasTransparency = true; break; }
+    int transparentPixels = 0;
+    int sampleCount = std::min(16, w * h);
+    for (int i = 0; i < w * h; i++) {
+        if ((rgba[i] >> 24) == 0) {
+            hasTransparency = true;
+            transparentPixels++;
+        }
+    }
+
+    FILE* dbg = fopen("C:\\Users\\User\\Documents\\claude_code\\OpenCarnivores\\debug_renderer.txt", "a");
+    if (dbg) {
+        fprintf(dbg, "[RendererGL::UploadTexture16] Called with %p (%dx%d), m_isRGB565=%d\n", data, w, h, m_isRGB565);
+        fprintf(dbg, "  Sample pixels: ");
+        for (int i = 0; i < sampleCount; i++) {
+            fprintf(dbg, "%08X ", rgba[i]);
+        }
+        fprintf(dbg, "\n");
+        if (hasTransparency) {
+            fprintf(dbg, "  Texture has %d/%d transparent pixels (%.1f%%) - generating GL mipmaps\n",
+                transparentPixels, w*h, 100.0f * transparentPixels / (w*h));
+        }
+        fflush(dbg);
+        fclose(dbg);
+    }
 
     GLuint tex;
     glGenTextures(1, &tex);
@@ -788,6 +844,8 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
         : (m_linearFilter ? GL_LINEAR : GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
+    if (m_maxAnisotropy > 1)
+        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, (GLfloat)m_maxAnisotropy);
 
     return tex;
 }

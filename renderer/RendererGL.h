@@ -168,7 +168,7 @@ private:
     float  m_ssaScale = 1.0f;       // current scale factor (for comparison)
 
     // Vertex staging buffers
-    static constexpr int MAX_MAIN_VERTICES = 1024 * 3;
+    static constexpr int MAX_MAIN_VERTICES = 4096 * 3;
     static constexpr int MAX_GEOM_VERTICES = 400 * 3;
     RenderVertex m_mainBuffer[MAX_MAIN_VERTICES];
     RenderVertex m_geomBuffer[MAX_GEOM_VERTICES];

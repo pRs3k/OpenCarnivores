@@ -81,7 +81,7 @@ HDC                     ddBackDC;
 #ifdef _opengl
 // SOURCEPORT: OpenGL backend globals
 RendererGL*             g_glRenderer              = nullptr;
-static RenderVertex     g_mainVertices[1024 * 3]; // main vertex buffer staging
+static RenderVertex     g_mainVertices[4096 * 3]; // main vertex buffer staging
 static RenderVertex     g_geomVertices[400 * 3];  // geometry buffer staging
 static int              g_geomVertCount           = 0;
 static bool             g_geomLocked              = false;
