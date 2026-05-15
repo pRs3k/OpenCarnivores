@@ -672,9 +672,15 @@ void RendererGL::BeginFrame() {
     // same screen-space projection to render pre-transformed vertices correctly.
     std::memcpy(m_projMatrix, proj, sizeof(proj));
 
-    // Route scene into the post-processing FBO when in flatscreen mode.
-    // VR skips this: XR::BeginEye() binds per-eye FBOs instead.
-    if (m_postProcessingPipeline && m_postProcessingPipeline->IsInitialized() && !XR::StereoActive()) {
+    // Route scene into the post-processing FBO only when an effect is active and
+    // we are in flatscreen mode. VR uses its own per-eye FBOs via XR::BeginEye().
+    // When no effects are enabled we render directly to screen (no FBO overhead).
+    extern bool g_enableBloom, g_enableToneMapping;
+    bool needsCapture = (g_enableBloom || g_enableToneMapping)
+                        && m_postProcessingPipeline
+                        && m_postProcessingPipeline->IsInitialized()
+                        && !XR::StereoActive();
+    if (needsCapture) {
         m_postProcessingPipeline->BeginCapture();
     } else {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
