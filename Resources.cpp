@@ -1,5 +1,6 @@
 #include "Hunt.h"
 #include "stdio.h"
+namespace XR { bool StereoActive(); }
 #ifdef _opengl
 #include "renderer/RendererGL.h"
 #include "TextureOverrides.h"
@@ -651,7 +652,7 @@ void CorrectModel(TModel *mptr)
 {
 	TFace tface[1024];
 
-    for (int f=0; f<mptr->FCount; f++) {	 
+    for (int f=0; f<mptr->FCount; f++) {
      if (!(mptr->gFace[f].Flags & sfDoubleSide))
         mptr->gFace[f].Flags |= sfNeedVC;
 #ifdef _soft
@@ -695,7 +696,7 @@ void CorrectModel(TModel *mptr)
 		}
 
 
-    
+
     memcpy( mptr->gFace, tface, sizeof(tface) );
 }
 
@@ -1025,16 +1026,15 @@ void CreateMipMapMT(WORD* dst, WORD* src, int H)
 
         if (!HARD3D) { C1>>=1; C2>>=1; C3>>=1; C4>>=1; }
 
-         // SOURCEPORT: original code exited early when C1==0, zeroing the mipmap texel
-         // even when C2/C3/C4 were opaque leaf pixels — causing leaves to vanish in
-         // lpTexture2 (the distance-LOD texture used at d > 12*256).
-         // Fix: only output transparent when ALL four source pixels are transparent.
-         // Otherwise borrow a non-zero neighbour so the average stays in leaf-colour space.
+         // SOURCEPORT: Foliage needs transparent pixel preservation in mipmaps.
+         // Previous "fix" filled transparent pixels with opaque neighbors, eliminating
+         // fine transparency detail between leaves. Revert to simpler logic:
+         // average all four pixels, output zero only if all are zero.
          if (!C1 && !C2 && !C3 && !C4) { *(dst + x + y*128) = 0; continue; }
-         if (!C1) C1 = C2 ? C2 : (C3 ? C3 : C4);
-         if (!C2) C2=C1;
-         if (!C3) C3=C1;
-         if (!C4) C4=C1;
+         // Don't fill in transparent pixels—just average what's there
+         // if (!C2) C2=C1;
+         // if (!C3) C3=C1;
+         // if (!C4) C4=C1;
 
          int B = ( ((C1>> 0) & 31) + ((C2 >>0) & 31) + ((C3 >>0) & 31) + ((C4 >>0) & 31) +2 ) >> 2;
          int G = ( ((C1>> 5) & 31) + ((C2 >>5) & 31) + ((C3 >>5) & 31) + ((C4 >>5) & 31) +2 ) >> 2;
@@ -1057,12 +1057,12 @@ void CreateMipMapMT2(WORD* dst, WORD* src, int H)
 
 		if (!HARD3D) { C1>>=1; C2>>=1; C3>>=1; C4>>=1; }
 
-         // SOURCEPORT: same fix as CreateMipMapMT — only zero when all 4 are transparent.
+         // SOURCEPORT: same as CreateMipMapMT—preserve transparent pixels in mipmap.
          if (!C1 && !C2 && !C3 && !C4) { *(dst + x + y*64) = 0; continue; }
-         if (!C1) C1 = C2 ? C2 : (C3 ? C3 : C4);
-         if (!C2) C2=C1;
-         if (!C3) C3=C1;
-         if (!C4) C4=C1;
+         // Don't fill in transparent pixels—just average what's there
+         // if (!C2) C2=C1;
+         // if (!C3) C3=C1;
+         // if (!C4) C4=C1;
 
 	     int B = ( ((C1>> 0) & 31) + ((C2 >>0) & 31) + ((C3 >>0) & 31) + ((C4 >>0) & 31) +2 ) >> 2;
          int G = ( ((C1>> 5) & 31) + ((C2 >>5) & 31) + ((C3 >>5) & 31) + ((C4 >>5) & 31) +2 ) >> 2;
@@ -1352,10 +1352,12 @@ void LoadResources()
 	SkyG = min(255,SkyG * (OptBrightness + 128) / 256);
 	SkyB = min(255,SkyB * (OptBrightness + 128) / 256);
 
-	// SOURCEPORT: Override sky color to sky blue (temporary until sky dome is implemented)
-	SkyR = 100;
-	SkyG = 160;
-	SkyB = 220;
+	// SOURCEPORT: Override sky color to sky blue in VR only; flatscreen uses original grey fog.
+	if (XR::StereoActive()) {
+		SkyR = 100;
+		SkyG = 160;
+		SkyB = 220;
+	}
 
     PrintLog("Loading textures:");
     for (int tt=0; tt<tc; tt++) {
