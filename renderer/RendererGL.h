@@ -141,12 +141,12 @@ private:
     GLuint m_vao = 0;
     GLuint m_vbo = 0;
 
-    // Texture cache: maps (cpuAddr, w, h) → GL texture ID
+    // Texture cache: maps content hash → GL texture ID
     struct TexCacheEntry {
         GLuint texId;
         int lastUsed;
     };
-    std::unordered_map<uintptr_t, TexCacheEntry> m_texCache;
+    std::unordered_map<uint64_t, TexCacheEntry> m_texCache;
     GLuint m_currentTexture = 0;
     int    m_frameCounter = 0;
 

@@ -798,29 +798,11 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
     // Opaque textures use GL_LINEAR — no mip selection, driver LOD bias irrelevant.
     // See renderd3d.cpp::gl_UploadRGBA for the full explanation.
     bool hasTransparency = false;
-    int transparentPixels = 0;
-    int sampleCount = std::min(16, w * h);
     for (int i = 0; i < w * h; i++) {
         if ((rgba[i] >> 24) == 0) {
             hasTransparency = true;
-            transparentPixels++;
+            break;
         }
-    }
-
-    FILE* dbg = fopen("C:\\Users\\User\\Documents\\claude_code\\OpenCarnivores\\debug_renderer.txt", "a");
-    if (dbg) {
-        fprintf(dbg, "[RendererGL::UploadTexture16] Called with %p (%dx%d), m_isRGB565=%d\n", data, w, h, m_isRGB565);
-        fprintf(dbg, "  Sample pixels: ");
-        for (int i = 0; i < sampleCount; i++) {
-            fprintf(dbg, "%08X ", rgba[i]);
-        }
-        fprintf(dbg, "\n");
-        if (hasTransparency) {
-            fprintf(dbg, "  Texture has %d/%d transparent pixels (%.1f%%) - generating GL mipmaps\n",
-                transparentPixels, w*h, 100.0f * transparentPixels / (w*h));
-        }
-        fflush(dbg);
-        fclose(dbg);
     }
 
     GLuint tex;
@@ -852,8 +834,26 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
 
 #include "../TextureOverrides.h"
 
+// FNV-1a sample hash: probes start, middle, and end of the 16-bit pixel data plus
+// dimensions. Constant cost (~100 cycles) regardless of texture size.
+static uint64_t hashTexContent(const void* data, int w, int h) {
+    uint64_t hash = 14695981039346656037ULL;
+    const uint8_t* p = (const uint8_t*)data;
+    size_t n = (size_t)w * h * 2;
+    auto fnv = [&](size_t off, size_t len) {
+        if (off + len > n) len = (off < n) ? n - off : 0;
+        for (size_t i = 0; i < len; i++) { hash ^= p[off + i]; hash *= 1099511628211ULL; }
+    };
+    fnv(0,       32);
+    fnv(n/2 - 16, 32);
+    fnv(n - 32,  32);
+    hash ^= (uint64_t)(unsigned)w * 2654435761ULL;
+    hash ^= (uint64_t)(unsigned)h * 40503ULL;
+    return hash;
+}
+
 void RendererGL::SetTexture(void* lpData, int w, int h) {
-    uintptr_t key = (uintptr_t)lpData;
+    uint64_t key = hashTexContent(lpData, w, h);
 
     auto it = m_texCache.find(key);
     if (it != m_texCache.end()) {
@@ -863,7 +863,7 @@ void RendererGL::SetTexture(void* lpData, int w, int h) {
         // Evict old entries if cache is too large
         if (m_texCache.size() > 128) {
             int oldest = m_frameCounter;
-            uintptr_t oldestKey = 0;
+            uint64_t oldestKey = 0;
             for (auto& p : m_texCache) {
                 if (p.second.lastUsed < oldest) {
                     oldest = p.second.lastUsed;
