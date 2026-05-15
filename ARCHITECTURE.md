@@ -5,8 +5,7 @@
 - `Hunt2.cpp` — Main game loop, Win32 window setup, WndProc.
 - `Game.cpp` — Game logic, AI, dinosaur behavior, physics.
 - `Characters.cpp` — Character/model loading and animation.
-- `Interface.cpp` — Menu system, HUD, UI rendering.
-- `Loading.cpp` — Asset loading (maps, textures, models, resources).
+- `Interface.cpp` — Menu system, HUD, UI rendering, asset loading.
 - `Resources.cpp` — _RES.txt parsing (game data definitions).
 - `mathematics.cpp` — Vector math, matrix ops, collision detection.
 

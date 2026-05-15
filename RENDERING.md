@@ -1,10 +1,7 @@
 # Rendering System
 
 ## Backends
-- `renderd3d.cpp` — Direct3D 6 rendering backend.
-- `Render3DFX.cpp` — 3Dfx Glide rendering backend.
-- `RenderSoft.cpp` — Software rendering backend.
-- `renderasm.cpp` — x86 ASM optimized software rendering routines.
+- `renderd3d.cpp` — Direct3D 6 / OpenGL rendering backend (unified).
 - `Renderer.h` / `RendererGL.cpp` — SDL2 + OpenGL 3.3 Core backend (modern).
 
 ## Texture override registry
@@ -19,20 +16,39 @@ The renderer intercepts texture uploads to support high-res PNG/TGA/BMP/JPG over
 
 ## Foliage Rendering
 
-**Foliage Transparency** (in progress):
-- **Issue**: Foliage (bushes, trees) appeared overly solid/"puffy" compared to original game, lacking individual leaf detail.
+**Foliage Transparency** (partial ✅, limitations understood):
+- **Original Issue**: Foliage (bushes, trees) appeared overly solid/"puffy" compared to original game, lacking individual leaf detail.
 - **Root Cause**: Mipmap generation was aggressively filling transparent pixels with nearby opaque colors (commit d16a69c), eliminating fine transparency detail between leaves at all LOD levels.
-- **Partial Fix**: Commented out pixel-fill logic in `CreateMipMapMT()` and `CreateMipMapMT2()` (Resources.cpp lines 1034-1036, 1062-1064) for both 256→128 and 128→64 mipmap levels. This restored individual leaf outlines and detail.
-- **Remaining Issue**: Black gaps now appear between leaves where transparency should show through. Likely causes:
-  - GL mipmap generation (`rgl_GenerateLinearMipmaps`) still blending black color-key pixels into leaf colors
-  - Shader alpha test threshold (0.5) filtering out legitimate semi-opaque edge pixels
-  - Color-key (black = transparent) not properly distinguished from actual geometry during downsampling
+- **Fixes Applied**:
+  1. **Mipmap generation**: Changed `gl_GenerateLinearMipmaps()` to use majority-voting: for each 2×2 block, if more pixels are opaque than transparent, output fully opaque (averaged opaque colors); otherwise fully transparent. Eliminates semi-opaque mipmap artifacts and preserves leaf cluster boundaries.
+  2. **Alpha dilation**: Pre-fill transparent pixels with nearest opaque neighbor's RGB (keeping alpha=0) before uploading. With bilinear filtering at leaf edges, this shows leaf color instead of black, preventing dark fringes.
+  3. **NEAREST-equivalent sampling**: Snap foliage UV coordinates to texel centers in the fragment shader (emulates original D3D `D3DFILTER_NEAREST`). Every pixel maps to exactly one texel with no bilinear blending across leaf edges.
+  4. **LOD 0 always**: Force foliage color samples to mip level 0 (no trilinear blending between mip levels). Prevents mipmap-compression artifacts from darkening close-range leaf pixels.
+- **Visual Result**: Leaves now render with crisp per-texel detail matching the original engine's NEAREST filtering behaviour. At close range, individual leaf texels are visible as small pixel clusters. At medium/far range, majority-voting mipmaps provide smooth level-of-detail without semi-transparent artifacts.
+- **Remaining Limitation**: At modern resolutions (1456×816+), foliage appears slightly less detailed than comparison images from the original game at lower resolution (640×480 or 800×600). This is inherent to the original asset resolution — the texture pixels are the same size in world units, but at higher screen resolution they map to fewer screen pixels each, appearing smaller. The original game would show identical texel-level detail at the same viewing distance; comparison images were likely captured at different distances or resolutions where each leaf pixel occupied more screen space. **Conclusion**: This is as good as it can get with the original texture assets and NEAREST filtering; no further improvements possible without higher-resolution textures.
+
+## Terrain Rendering
+
+**Terrain Mipmap Chain** ✅:
+- **Historical Issue**: Terrain textures had no mipmaps (GPU level 0 only) due to NVIDIA driver `GL_TEXTURE_LOD_BIAS` clamping. When the original code used `texture()` with automatic LOD, NVIDIA clamped negative LOD bias to ≥0, forcing higher mip levels (darker) to be selected, creating a visible "headlamp" brightness circle when the camera bobbed.
+- **Root Cause of Clamping Issue**: Driver-level LOD_BIAS only applied to automatic LOD selection via `texture()` calls, not explicit `textureLod()` calls.
+- **Fix Applied** ✅: Enabled hardware mipmap generation via `glGenerateMipmap()` for terrain textures. The fragment shader uses `textureLod()` with screen-space-derivative LOD (not `texture()`), completely bypassing the driver's LOD_BIAS machinery. NVIDIA driver clamping no longer affects us.
+- **Visual Result**: Terrain at medium and far distances now uses appropriate mip levels, eliminating high-frequency moire/aliasing patterns (the dot-pattern shimmer visible at horizon). Anisotropic filtering further improves oblique-angle terrain sampling.
+- **Note**: Close-range terrain large tiles remain due to original mesh resolution and UV scale (one texture tile per terrain quad). Higher-resolution terrain textures or denser UV mapping would be needed to reduce this; original assets have fixed limitations.
 
 ## Character rendering
 
 **Dead character shadows** (`renderd3d.cpp` `RenderCharacterPost`):
 - When a character dies (`Health==0`), shadows fade out during the death animation. Previously, an early return on the last animation frame prevented shadow rendering entirely, causing dead dinosaurs laying on the ground to cast no shadows.
 - **Fix**: Removed the early return so shadows continue fading through the complete death animation cycle, including after the animation ends.
+
+## Trophy screen rendering
+
+**Trophy graphic and text positioning** (`Hunt2.cpp`, `renderd3d.cpp` `DrawTrophyText`):
+- Trophy screen has different layout requirements for flatscreen vs VR modes, requiring separate positioning strategies.
+- **Flatscreen**: Graphic positioned at bottom-center with 40px margin from screen bottom (`y0 = WinH - dh - 40*WinH/480`). Text rendered with compact 17px line spacing (scaled by WinH/480) to fit neatly inside the trophy graphic box at `y0 + 15*WinH/480`. Minimal x/y offsets (20px right, 0px down).
+- **VR (fade-out)**: Graphic positioned eye-level (`WinH/2.75`) and scaled to 65% of original size for comfort. Text positioned at `y0 + 5*WinH/480` (near top of smaller graphic) with large 90px line spacing (scaled by textScale=0.10f) and full +100px y-offset. The large line spacing and offsets are scaled down by textScale to fit the smaller VR rendering proportionally.
+- **Implementation**: `DrawTrophyText()` accepts `bool isVR` parameter to conditionally apply layout offsets. Line spacing: `isVR ? (90 * WinH/480 * textScale) : (17 * WinH/480)`. Y offset: `isVR ? (100 * WinH/480 * textScale) : 0`. This prevents tight flatscreen text from becoming unreadable in VR, and prevents oversized VR spacing from overflowing flatscreen box.
 
 ## Post-Processing Pipeline (Phase 1 ✅ Complete)
 

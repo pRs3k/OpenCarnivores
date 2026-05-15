@@ -1,10 +1,8 @@
 # Audio System
 
 ## Files
-- `Audio.cpp` / `Audio_DLL.cpp` — DirectSound audio system (legacy).
 - `Audio_SDL.cpp` — SDL2 software mixer (fallback).
 - `Audio_OpenAL.cpp` — OpenAL Soft backend (current default).
-- `eax.h` — Creative EAX audio extensions header.
 
 ## Current OpenAL implementation
 - 16 one-shot channels + 2 ambient slots with crossfade.
