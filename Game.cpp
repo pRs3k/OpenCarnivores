@@ -884,19 +884,19 @@ void InitEngine()
 
     switch (OptDayNight) {
    case 0:
-	   SunShadowK = 0.7;
+	   SunShadowK = 0.7f;
 	   Sun3dPos.x = - 4048;
        Sun3dPos.y = + 2048;
        Sun3dPos.z = - 4048;
 	   break;
    case 1:
-	   SunShadowK = 0.5;
+	   SunShadowK = 0.5f;
 	   Sun3dPos.x = - 2048;
        Sun3dPos.y = + 4048;
        Sun3dPos.z = - 2048;
 	   break;
    case 2:
-	   SunShadowK = -0.7;
+	   SunShadowK = -0.7f;
 	   Sun3dPos.x = + 3048;
        Sun3dPos.y = + 3048;
        Sun3dPos.z = + 3048;
@@ -1219,8 +1219,8 @@ ENDTRACE:
   if (sres == tresWater) {
 	  AddElements(bx, by, bz, partWater, 4 + WeapInfo[CurrentWeapon].Power*3);  
 	  //AddElements(bx, GetLandH(bx, bz), bz, partBubble);  
-	  AddWCircle(bx, bz, 1.2);
-	  AddWCircle(bx, bz, 1.2);
+	  AddWCircle(bx, bz, 1.2f);
+	  AddWCircle(bx, bz, 1.2f);
   }
 
   
@@ -1543,7 +1543,7 @@ for (int eg=0; eg<ElCount; eg++) {
 	     Elements[eg].EList[e].speed.y += 2.0 * 256 * TimeDt / 1000.f;
 		 if (Elements[eg].EList[e].speed.y > 824) Elements[eg].EList[e].speed.y = 824;
 		 if (Elements[eg].EList[e].pos.y > h) {		  
-	      AddWCircle(Elements[eg].EList[e].pos.x, Elements[eg].EList[e].pos.z, 0.6);
+	      AddWCircle(Elements[eg].EList[e].pos.x, Elements[eg].EList[e].pos.z, 0.6f);
 		  Elements[eg].EDone++;
 		  Elements[eg].EList[e].Flags = 1;		  
 		  if (OnWater) Elements[eg].EList[e].pos.y-= 10240;		  
