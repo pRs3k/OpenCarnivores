@@ -114,6 +114,8 @@ static bool PollMenuEvents(bool& appQuit) {
                 }
             }
             break;
+        default:
+            break;
         }
     }
     // Audio tick happens in menus too — crossfades between MENUR ship-hum and
@@ -137,7 +139,7 @@ static bool SafeLoadTGA(TPicture& pic, const char* path) {
 }
 
 static void FreePic(TPicture& pic) {
-    if (pic.lpImage) { _HeapFree(Heap, 0, pic.lpImage); pic.lpImage = nullptr; }
+    if (pic.lpImage) { HeapFree_(Heap, 0, pic.lpImage); pic.lpImage = nullptr; }
     pic.W = pic.H = 0;
 }
 
@@ -152,7 +154,7 @@ static bool LoadMenuScreen(MenuScreen& ms, const char* offPath,
 
     // Allocate composite buffer same size as OFF image
     ms.comp.W = ms.off.W; ms.comp.H = ms.off.H;
-    ms.comp.lpImage = (WORD*)_HeapAlloc(Heap, 0, ms.comp.W * ms.comp.H * 2);
+    ms.comp.lpImage = (WORD*)HeapAlloc_(Heap, 0, ms.comp.W * ms.comp.H * 2);
     memcpy(ms.comp.lpImage, ms.off.lpImage, ms.comp.W * ms.comp.H * 2);
 
     if (onPath) SafeLoadTGA(ms.on, onPath);
@@ -1312,7 +1314,7 @@ static void RunOptions(bool& appQuit) {
 
             // Audio / video driver (read-only)
             MTMed("Audio Driver", ox, y, 0x00AC6D24); MT("OpenAL Soft",  vx, y, 0x00C0C0C0); y += lnH;
-            MTMed("Video Driver", ox, y, 0x00AC6D24); MT("OpenGL 3.3",  vx, y, 0x00C0C0C0); y += lnH;
+            MTMed("Video Driver", ox, y, 0x00AC6D24); MT("OpenGL 4.1 Core",  vx, y, 0x00C0C0C0); y += lnH;
 
             // Resolution — cycle presets for windowed/fullscreen; fixed at desktop for borderless
             {
@@ -1406,7 +1408,12 @@ static void RunOptions(bool& appQuit) {
                 int prev = OptSSFactor;
                 OptSSFactor = DrawSlider(vx, y+2, slW, lnH-6, OptSSFactor, 100, 200);
                 if (OptSSFactor != prev) {
-                    // TODO: wire to eye FBO rendering scale in VR
+                    // SOURCEPORT: recreate swapchains with new supersampling scale
+                    if (XR::SessionRunning()) {
+                        if (!XR::ReconfigureSwapchainResolution()) {
+                            OptSSFactor = prev;  // revert on failure
+                        }
+                    }
                 }
                 char buf[32];
                 wsprintf(buf, "%d%%", OptSSFactor);
