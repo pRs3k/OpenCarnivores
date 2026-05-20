@@ -2737,6 +2737,16 @@ int main(int argc, char* argv[])
                         if (vk == 'U') SwitchMode((LPSTR)"Sun rendering",  DBG_NO_SUN);
                         if (vk == 'Y') SwitchMode((LPSTR)"Sky plane",      DBG_NO_SKY);
                         if (vk == 'O') SwitchMode((LPSTR)"Fog rendering",  FOGENABLE);
+                        // SOURCEPORT: Phase 2.1 shadow debugging
+                        if (vk == 'S') {
+                            extern bool g_enableShadows;
+                            extern float g_shadowIntensity;
+                            g_enableShadows = !g_enableShadows;
+                            char buf[256];
+                            snprintf(buf, sizeof(buf), "Shadows %s (intensity %.1f)",
+                                    g_enableShadows ? "ON" : "OFF", g_shadowIntensity);
+                            AddMessage(buf);
+                        }
                     }
                     break; }
                 case SDL_KEYUP: {
