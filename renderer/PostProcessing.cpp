@@ -289,10 +289,18 @@ void PostProcessingPipeline::ApplyEffects() {
         glBindTexture(GL_TEXTURE_2D, depthTex);
         glUniform1i(glGetUniformLocation(shadowProg, "uScreenDepth"), 1);
 
-        // Bind shadow maps
+        // Bind 3 shadow maps as separate 2D textures
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);  // TODO: bind actual shadow map array
-        glUniform1i(glGetUniformLocation(shadowProg, "uShadowMaps"), 2);
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[0].GetColorTexture());
+        glUniform1i(glGetUniformLocation(shadowProg, "uShadowMap0"), 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[1].GetColorTexture());
+        glUniform1i(glGetUniformLocation(shadowProg, "uShadowMap1"), 3);
+
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[2].GetColorTexture());
+        glUniform1i(glGetUniformLocation(shadowProg, "uShadowMap2"), 4);
 
         // Set shadow uniforms
         glUniform1f(glGetUniformLocation(shadowProg, "uIntensity"), g_shadowIntensity);
