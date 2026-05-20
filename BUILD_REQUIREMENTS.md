@@ -14,9 +14,42 @@ The OpenXR loader is required for VR support via Meta Horizon Link. It is now in
 ## Windows SDK & Toolchain
 
 - **Windows SDK:** 10.0.26100.0 or later
-- **MSVC:** Visual Studio 2022 (v143 toolset)
-- **CMake:** 3.20+
+- **C++ Compiler:**
+  - **MSVC:** Visual Studio 2022 (v143 toolset) — primary target, fully tested
+  - **Clang:** LLVM 22.1.0+ on Windows (via lld-link) — supported with Ninja generator
+- **CMake:** 3.20+ (Ninja or Unix Makefiles generator; Visual Studio generator explicitly rejected)
 - **Git:** For clone/checkout
+- **Build Tool:** Ninja (recommended for speed; also supports Unix Makefiles, NMake Makefiles)
+
+## Compiler Notes
+
+### MSVC (Visual Studio)
+Preferred build path. Full compatibility with all legacy 1999-era code patterns. Tested and stable.
+
+### Clang on Windows
+Working configuration with known workarounds:
+
+1. **SDL2 Header Incompatibility (Clang 22.1.0+)**  
+   SDL2-2.30.12 headers define `_m_prefetch` which conflicts with Clang's builtin. Workaround in CMakeLists.txt:
+   ```cmake
+   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+       add_compile_options(-Wno-builtin-macro-redefined)
+   endif()
+   ```
+   Alternatively, patch SDL_endian.h and SDL_cpuinfo.h to skip `_m_prefetch` definition for Clang.
+
+2. **Ninja Generator Required**  
+   Visual Studio generator explicitly blocked in CMakeLists.txt to enforce CMake as single source of truth. Use Ninja:
+   ```bash
+   cmake -G Ninja -DRENDERER=opengl -B build
+   cmake --build build
+   ```
+
+3. **Const Correctness**  
+   Clang is stricter about const-correctness in template instantiation and function calls. Vector math functions (MulVectorsVect, MulVectorsScal) accept const references to support temporaries:
+   ```cpp
+   void MulVectorsVect(const Vector3d& v1, const Vector3d& v2, Vector3d& r);
+   ```
 
 ## SDL2 & OpenAL
 
@@ -28,15 +61,26 @@ Both are auto-detected and staged to build output by CMakeLists.txt.
 
 ## Build Procedure
 
+### Quick Start (Ninja + Clang on Windows)
 ```bash
 cd OpenCarnivores
-mkdir -p build
-cd build
-cmake -G "Visual Studio 17 2022" -DRENDERER=opengl ..
-cmake --build . --config Release
+$env:PATH = "C:\tools\ninja;" + $env:PATH  # Ensure Ninja is in PATH
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DRENDERER=opengl -B build
+cmake --build build
 ```
 
-Output: `build/Release/OpenCarnivores.exe` + all runtime DLLs (SDL2.dll, OpenAL32.dll, openxr_loader.dll)
+### Visual Studio + MSVC (Legacy)
+CMakeLists.txt explicitly rejects the Visual Studio generator to enforce CMake as source of truth:
+```bash
+# This will FAIL with clear error message:
+cmake -G "Visual Studio 17 2022" -DRENDERER=opengl -B build
+
+# Use Ninja or Unix Makefiles instead:
+cmake -G Ninja -DRENDERER=opengl -B build
+cmake --build build --config Release
+```
+
+Output: `build/OpenCarnivores.exe` + all runtime DLLs (SDL2.dll, OpenAL32.dll, openxr_loader.dll)
 
 ## Troubleshooting
 
@@ -49,7 +93,7 @@ Output: `build/Release/OpenCarnivores.exe` + all runtime DLLs (SDL2.dll, OpenAL3
 ```bash
 rm -rf build/
 mkdir build && cd build
-cmake -G "Visual Studio 17 2022" -DRENDERER=opengl ..
+cmake -DRENDERER=opengl ..
 cmake --build . --config Release
 ```
 

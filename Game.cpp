@@ -801,7 +801,7 @@ void InitEngine()
     MORPHP       = TRUE;
     MORPHA       = TRUE;
 
-	_GameState = 0;
+	GameState_ = 0;
 
 	RadarMode    = FALSE;
 
@@ -846,7 +846,7 @@ void InitEngine()
       MessageBox(hwndMain,"Error creating heap.","Error",IDOK);     
       return; }
 
-    Textures[255] = (TEXTURE*) _HeapAlloc(Heap, 0, sizeof(TEXTURE));
+    Textures[255] = (TEXTURE*) HeapAlloc_(Heap, 0, sizeof(TEXTURE));
 
     WaterR = 10;
     WaterG = 38;

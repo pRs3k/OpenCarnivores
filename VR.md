@@ -62,12 +62,27 @@ Loop bounds in `PreCashGroundModel()` are sufficient for the visible frustum. Ex
 
 ## World scale and IPD
 
-Game world units: **~133 GU/m** (from `HeadY = 220 GU` ÷ 1.65 m standing eye height). This scale is critical: changing it affects perceived world size and IPD-induced stereo disparity. Larger scales (e.g. 256 GU/m) shrink the perceived world and double IPD disparity, causing eye strain at close distances.
+Game world units: **~143 GU/m** (from `HeadY = 220 GU` ÷ 1.54 m effective eye height). Adjusted from ~133 GU/m to improve perceived detail and reduce "too large" sensation in VR. This scale is critical: changing it affects perceived world size and IPD-induced stereo disparity. Larger scales (e.g. 256 GU/m) shrink the perceived world and double IPD disparity, causing eye strain at close distances.
+
+## VR Graphics Settings
+
+**Supersampling** (`OptSSFactor`, 100–200%):
+- Controls per-eye FBO resolution relative to OpenXR runtime's recommended size
+- Adjustable at runtime via **Options > Advanced Graphics > Supersampling (VR Only)**
+- 100% = native recommended resolution (GPU-friendly baseline)
+- 150% = 1.5× pixels per eye (sharper, ~2.25× pixel workload)
+- 200% = 2× pixels per eye (highest quality if GPU allows)
+- Changes take effect immediately by destroying and recreating eye swapchains
+- Implementation: `XR::ReconfigureSwapchainResolution()` in XR.cpp/XR.h
+
+**Render Distance** (`ctViewR`):
+- Capped at 110 units in VR to maintain 90 FPS (vs. 250 flatscreen) due to O(r²) terrain workload in stereo
+- Further adjustable via **Options > Video > Render Distance** slider, but effective distance is clamped
 
 ## Comfort and UX
-- 6DoF locomotion + snap turn options for VR comfort.
-- Partially implemented: Q/E snap-turn ±30° in SDL key-down handler — works in flatscreen now, will bind to controller thumbstick-click in HMD build.
-- World-space UI: `Interface.cpp` draws to 2D screen coords — needs a canvas layer that can render to a quad in 3D for VR.
+- 6DoF roomscale locomotion: physical movement in play space maps to in-game camera movement (scale ~143 GU/m)
+- Snap turn options: Q/E keys for ±30° turns (will bind to controller thumbstick-click)
+- World-space UI: `Interface.cpp` draws to 2D screen coords — needs a canvas layer for 3D quad rendering in VR
 
 ## Audio for VR
 - HRTF (Head-Related Transfer Function): see [AUDIO.md](AUDIO.md) for HRTF toggle (`ALC_HRTF_SOFT`).

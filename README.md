@@ -33,8 +33,7 @@ Open **Options → Video** to adjust:
 
 In VR (OpenXR headset detected), a **VR Graphics** submenu appears with VR-specific settings:
 - **Render Distance** — affects how far terrain is drawn; capped at 110 to maintain 90 FPS
-- **Map Scale** — adjusts world size perception
-- **Supersampling** — render above headset native resolution (100–200%); trades visual quality for framerate
+- **Supersampling** — adjust VR eye FBO resolution (100–200%) at runtime for visual quality vs. framerate tradeoff
 
 ### VR prerequisites
 
@@ -305,9 +304,9 @@ Full stereoscopic 6-degree-of-freedom VR rendering with per-eye asymmetric FOV c
 
 - **Render Distance** — capped at 110 game units in VR to maintain stable 90 FPS framerate (vs. 250 units on flatscreen)
 - **Anisotropic Filtering** — reduces terrain shimmering at distance
-- **Supersampling** — render above native resolution for crisper image quality
+- **Supersampling** — adjust VR eye FBO resolution (100–200%) at runtime; lower GPU load at 100%, sharper visuals at 150%+
 
-Comfort features include 6DoF locomotion, configurable snap-turn options, and world-space UI scaling for convergence comfort.
+Comfort features include 6DoF roomscale locomotion (physical movement in play space), configurable snap-turn options, and world-space UI scaling for convergence comfort. World scale tuned for perceived detail without excessive motion-to-world mapping.
 
 ---
 

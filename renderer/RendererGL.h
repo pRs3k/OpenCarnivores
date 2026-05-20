@@ -51,6 +51,10 @@ public:
     void SetHUDMode(bool enabled);
     // SOURCEPORT: debug visualization mode. 0=normal, 1=PBR off, 2=PBR magenta.
     void SetDebugMode(int mode);
+    // SOURCEPORT: upload screen-space fog parameters (call once per frame after CAMERAINFOG update).
+    void SetFogParams(float fogYBeginGU, float fogTransp, float fogLimit,
+                      float cameraY, int cameraInFog,
+                      float videoCY, float winH, float cameraH);
 
     // SOURCEPORT: bind a PBR material's supplementary maps (normal/MR/AO) to
     // texture units 1/2/3 and enable the PBR branch in the fragment shader.
@@ -99,6 +103,14 @@ public:
     // SOURCEPORT: query maximum anisotropic filtering level supported by hardware
     int GetMaxAnisotropy() const { return m_maxAnisotropy; }
 
+    // SOURCEPORT: shadow mapping support
+    // Switch to depth-only rendering mode for shadow map generation (light POV)
+    void BeginShadowPass();
+    // Restore normal rendering mode after shadow depth pass
+    void EndShadowPass();
+    // Get light-space transformation for a cascade
+    void GetLightTransform(int cascade, float* outViewMatrix, float* outProjMatrix);
+
 
 private:
     void CompileShaders();
@@ -118,6 +130,7 @@ private:
 
     // Shader program
     GLuint m_shaderProgram = 0;
+    GLuint m_depthShaderProgram = 0;    // SOURCEPORT: Depth-only shader for shadow pass
     GLint  m_locProjection = -1;
     GLint  m_locTexture = -1;
     GLint  m_locFogEnabled = -1;
@@ -131,6 +144,15 @@ private:
     GLint  m_locSunDirView      = -1;
     GLint  m_locDebugMode       = -1;
     bool   m_pbrActive          = false;
+    // SOURCEPORT: screen-space fog uniform locations
+    GLint  m_locFogYBeginGU     = -1;
+    GLint  m_locFogTransp       = -1;
+    GLint  m_locFogLimit        = -1;
+    GLint  m_locFogCameraY      = -1;
+    GLint  m_locCameraInFog     = -1;
+    GLint  m_locFogVideoCY      = -1;
+    GLint  m_locFogWinH         = -1;
+    GLint  m_locFogCameraH      = -1;
 
     // SOURCEPORT: cached projection matrix for CustomMaterials::Apply. Updated
     // every BeginFrame alongside the default-program uProjection uniform.
@@ -169,7 +191,7 @@ private:
 
     // Vertex staging buffers
     static constexpr int MAX_MAIN_VERTICES = 4096 * 3;
-    static constexpr int MAX_GEOM_VERTICES = 400 * 3;
+    static constexpr int MAX_GEOM_VERTICES = 4096 * 3;  // SOURCEPORT: expanded for DrawTerrainGL bucketed batches
     RenderVertex m_mainBuffer[MAX_MAIN_VERTICES];
     RenderVertex m_geomBuffer[MAX_GEOM_VERTICES];
 

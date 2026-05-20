@@ -2,7 +2,6 @@
 
 #include "VFS.h"
 
-#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -12,7 +11,7 @@
 // Global PrintLog lives in Resources.cpp — forward-declare at global scope so
 // the namespaced VFS functions below don't accidentally qualify it.
 extern "C" { /* nothing */ }
-extern void PrintLog(char*);
+extern void PrintLog(const char*);
 
 namespace {
 
@@ -32,7 +31,7 @@ std::vector<std::string> LoadEnabledList() {
         if (n == 0 || line[0] == '#') continue;
         out.emplace_back(line);
     }
-    std::fclose(f);
+    (void)std::fclose(f);
     return out;
 }
 
@@ -71,10 +70,10 @@ void Init() {
         PrintLog(const_cast<char*>("[VFS] no mods enabled\n"));
     } else {
         char msg[256];
-        std::snprintf(msg, sizeof(msg), "[VFS] %d mod(s) mounted:\n", (int)g_mounts.size());
+        (void)std::snprintf(msg, sizeof(msg), "[VFS] %d mod(s) mounted:\n", (int)g_mounts.size());
         PrintLog(msg);
         for (auto& m : g_mounts) {
-            std::snprintf(msg, sizeof(msg), "[VFS]   %s\n", m.c_str());
+            (void)std::snprintf(msg, sizeof(msg), "[VFS]   %s\n", m.c_str());
             PrintLog(msg);
         }
     }

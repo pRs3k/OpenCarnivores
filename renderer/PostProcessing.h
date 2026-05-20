@@ -75,6 +75,14 @@ public:
     FramebufferObject* GetIntermediate1() { return &m_intermediate1; }
     FramebufferObject* GetIntermediate2() { return &m_intermediate2; }
 
+    // SOURCEPORT: Shadow map accessors for depth rendering and sampling
+    FramebufferObject* GetShadowMap(int cascade) { return cascade >= 0 && cascade < SHADOW_CASCADES ? &m_shadowMaps[cascade] : nullptr; }
+    const float* GetLightDirection() const { return m_lightDirection; }
+    void SetLightDirection(float x, float y, float z) { m_lightDirection[0]=x; m_lightDirection[1]=y; m_lightDirection[2]=z; }
+    const float* GetLightViewMatrix(int cascade) const { return cascade >= 0 && cascade < SHADOW_CASCADES ? m_lightViewMatrix[cascade] : nullptr; }
+    const float* GetLightProjMatrix(int cascade) const { return cascade >= 0 && cascade < SHADOW_CASCADES ? m_lightProjMatrix[cascade] : nullptr; }
+    void UpdateShadowMatrices(const float* cameraPos, const float* cameraDir, float fovY, float aspect);
+
 private:
     struct EffectShader {
         const char* name;
@@ -91,6 +99,15 @@ private:
     FramebufferObject m_bloomDownsampled;  // 1/4 resolution for bloom threshold/blur
     FramebufferObject m_bloomBlurH;        // Horizontal blur result
     FramebufferObject m_bloomBlurV;        // Vertical blur result (final bloom)
+
+    // SOURCEPORT: Shadow mapping (Phase 2.1 - cascaded PCF shadows)
+    static constexpr int SHADOW_CASCADES = 3;
+    static constexpr int SHADOW_MAP_SIZE = 2048;
+    FramebufferObject m_shadowMaps[SHADOW_CASCADES];  // Depth-only FBOs for light POV rendering
+    float m_cascadeDistances[SHADOW_CASCADES];        // Distance ranges for each cascade
+    float m_lightDirection[3] = {0.6f, 0.6f, 0.2f};   // Directional light direction (world space)
+    float m_lightViewMatrix[SHADOW_CASCADES][16];     // Light view matrix per cascade
+    float m_lightProjMatrix[SHADOW_CASCADES][16];     // Light projection matrix per cascade
 
     std::vector<EffectShader> m_effects;
     uint32_t m_fsQuadVao, m_fsQuadVbo;   // Full-screen quad for post-processing

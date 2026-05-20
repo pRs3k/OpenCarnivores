@@ -50,6 +50,12 @@ Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `G
 - **Visual Result**: Terrain at medium and far distances now uses appropriate mip levels, eliminating high-frequency moire/aliasing patterns (the dot-pattern shimmer visible at horizon). Anisotropic filtering further improves oblique-angle terrain sampling.
 - **Note**: Close-range terrain large tiles remain due to original mesh resolution and UV scale (one texture tile per terrain quad). Higher-resolution terrain textures or denser UV mapping would be needed to reduce this; original assets have fixed limitations.
 
+**Terrain Alpha Fade (Legacy Distance Fade)** ✅:
+- **Original Code**: `DrawTPlane` and clipping path computed per-vertex alpha based on distance (`VectorLength(ev[n].v) - 256 * (ctViewR-4)`), fading from 255 to 0 over ~500 world units.
+- **Removal**: Alpha fade calculation removed; all terrain vertices now render with full alpha (0xFF). Ring-based distance culling via ProcessMap and z-buffer provide natural LOD without per-vertex alpha blending.
+- **Technical Detail**: Two paths had the fade: `DrawTPlane()` used local alpha variables (`alpha1`, `alpha2`, `alpha3`), while clipped terrain in `DrawTPlaneClip()` used `ev[n].ALPHA` field. Both paths now set alpha to 255 unconditionally.
+- **Architecture Note**: Texture bucketing attempt (`DrawTerrainGL()`) was abandoned due to GL texture binding complexity; the original ring-order ProcessMap path remains the most reliable approach. Ring traversal requires proper initialization of `r` for each code path (D3D: `ctViewR1-1`, GL: `ctViewR`).
+
 ## Character rendering
 
 **Dead character shadows** (`renderd3d.cpp` `RenderCharacterPost`):
@@ -91,8 +97,18 @@ Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `G
 - `shaders/postprocess/desaturate.frag` — Test shader proving pipeline works
 
 ## Phase 2 Roadmap (In Progress)
-- **Phase 2.1**: Dynamic Shadow Mapping — Cascaded PCF shadows from sun light (5-6 hours)
-- **Phase 2.2**: Bloom + Tone Mapping — Bright-pixel bloom, Reinhard tone curve (4-5 hours)
+
+**Phase 2.1: Dynamic Shadow Mapping** (⏳ In Progress)
+- **Infrastructure**: ✅ Shadow map FBOs (3 cascades, 2048×2048 each), depth shader, light matrix placeholders
+- **Remaining**:
+  - Compute proper light view-projection matrices based on camera frustum split
+  - Implement depth pass rendering (BeginShadowPass/RenderShadowPass/EndShadowPass)
+  - PCF shadow sampling in postprocess shader
+  - Wire shadow maps into main rendering path
+  - Menu controls for shadow quality (low/medium/high/ultra)
+- **Files**: `PostProcessing.h/cpp`, `RendererGL.h/cpp`, `shaders/depth.vert/frag`, `shaders/postprocess/shadows.frag`
+
+- **Phase 2.2**: Bloom + Tone Mapping — ✅ Complete (Reinhard tone curve working)
 - **Phase 2.3**: Screen-Space Reflections — Ray-marched reflections on shiny surfaces (4-5 hours)
 - **Phase 2.4**: Normal Mapping Quality — Parallax mapping, PBR parameters (2-3 hours)
 

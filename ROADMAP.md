@@ -18,10 +18,6 @@
 
 ## Graphics and Rendering
 - **Phase 1 — Post-processing Infrastructure ✅ Complete**
-  - FBO management, effect registry, shader loading system
-  - Global toggles for Bloom, Tone Mapping, SSR, Shadow Mapping (all disabled by default)
-  - Integration in flatscreen and VR render paths
-  - See [RENDERING.md](RENDERING.md) for details
 
 - **Phase 2 — Visual Enhancement Effects** (In Progress)
   - Dynamic Shadow Mapping — cascaded PCF shadows from sun light
@@ -31,8 +27,6 @@
   - See [RENDERING.md](RENDERING.md) Phase 2 roadmap
 
 ## VR Enhancements
-- **Supersampling Runtime Adjustment ✅ Complete** — Supersampling (eye FBO resolution) now adjustable at runtime via menu slider (100–200%), with immediate swapchain recreation
-- **World Scale Tuning ✅ Complete** — Adjusted from 133 GU/m to 143 GU/m (~7% reduction) to improve perceived detail and reduce "too large" sensation
 - **Next: Independent weapon aiming** — controller-relative pointing for true VR gun aiming (vs. camera-centered)
 
 ## Specialized domains

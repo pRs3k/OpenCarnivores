@@ -1,0 +1,5 @@
+C:\Users\User\Documents\claude_code\OpenCarnivores\XR.h:8:1: warning: enum '(unnamed enum at C:\Users\User\Documents\claude_code\OpenCarnivores\XR.h:8:1)' uses a larger base type ('int', size: 4 bytes) than necessary for its value set, consider using 'std::uint8_t' (1 byte) as the base type to reduce its size [performance-enum-size]
+C:\Users\User\Documents\claude_code\OpenCarnivores\renderd3d.cpp:21:9: warning: declaration uses identifier '_ZSCALE', which is a reserved identifier [bugprone-reserved-identifier]
+C:\Users\User\Documents\claude_code\OpenCarnivores\renderd3d.cpp:21:17: warning: macro replacement list should be enclosed in parentheses [bugprone-macro-parentheses]
+C:\Users\User\Documents\claude_code\OpenCarnivores\renderd3d.cpp:22:9: warning: declaration uses identifier '_AZSCALE', which is a reserved identifier [bugprone-reserved-identifier]
+C:\Users\User\Documents\claude_code\OpenCarnivores\renderd3d.cpp:139:16: warning: declaration uses identifier '_d3dmemmap', which is reserved in the global namespace [bugprone-reserved-identifier]

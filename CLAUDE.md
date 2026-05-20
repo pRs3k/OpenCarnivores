@@ -19,6 +19,7 @@ Source port of Carnivores 2 — clean, maintainable engine on modern systems wit
 See [ARCHITECTURE.md](ARCHITECTURE.md) for core game files and domain-specific guides.
 
 ## Domain documentation
+- [BUILD_REQUIREMENTS.md](BUILD_REQUIREMENTS.md) — Build system, CMake configuration, runtime dependencies (OpenXR, SDL2, OpenAL).
 - [RENDERING.md](RENDERING.md) — Rendering backends, texture override registry, multi-backend roadmap.
 - [AUDIO.md](AUDIO.md) — Audio backends, OpenAL 3D positional audio, reverb and HRTF.
 - [VR.md](VR.md) — OpenXR pipeline, HMD components, comfort features, head-tracking.

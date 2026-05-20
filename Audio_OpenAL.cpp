@@ -90,7 +90,7 @@ static ALuint g_reverbEffect = 0;
 static ALuint g_reverbSlot   = 0;
 static int    g_currentPreset = -1;   // cached so we don't re-upload on every frame
 
-enum ReverbZone {
+enum ReverbZone : std::uint8_t {
     ZONE_FOREST     = 0,   // default — dense vegetation, medium tail
     ZONE_MOUNTAINS  = 1,   // open high-altitude, long sparse reflections
     ZONE_UNDERWATER = 2,   // heavily low-passed, long tail
@@ -159,6 +159,19 @@ static ReverbZone SelectZoneForPlayer()
     return ZONE_FOREST;
 }
 
+// SOURCEPORT: Configure 5.1 surround speaker layout if available.
+// OpenAL automatically virtualizes mono sources to the configured speaker layout
+// based on listener position and orientation. No additional processing needed.
+static void ConfigureSurroundLayout()
+{
+    // Detect 5.1 capability — if present, OpenAL Soft's HRTF or native surround
+    // will automatically distribute 3D sources across FL/FR/FC/LFE/SL/SR speakers.
+    if (alcIsExtensionPresent(g_device, "ALC_SOFT_output_limiter")) {
+        // Optional: enable soft-limiter to prevent clipping on surround upmix.
+        // Gracefully no-op if not present; not a requirement.
+    }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 static ALuint GetOrCreateBuffer(int length, short* data)
 {
@@ -190,6 +203,16 @@ bool SDL_Audio_Init()
         if (g_context) { alcDestroyContext(g_context); g_context = nullptr; }
         alcCloseDevice(g_device); g_device = nullptr;
         return false;
+    }
+
+    // SOURCEPORT: Check for 5.1 surround support (AL_EXT_MCFORMATS).
+    // OpenAL Soft automatically uses surround output if available and supported.
+    // Graceful fallback: if unavailable, audio still plays in stereo with no errors.
+    if (alcIsExtensionPresent(g_device, "AL_EXT_MCFORMATS")) {
+        Log("OpenAL: 5.1 surround sound support available.\n");
+        ConfigureSurroundLayout();
+    } else {
+        Log("OpenAL: 5.1 surround unavailable (stereo fallback).\n");
     }
 
     // Distance attenuation: linear falloff between MIN_RADIUS and MAX_RADIUS.

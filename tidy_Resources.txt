@@ -1,0 +1,5 @@
+C:\Users\User\Documents\claude_code\OpenCarnivores\Resources.cpp:36:56: warning: the parameter 'base' of type 'std::string' (aka 'basic_string<char, char_traits<char>, allocator<char>>') is copied for each invocation but only used as a const reference; consider making it a const reference [performance-unnecessary-value-param]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Resources.cpp:44:18: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Resources.cpp:60:18: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Resources.cpp:84:12: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Resources.cpp:104:10: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]

@@ -17,7 +17,7 @@ struct RenderVertex {
 };
 
 // Blend mode constants (matching original D3D6 values used by the game)
-enum RenderBlendMode {
+enum RenderBlendMode : std::uint8_t {
     BLEND_ZERO          = 1,
     BLEND_ONE           = 2,
     BLEND_SRCALPHA      = 5,

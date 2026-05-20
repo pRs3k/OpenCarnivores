@@ -31,10 +31,14 @@ struct Corner { int v; int t; };
 Corner ParseCorner(const char* tok) {
     Corner c{0, 0};
     const char* p = tok;
-    c.v = std::atoi(p);
+    char* end;
+    long v = std::strtol(p, &end, 10);
+    if (end != p) c.v = (int)v;
     const char* slash = std::strchr(p, '/');
-    if (slash && slash[1] != '/' && slash[1] != '\0')
-        c.t = std::atoi(slash + 1);
+    if (slash && slash[1] != '/' && slash[1] != '\0') {
+        long t = std::strtol(slash + 1, &end, 10);
+        if (end != slash + 1) c.t = (int)t;
+    }
     return c;
 }
 
@@ -136,7 +140,10 @@ bool LoadOBJ(TModel* mptr, const char* objPath)
         out.tax = getU(t.ti[0]); out.tay = getV(t.ti[0]);
         out.tbx = getU(t.ti[1]); out.tby = getV(t.ti[1]);
         out.tcx = getU(t.ti[2]); out.tcy = getV(t.ti[2]);
-        out.Flags    = sfOpacity | sfNeedVC;
+        // SOURCEPORT: use sfTransparent flag (not sfOpacity) to match original foliage behavior.
+        // sfTransparent enables alpha testing in the shader, allowing semi-transparent rendering
+        // with vertex alpha. sfOpacity was an old D3D6-only feature and should not be used here.
+        out.Flags    = sfTransparent | sfNeedVC;
         out.DMask    = 0xFFFF;
         out.Distant  = 0;
         out.Next     = 0;

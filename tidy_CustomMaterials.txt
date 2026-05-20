@@ -1,0 +1,5 @@
+C:\Users\User\Documents\claude_code\OpenCarnivores\CustomMaterials.cpp:75:59: warning: initialization of 'g_reg' with static storage duration may throw an exception that cannot be caught [bugprone-throwing-static-initialization,cert-err58-cpp]
+C:\Users\User\Documents\claude_code\OpenCarnivores\CustomMaterials.cpp:76:59: warning: initialization of 'g_progCache' with static storage duration may throw an exception that cannot be caught [bugprone-throwing-static-initialization,cert-err58-cpp]
+C:\Users\User\Documents\claude_code\OpenCarnivores\CustomMaterials.cpp:80:27: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\CustomMaterials.cpp:101:9: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\CustomMaterials.cpp:121:9: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]

@@ -2,7 +2,7 @@
 #include "Hunt.h"
 #include "stdio.h"
 
-typedef struct _TMenuSet {
+typedef struct TMenuSet_ {
 	int x0, y0;
 	int Count;
 	char Item[32][32];
@@ -157,7 +157,7 @@ void StartLoading()
 void EndLoading()
 {	  
     FillMemory(lpVideoBuf, 1024*768*2, 0);	
-	_HeapFree(Heap, 0, (void*)LoadWall.lpImage);
+	HeapFree_(Heap, 0, (void*)LoadWall.lpImage);
 }
 
 

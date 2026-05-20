@@ -41,17 +41,17 @@ typedef uint64_t XrSystemId;
 typedef int64_t  XrTime;
 typedef uint64_t XrViewStateFlags;
 
-typedef struct XrInstance_T*  XrInstanceHandle;
-typedef struct XrSession_T*   XrSessionHandle;
-typedef struct XrSwapchain_T* XrSwapchainHandle;
-typedef struct XrSpace_T*     XrSpaceHandle;
+typedef struct XrInstancet_*  XrInstanceHandle;
+typedef struct XrSessiont_*   XrSessionHandle;
+typedef struct XrSwapchaint_* XrSwapchainHandle;
+typedef struct XrSpacet_*     XrSpaceHandle;
 #define XR_NULL_HANDLE        0
 #define XR_NULL_SYSTEM_ID     0
 
 #define XR_SUCCESS                              0
 #define XR_EVENT_UNAVAILABLE                    4
-#define XR_ERROR_SESSION_NOT_RUNNING           -8
-#define XR_ERROR_FORM_FACTOR_UNAVAILABLE       -50
+#define XR_ERROR_SESSION_NOT_RUNNING           (-8)
+#define XR_ERROR_FORM_FACTOR_UNAVAILABLE       (-50)
 
 #define XR_MAX_APPLICATION_NAME_SIZE           128
 #define XR_MAX_ENGINE_NAME_SIZE                128
@@ -465,8 +465,8 @@ typedef struct XrFrameEndInfo {
 #define XR_SPACE_LOCATION_POSITION_VALID_BIT    0x2
 
 typedef uint64_t XrPath;
-typedef struct XrActionSet_T* XrActionSetHandle;
-typedef struct XrAction_T*    XrActionHandle;
+typedef struct XrActionSett_* XrActionSetHandle;
+typedef struct XrActiont_*    XrActionHandle;
 
 typedef enum XrActionType {
     XR_ACTION_TYPE_BOOLEAN_INPUT  = 1,
@@ -2085,6 +2085,28 @@ unsigned int EyeFBO(int eye, uint32_t imageIndex) {
     if (eye < 0 || eye > 1) return 0;
     if (imageIndex >= g_scLength[eye]) return 0;
     return (unsigned int)g_eyeFBO[eye][imageIndex];
+}
+
+// SOURCEPORT: Recreate swapchains with OptSSFactor supersampling applied.
+// Safe to call while SessionRunning(); destroys old swapchains and creates
+// new ones at the scaled resolution. Returns false if session is not active
+// or swapchain creation fails (old swapchains left in place to render).
+bool ReconfigureSwapchainResolution() {
+    if (!SessionRunning()) return false;
+
+    // Destroy old swapchains (saves current size to compare)
+    uint32_t prevW = g_eyeWidth, prevH = g_eyeHeight;
+    DestroySwapchains();
+
+    // Attempt to recreate with new OptSSFactor applied
+    if (!CreateSwapchains()) {
+        LogFmt("XR: ReconfigureSwapchainResolution failed; left VR unavailable.\n");
+        return false;
+    }
+
+    LogFmt("XR: swapchain resolution updated %ux%u → %ux%u.\n",
+           prevW, prevH, g_eyeWidth, g_eyeHeight);
+    return true;
 }
 
 bool ViewsValid()   { return g_viewsValid; }

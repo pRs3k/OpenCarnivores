@@ -80,6 +80,11 @@ BOOL ENVMAP = TRUE;
 #endif
 
 BOOL NeedRVM = TRUE;
+// SOURCEPORT: debug toggle — freeze headbob to isolate stepdy-driven artifacts
+BOOL DBG_NO_HEADBOB = FALSE;
+BOOL DBG_NO_WEAPON = FALSE;
+BOOL DBG_NO_SUN = FALSE;
+BOOL DBG_NO_SKY = FALSE;
 float BinocularPower  = 2.5;
 float wpshy = 0;
 float wpshz = 0;
@@ -120,12 +125,13 @@ float CalcFogLevel(Vector3d v)
   
   float d = VectorLength(v);
 
-  v.y+=CameraY;
-  
+  // SOURCEPORT: use CameraYStable (no headbob) so stepdy doesn't pulse fog density each step
+  v.y+=CameraYStable;
+
   float fla= -(v.y     - fptr->YBegin*ctHScale) / ctHScale;
   if (!vinfog) if (fla>0) fla=0;
 
-  float flb = -(CameraY - fptr->YBegin*ctHScale) / ctHScale;
+  float flb = -(CameraYStable - fptr->YBegin*ctHScale) / ctHScale;
   if (!CAMERAINFOG) if (flb>0) flb=0;
   
   if (fla<0 && flb<0) return 0;    
@@ -145,8 +151,7 @@ float CalcFogLevel(Vector3d v)
 void PreCashGroundModel()
 {
    SKYDTime = RealTime>>1;
-   int x,y;
-   
+
    int kx = SKYDTime & 255;
    int ky = SKYDTime & 255;
    int SKYDT = SKYDTime>>8;
@@ -173,9 +178,9 @@ void PreCashGroundModel()
    float hFovCull = CameraW / (max((float)VideoCX, (float)(WinW - VideoCX)) * 1.25f);
 
 
-   for (y=-(ctViewR+3); y<(ctViewR+3); y++)
-	for (x=-(ctViewR+3); x<(ctViewR+3); x++) {
-  					
+   for (int y=-(ctViewR+3); y<(ctViewR+3); y++)
+	for (int x=-(ctViewR+3); x<(ctViewR+3); x++) {
+
 	  int r = max((max(y,-y)), (max(x,-x)));
 #ifndef _opengl
 	  if ( r>ctViewR1+4 )
@@ -192,12 +197,12 @@ void PreCashGroundModel()
 
 //========= water section ===========//
 
-	//if (RunMode) 
+	//if (RunMode)
 	  if ((FMap[yy][xx] & fmWaterA)>0) {
 		  rv = v[0];
-		  rv.y = WaterList[ WMap[yy][xx] ].wlevel*ctHScale - CameraY; 
+		  rv.y = WaterList[ WMap[yy][xx] ].wlevel*ctHScale - CameraY;
 
-		  float wdelta = (float)sin(-pi/2 + RandomMap[yy & 31][xx & 31]/128+RealTime/200.f);          
+		  float wdelta = (float)sin(-pi/2 + RandomMap[yy & 31][xx & 31]/128+RealTime/200.f);
 
 		  if ( (FMap[yy][xx] & fmWater) && (r < ctViewR1-4)) {
            rv.x+=(float)sin(xx+yy + RealTime/200.f) * 16.f;
@@ -206,25 +211,25 @@ void PreCashGroundModel()
 
           rv = RotateVector(rv);
 		  VMap2[VMAP_CENTER+y][VMAP_CENTER+x].v = rv;
-	      
+
 		  if (fabs(rv.x * hFovCull) > -rv.z + 1524) {
 		   VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = 128;
 		  } else {
 			NeedWater = TRUE;
 			VMap2[VMAP_CENTER+y][VMAP_CENTER+x].Light = 168-(int)(wdelta*24);
-			
+
 			float Alpha;
-			if (UNDERWATER) {				
+			if (UNDERWATER) {
 				Alpha =	160 - VectorLength(rv)* 160 / 220 / ctViewR;
 				if (Alpha<10) Alpha=10;
 			} else
-            if (r < ctViewR1+2) {		
+            if (r < ctViewR1+2) {
 			 int wi = WMap[yy][xx];
 			 Alpha = (float)((WaterList[wi].wlevel - HMap[yy][xx])*2+4)*WaterList[wi].transp;
 			 Alpha+=VectorLength(rv) / 256;
 			 Alpha+=wdelta*2;
 			 if (Alpha<0) Alpha=0;
-			 Vector3d va = v[0]; 
+			 Vector3d va = v[0];
 			 NormVector(va,1.0f); va.y=-va.y;
 			 if (va.y<0) va.y=0;
 			 Alpha*=6.f/(va.y+0.1f);
@@ -266,7 +271,7 @@ void PreCashGroundModel()
 			  VMap2[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = DF;
 
 			}
-		  }			  
+		  }
 	  }
 
 
@@ -299,13 +304,12 @@ void PreCashGroundModel()
 
       rv = RotateVector(v[0]);
 
-	  
       if (fabs(rv.x * hFovCull) > -rv.z + 1600) {
-		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = rv;   
+		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = rv;
 		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = 128;
 		  continue;
 	  }
-      
+
 
   	  if (HARD3D)
 #ifndef _opengl
@@ -318,14 +322,14 @@ void PreCashGroundModel()
 
       VMap[VMAP_CENTER+y][VMAP_CENTER+x].ALPHA = 255;
 
-      v[0]=rv;	  
+      v[0]=rv;
 
 	  if (v[0].z<1024)
 	   if (FOGENABLE)
-	 	 if (FogsMap[yy>>1][xx>>1]) FogFound = TRUE;      
-      	  
-	  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = v[0];      
-            
+	 	 if (FogsMap[yy>>1][xx>>1]) FogFound = TRUE;
+
+	  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = v[0];
+
       int  DF = 0;
       int  db = 0;
 
@@ -337,7 +341,7 @@ void PreCashGroundModel()
       // slowly. Write Light unconditionally; tiles that are truly off-screen
       // get culled by DFlags anyway.
       {
-       if (Clouds) {
+       if (Clouds && !DBG_NO_SKY) {
 	    int shmx = (xx + SKYDT) & 127;
 	    int shmy = (yy + SKYDT) & 127;
 
@@ -356,9 +360,11 @@ void PreCashGroundModel()
        int clt = LMap[yy][xx];
 	   clt= max(64, clt-db);
        VMap[VMAP_CENTER+y][VMAP_CENTER+x].Light = clt;
+       // SOURCEPORT: debug - force uniform lighting to test if circle is in Light data
+       if (DBG_NO_WEAPON) VMap[VMAP_CENTER+y][VMAP_CENTER+x].Light = 96;
       }
 
-	  
+
 
 	  // SOURCEPORT: see VMap2 near-clip comment above — same fix for VMap.
 #ifdef _opengl
@@ -386,7 +392,7 @@ void PreCashGroundModel()
 #endif
 
 	  }
-	   
+
       VMap[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = DF;
 	}
 
@@ -459,7 +465,7 @@ void DrawScene()
 #endif
 
    // SOURCEPORT: Sky rendered once before per-eye loop in VR mode, skipped in DrawScene
-   if (!XR::StereoActive()) {
+   if (!XR::StereoActive() && !DBG_NO_SKY) {
        drawSceneStage = "SkyPlane";  RenderSkyPlane();
    }
 
@@ -608,9 +614,11 @@ void DrawPostObjects()
     LOWRESTX = lr;
   }
 
-SKIPWIND:  
+SKIPWIND:
 
-  
+  // SOURCEPORT: debug toggle to skip weapon rendering (Shift+W)
+  if (DBG_NO_WEAPON) { XRLOG("WpnSkipDebug"); goto SKIPWEAPON; }
+
   XRLOG("WpnStateCheck");
   if (wptr->state == 0) { XRLOG("WpnSkip"); goto SKIPWEAPON; }
 
@@ -870,6 +878,13 @@ void SwitchMode(LPSTR lps, BOOL& b)
     else wsprintf(buf,"%s is OFF", lps);
   MessageBeep(0xFFFFFFFF);
   AddMessage(buf);
+  // SOURCEPORT: update renderer when fog is toggled
+  if (&b == &FOGENABLE) {
+#ifdef _opengl
+    extern class RendererGL* g_glRenderer;
+    if (g_glRenderer) g_glRenderer->SetFogEnabled(FOGENABLE ? true : false);
+#endif
+  }
 }
 
 
@@ -1042,7 +1057,9 @@ LONG APIENTRY MainWndProc( HWND hWnd, UINT message, UINT wParam, LONG lParam)
           case 'C': if (CTRL) SwitchMode("Clouds shadow",Clouds);   
 		            break;
 		  		  
-		  case 'E': if (CTRL) SwitchMode("Env.Mapping",ENVMAP);
+		  case 'H': if (CTRL) SwitchMode("Headbob",DBG_NO_HEADBOB);
+			        break;
+          case 'E': if (CTRL) SwitchMode("Env.Mapping",ENVMAP);
 			        break;					
 		  case 'G': if (CTRL) SwitchMode("Gour.Mapping",GOUR);
 			        break;					
@@ -1088,7 +1105,7 @@ LONG APIENTRY MainWndProc( HWND hWnd, UINT message, UINT wParam, LONG lParam)
 			  if (EXITMODE) {
 			      LoadTrophy();	
 				  RestartMode = TRUE;				  				  
-				  _GameState = 0;
+				  GameState_ = 0;
                   //DoHalt("");
 			  }
 			  break;
@@ -1614,7 +1631,7 @@ SKIPYMOVE:
     
   float _s = stepdy;
 
-  stepdy = (float)sin(RealTime/80.f) * 22 * (float)fabs(VSpeed);
+  stepdy = DBG_NO_HEADBOB ? 0.f : (float)sin(RealTime/80.f) * 22 * (float)fabs(VSpeed);
   float d = stepdy - _s;
 
   // SOURCEPORT: original derivative sign-change test (d<0 && stepdd>=0) jitters at
@@ -1650,7 +1667,8 @@ SKIPYMOVE:
    CameraBeta  = PlayerBeta  + HeadBeta;
 
    CameraX = PlayerX - sa * HeadBackR;
-   CameraY = PlayerY + HeadY + stepdy;// + 2024;
+   CameraYStable = PlayerY + HeadY;
+   CameraY = CameraYStable + stepdy;// + 2024;
    CameraZ = PlayerZ + ca * HeadBackR;   
   }
 
@@ -1740,10 +1758,24 @@ SKIPYMOVE:
 
   CameraFogI = FogsMap [((int)CameraZ)>>9][((int)CameraX)>>9];
   if (UNDERWATER) CameraFogI=127;
-  if (FogsList[CameraFogI].YBegin*ctHScale> CameraY)
+  if (FogsList[CameraFogI].YBegin*ctHScale> CameraYStable)  // SOURCEPORT: stable Y — headbob shouldn't flicker in/out of fog
      CAMERAINFOG = (CameraFogI>0);
   else
 	 CAMERAINFOG = FALSE;
+
+#ifdef _opengl
+  // SOURCEPORT: push screen-space fog params to GPU once per frame.
+  // Uses the camera's fog entity so all params are stable under headbob.
+  { extern RendererGL* g_glRenderer;
+    if (g_glRenderer && CameraFogI > 0) {
+      TFogEntity& fe = FogsList[CameraFogI];
+      g_glRenderer->SetFogParams(
+        fe.YBegin * ctHScale, fe.Transp, fe.FLimit,
+        CameraYStable, CAMERAINFOG ? 1 : 0,
+        (float)VideoCY, (float)WinH, CameraH);
+    }
+  }
+#endif
 
   if (CAMERAINFOG)
 	if (MyHealth)
@@ -1870,7 +1902,7 @@ void ProcessGame()
 		NeedRVM = TRUE;
 	}
 
-    if (!_GameState) {
+    if (!GameState_) {
 		PrintLog("Entered game\n");
 		ReInitGame();
 		while (ShowCursor(FALSE)>=0);
@@ -1883,7 +1915,7 @@ void ProcessGame()
 		g_prevCamValid = false;
 	}
 
-    _GameState = 1;
+    GameState_ = 1;
 
     if (NeedRVM) {
 		PrintLog("Activate3DHardware: starting...\n"); // SOURCEPORT: debug
@@ -2542,7 +2574,7 @@ int main(int argc, char* argv[])
         SDL_SetRelativeMouseMode(SDL_TRUE);
         SDL_ShowCursor(SDL_DISABLE);
 
-        _GameState    = 0;   // force ReInitGame() on first ProcessGame()
+        GameState_    = 0;   // force ReInitGame() on first ProcessGame()
         RestartMode   = FALSE;
         ExitTime      = 0;   // SOURCEPORT: reset so second hunt doesn't immediately exit
         RunMode       = TRUE; // SOURCEPORT: enable run mode by default
@@ -2599,13 +2631,13 @@ int main(int argc, char* argv[])
                             EXITMODE  = FALSE;
                             ExitTime  = 0;
                             LoadResources();   // calls ReleaseResources() then reloads map
-                            _GameState = 0;    // triggers ReInitGame() on next ProcessGame()
+                            GameState_ = 0;    // triggers ReInitGame() on next ProcessGame()
                         }
                     }
                     if (vk == 0x77) { // VK_F8 — cycle PBR debug mode
                         extern RendererGL* g_glRenderer;
                         static int s_pbrDebugMode = 0;
-                        s_pbrDebugMode = (s_pbrDebugMode + 1) % 14;
+                        s_pbrDebugMode = (s_pbrDebugMode + 1) % 26;
                         if (g_glRenderer) g_glRenderer->SetDebugMode(s_pbrDebugMode);
                         static char* kModeNames[] = {
                             (char*)"DEBUG off: normal rendering",
@@ -2619,14 +2651,38 @@ int main(int argc, char* argv[])
                             (char*)"DEBUG 8: UV fract RG",
                             (char*)"DEBUG 9: no alpha test - gone=coverage cause",
                             (char*)"DEBUG 10: terrain texture / foliage=gray",
-                            (char*)"DEBUG 11: UV fract x100 (sub-texel drift)",
-                            (char*)"DEBUG 12: vFog grayscale - circle=fog is cause",
-                            (char*)"DEBUG 13: fog disabled - gone=fog is cause"
+                            (char*)"DEBUG 11: UV fract x100 (manual noperspective path)",
+                            (char*)"DEBUG 12: fog factor grayscale",
+                            (char*)"DEBUG 13: fog disabled",
+                            (char*)"DEBUG 14: UV fract x100 (GL smooth path) - no pillar=use smooth",
+                            (char*)"DEBUG 15: |smooth-manual| UV diff x10 - bright=source of drift",
+                            (char*)"DEBUG 16: vRhw depth (near=bright) - anomaly=bad rhw on foliage",
+                            (char*)"DEBUG 17: NO FOLIAGE (circle persists)",
+                            (char*)"DEBUG 18: TERRAIN=gray (circle persists)",
+                            (char*)"DEBUG 19: opaque only (circle persists)",
+                            (char*)"DEBUG 20: depth heatmap (bright=near)",
+                            (char*)"DEBUG 21: Light heatmap (bright=high Light value)",
+                            (char*)"DEBUG 22: flat magenta (circle disappears)",
+                            (char*)"DEBUG 23: near-distance heatmap (magenta=<100GU from camera)",
+                            (char*)"DEBUG 24: vTC fract x4 (perspective-correct UVs) — grid=correct",
+                            (char*)"DEBUG 25: vRhw visualization (smooth gradient if OK)"
                         };
                         AddMessage(kModeNames[s_pbrDebugMode]);
                     }
                     if (vk == 0x78) { // VK_F9
                         ShutDown3DHardware(); AudioStop(); DoHalt("");
+                    }
+                    // SOURCEPORT: SDL debug toggles (Shift+key) — mirrors WM_KEYDOWN switch
+                    if (ev.key.keysym.mod & KMOD_SHIFT) {
+                        if (vk == 'H') SwitchMode((LPSTR)"Headbob freeze", DBG_NO_HEADBOB);
+                        if (vk == 'G') SwitchMode((LPSTR)"Gouraud",        GOUR);
+                        if (vk == 'E') SwitchMode((LPSTR)"EnvMap",         ENVMAP);
+                        if (vk == 'P') SwitchMode((LPSTR)"PhongMap",       PHONG);
+                        if (vk == 'F') SwitchMode((LPSTR)"Fog",            FOGENABLE);
+                        if (vk == 'W') SwitchMode((LPSTR)"Weapon render",  DBG_NO_WEAPON);
+                        if (vk == 'U') SwitchMode((LPSTR)"Sun rendering",  DBG_NO_SUN);
+                        if (vk == 'Y') SwitchMode((LPSTR)"Sky plane",      DBG_NO_SKY);
+                        if (vk == 'O') SwitchMode((LPSTR)"Fog rendering",  FOGENABLE);
                     }
                     break; }
                 case SDL_KEYUP: {

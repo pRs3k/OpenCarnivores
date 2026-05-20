@@ -63,31 +63,45 @@ void main() {
     vec2 vTC = vTexCoordR / vRhw;
 
     ivec2 tsz  = textureSize(uTexture, 0);
-    // SOURCEPORT: LOD computation split by geometry type.
-    // For alpha-tested geometry (foliage/trees): use depth-based LOD derived from
-    // camera-space Z (= 1/vRhw). Screen-space derivatives change with headbob
-    // because all vertex screen-Y positions oscillate, making dFdy(vTexCoord)
-    // oscillate, LOD oscillate, and foliage sample from mip 1+ (slightly different
-    // colour) -> the whole scene darkens while walking -> headlamp appears by contrast.
-    // Camera depth (rv.z) is unaffected by a vertical headbob for a level camera, so
-    // depth-based LOD is stable and eliminates the strobe/headlamp entirely.
-    // For opaque geometry (terrain): screen-space derivative LOD is fine; terrain has
-    // no mipmaps so the lod value is irrelevant (textureLod always returns level 0).
+    // SOURCEPORT: Use depth-based LOD for all geometry. Screen-space derivative LOD
+    // on NVIDIA hardware exhibits reduced precision in smooth varyings (vTexCoord),
+    // creating a systematic UV bias that manifests as a bright circle in screen-center
+    // on some depths. Depth-based LOD (from noperspective vRhw) is unaffected by
+    // NVIDIA's rasterizer precision and eliminates the headlamp on all GPUs.
+    // For alpha-tested geometry (foliage): this also eliminates headbob-driven strobe
+    // (derivatives oscillate with vertex Y during headbob, but depth doesn't).
     float lod;
-    if (uAlphaTest) {
+    {
         float camZ = 1.0 / max(vRhw, 1e-6);
         lod = max(0.0, 0.5 * log2(camZ / 512.0) - 0.75);
-    } else {
-        vec2  dt_x = dFdx(vTexCoord) * vec2(tsz);
-        vec2  dt_y = dFdy(vTexCoord) * vec2(tsz);
-        float rho2 = max(dot(dt_x, dt_x), dot(dt_y, dt_y));
-        lod = max(0.0, 0.5 * log2(max(rho2, 1e-10)) - 0.75);
     }
-    vec4 texel = textureLod(uTexture, vTC, lod);
+    // SOURCEPORT: for alpha-tested geometry (foliage) snap UV to the nearest texel
+    // centre and always sample mip level 0.
+    //
+    // Two issues prevented faithful leaf rendering:
+    //   1. Bilinear UV blending (smooth vTC) sampled adjacent transparent texels,
+    //      darkening leaf-edge pixels.  Snapping to texel centres (NEAREST equivalent)
+    //      eliminates that cross-texel blending — each fragment maps to exactly one texel,
+    //      matching the original D3D D3DFILTER_NEAREST behaviour for fproc2 faces.
+    //   2. Trilinear mip blending: the alpha test always uses mip 0 (correct), but the
+    //      colour sample with lod > 0 blends in mip 1 which, after majority-voting, has
+    //      compressed leaf clusters into fewer opaque texels.  A pixel that passes the
+    //      alpha test (mip 0: opaque leaf) gets its colour tinted toward black/transparent
+    //      by the mip 1 value, producing the visible checkerboard dark patches at medium
+    //      range.  Forcing both alpha-test and colour to use mip 0 eliminates this
+    //      mip-consistency mismatch, faithfully reproducing the original single-level
+    //      foliage texture behaviour.
+    //
+    // Opaque geometry keeps smooth vTC and depth-based LOD (bilinear terrain is desirable).
+    vec2 sampleUV = uAlphaTest
+        ? (floor(vTC * vec2(tsz)) + 0.5) / vec2(tsz)
+        : vTC;
+    float sampleLOD = uAlphaTest ? 0.0 : lod;
+    vec4 texel = textureLod(uTexture, sampleUV, sampleLOD);
 
     if (uAlphaTest && uDebugMode != 9) {
-        vec2 atUV = (floor(vTC * vec2(tsz)) + 0.5) / vec2(tsz);
-        if (textureLod(uTexture, atUV, 0.0).a < 0.5) discard;
+        // sampleUV and sampleLOD already set to mip 0 — reuse directly.
+        if (texel.a < 0.5) discard;
     }
 
     vec4 color = texel * vColor;
@@ -106,10 +120,10 @@ void main() {
     // SOURCEPORT: mode 6 = force mip 0 (LOD=0) regardless of derivatives.
     // If this eliminates the headlamp, the issue is LOD-related despite textureLod fix.
     // If the headlamp persists even here, the cause is UV coordinates or something else.
-    if (uDebugMode == 6) { FragColor = vec4(textureLod(uTexture, vTC, 0.0).rgb, 1.0); return; }
+    if (uDebugMode == 6) { FragColor = vec4(textureLod(uTexture, sampleUV, 0.0).rgb, 1.0); return; }
     if (uDebugMode == 7) { float l = lod / 4.0; FragColor = vec4(l, 0.0, max(0.0,1.0-l), 1.0); return; }
     if (uDebugMode == 8) { FragColor = vec4(fract(vTC), 0.0, 1.0); return; }
-    if (uDebugMode == 9) { FragColor = vec4(textureLod(uTexture, vTC, lod).rgb, 1.0); return; }
+    if (uDebugMode == 9) { FragColor = vec4(textureLod(uTexture, sampleUV, sampleLOD).rgb, 1.0); return; }
     // SOURCEPORT: mode 10 = terrain texture in color, foliage/alpha-test geometry as solid gray.
     // If headlamp appears here, headlamp is in terrain. If not, headlamp is foliage-only.
     if (uDebugMode == 10) {
@@ -120,11 +134,29 @@ void main() {
     // in mode 8) shows as 0.1 color-unit phase shift here — confirms or rules out sub-texel drift.
     if (uDebugMode == 11) { FragColor = vec4(fract(vTC * 100.0), 0.0, 1.0); return; }
     // SOURCEPORT: mode 12 = vFog factor as grayscale.
-    // If a radial circle is visible here while walking, fog is driving the headlamp.
     // vFog=1 (white) = no fog; vFog=0 (black) = full fog.
     if (uDebugMode == 12) { FragColor = vec4(vFog, vFog, vFog, 1.0); return; }
     // SOURCEPORT: mode 13 = normal render with fog disabled.
-    // If the headlamp disappears here (vs mode 0), fog is confirmed as the cause.
+    // SOURCEPORT: mode 22 = flat magenta (verify shader code is running).
+    if (uDebugMode == 22) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
+    // SOURCEPORT: mode 23 = depth heatmap (blue=near red=far). Shows where circle-visible geometry is.
+    if (uDebugMode == 23) {
+        float camDist = 1.0 / max(vRhw, 1e-6) / 16.0;  // Convert to approximate GU
+        float normalized = clamp(camDist / 1000.0, 0.0, 1.0);  // Normalize 0-1000 GU to 0-1
+        FragColor = vec4(normalized, 0.0, 1.0 - normalized, 1.0);  // Blue (near) to Red (far)
+        return;
+    }
+    // SOURCEPORT: mode 24 = vTC (perspective-corrected) coordinate visualization
+    if (uDebugMode == 24) {
+        FragColor = vec4(fract(vTC * 4.0), 0.0, 1.0);  // Show tiling at 4x magnification
+        return;
+    }
+    // SOURCEPORT: mode 25 = vRhw visualization (should be smooth gradient)
+    if (uDebugMode == 25) {
+        float rhwViz = clamp(vRhw * 20.0, 0.0, 1.0);  // Scale for visibility
+        FragColor = vec4(rhwViz, rhwViz, rhwViz, 1.0);
+        return;
+    }
 
     if (uPBR && uDebugMode != 1) {
         vec3  albedo    = texel.rgb;

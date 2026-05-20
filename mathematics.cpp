@@ -34,13 +34,13 @@ void DeltaFunc(float &a, float b, float d)
 }
 
 
-void MulVectorsScal(Vector3d& v1,Vector3d& v2, float& r)
+void MulVectorsScal(const Vector3d& v1, const Vector3d& v2, float& r)
 {
   r = v1.x*v2.x + v1.y*v2.y + v1.z*v2.z;
 }
 
 
-void MulVectorsVect(Vector3d& v1, Vector3d& v2, Vector3d& r )
+void MulVectorsVect(const Vector3d& v1, const Vector3d& v2, Vector3d& r )
 {
   r.x= v1.y*v2.z - v2.y*v1.z;
   r.y=-v1.x*v2.z + v2.x*v1.z;
@@ -793,7 +793,7 @@ void CalcGouraud(TModel* mptr, Vector3d *nvs)
 
 	NormVector(slight, 1.0f);
 
-	for (int v=0; v<VCount; v++) {		
+	for (int v=0; v<VCount; v++) {
          MulVectorsScal(nvs[v], slight, c);
 		 if (c<0) c=0; c=(c-0.5f)*2.0f;
 		 c=c*c*c;
@@ -801,6 +801,9 @@ void CalcGouraud(TModel* mptr, Vector3d *nvs)
 		 if (c>96) c=96;
 		 if (c<-64) c=-64;
 		 mptr->VLight[0][v] = c;
+		 // SOURCEPORT: debug - check if circle is from model lighting
+		 extern BOOL DBG_NO_WEAPON;
+		 if (DBG_NO_WEAPON) mptr->VLight[0][v] = 96;
 	}  	
 }
 

@@ -73,7 +73,7 @@ static void HotWatchOverrideSibling(void* key, const char* sourcePath) {
 #endif
 
 
-LPVOID _HeapAlloc(HANDLE hHeap, 
+LPVOID HeapAlloc_(HANDLE hHeap, 
                   DWORD dwFlags, 
                   DWORD dwBytes)
 {
@@ -88,7 +88,7 @@ LPVOID _HeapAlloc(HANDLE hHeap,
 }
 
 
-BOOL _HeapFree(HANDLE hHeap, 
+BOOL HeapFree_(HANDLE hHeap, 
                DWORD  dwFlags, 
                LPVOID lpMem)
 {	
@@ -572,7 +572,7 @@ void CalcMidColor(WORD* tptr, int l, int &mr, int &mg, int &mb)
 
 void LoadTexture(TEXTURE* &T)
 {
-    T = (TEXTURE*) _HeapAlloc(Heap, 0, sizeof(TEXTURE));     	
+    T = (TEXTURE*) HeapAlloc_(Heap, 0, sizeof(TEXTURE));     	
     DWORD L;        	    
     ReadFile(hfile, T->DataA, 128*128*2, &L, NULL);
 	for (int y=0; y<128; y++)
@@ -702,7 +702,7 @@ void CorrectModel(TModel *mptr)
 
 void LoadModel(TModel* &mptr)
 {         
-    mptr = (TModel*) _HeapAlloc(Heap, 0, sizeof(TModel));
+    mptr = (TModel*) HeapAlloc_(Heap, 0, sizeof(TModel));
 
     ReadFile( hfile, &mptr->VCount,      4,         &l, NULL );
 	ReadFile( hfile, &mptr->FCount,      4,         &l, NULL );
@@ -721,7 +721,7 @@ void LoadModel(TModel* &mptr)
 
     mptr->TextureSize = mptr->TextureHeight*512;
 
-    mptr->lpTexture = (WORD*) _HeapAlloc(Heap, 0, mptr->TextureSize);
+    mptr->lpTexture = (WORD*) HeapAlloc_(Heap, 0, mptr->TextureSize);
 
     ReadFile(hfile, mptr->lpTexture, ts, &l, NULL);
 	BrightenTexture(mptr->lpTexture, ts/2);
@@ -752,7 +752,7 @@ void LoadAnimation(TVTL &vtl)
 
    vtl.AniTime = (vtl.FramesCount * 1000) / vtl.aniKPS;
    vtl.aniData = (short int*) 
-    _HeapAlloc(Heap, 0, (vc*vtl.FramesCount*6) );
+    HeapAlloc_(Heap, 0, (vc*vtl.FramesCount*6) );
    ReadFile( hfile, vtl.aniData, (vc*vtl.FramesCount*6), &l, NULL);
 
 }
@@ -772,7 +772,7 @@ void LoadModelEx(TModel* &mptr, char* FName)
 		DoHalt(sz);
     }
 
-    mptr = (TModel*) _HeapAlloc(Heap, 0, sizeof(TModel));
+    mptr = (TModel*) HeapAlloc_(Heap, 0, sizeof(TModel));
 
     ReadFile( hfile, &mptr->VCount,      4,         &l, NULL );
 	ReadFile( hfile, &mptr->FCount,      4,         &l, NULL );
@@ -787,7 +787,7 @@ void LoadModelEx(TModel* &mptr, char* FName)
           else  mptr->TextureHeight = mptr->TextureSize>>9;    
     mptr->TextureSize = mptr->TextureHeight*512;
 
-    mptr->lpTexture = (WORD*) _HeapAlloc(Heap, 0, mptr->TextureSize);
+    mptr->lpTexture = (WORD*) HeapAlloc_(Heap, 0, mptr->TextureSize);
 
     ReadFile(hfile, mptr->lpTexture, ts, &l, NULL);
 	BrightenTexture(mptr->lpTexture, ts/2);
@@ -854,7 +854,7 @@ void LoadWav(char* FName, TSFX &sfx)
 		DoHalt(sz);        
     }
   
-   _HeapFree(Heap, 0, (void*)sfx.lpData);
+   HeapFree_(Heap, 0, (void*)sfx.lpData);
    sfx.lpData = NULL;
 
    SetFilePointer( hfile, 36, NULL, FILE_BEGIN );
@@ -873,7 +873,7 @@ void LoadWav(char* FName, TSFX &sfx)
    ReadFile( hfile, &sfx.length, 4, &l, NULL );
 
    sfx.lpData = (short int*) 
-    _HeapAlloc( Heap, 0, sfx.length );
+    HeapAlloc_( Heap, 0, sfx.length );
    
    ReadFile( hfile, sfx.lpData, sfx.length, &l, NULL );  
    CloseHandle(hfile);    
@@ -928,12 +928,12 @@ void LoadPicture(TPicture &pic, LPSTR pname)
     ReadFile( hfile, &bmpIH, sizeof( BITMAPINFOHEADER ), &l, NULL );
 
 	
-	_HeapFree(Heap, 0, (void*)pic.lpImage);
+	HeapFree_(Heap, 0, (void*)pic.lpImage);
 	pic.lpImage = NULL;
 	
 	pic.W = bmpIH.biWidth;
     pic.H = bmpIH.biHeight;
-	pic.lpImage = (WORD*) _HeapAlloc(Heap, 0, pic.W * pic.H * 2);
+	pic.lpImage = (WORD*) HeapAlloc_(Heap, 0, pic.W * pic.H * 2);
 
 
 
@@ -971,12 +971,12 @@ void LoadPictureTGA(TPicture &pic, LPSTR pname)
 
 	SetFilePointer(hfile, 18, 0, FILE_BEGIN);
 	
-	_HeapFree(Heap, 0, (void*)pic.lpImage);
+	HeapFree_(Heap, 0, (void*)pic.lpImage);
 	pic.lpImage = NULL;
 
 	pic.W = w;
     pic.H = h;
-	pic.lpImage = (WORD*) _HeapAlloc(Heap, 0, pic.W * pic.H * 2);
+	pic.lpImage = (WORD*) HeapAlloc_(Heap, 0, pic.W * pic.H * 2);
 
     for (int y=0; y<pic.H; y++)
       ReadFile( hfile, (void*)(pic.lpImage + (pic.H-y-1)*pic.W), 2*pic.W, &l, NULL );
@@ -1135,12 +1135,12 @@ void GenerateModelMipMaps(TModel *mptr)
 {
   int th = (mptr->TextureHeight) / 2;        
   mptr->lpTexture2 = 
-       (WORD*) _HeapAlloc(Heap, HEAP_ZERO_MEMORY , (1+th)*128*2);                
+       (WORD*) HeapAlloc_(Heap, HEAP_ZERO_MEMORY , (1+th)*128*2);                
   CreateMipMapMT(mptr->lpTexture2, mptr->lpTexture, th);        
 
   th = (mptr->TextureHeight) / 4;        
   mptr->lpTexture3 = 
-       (WORD*) _HeapAlloc(Heap, HEAP_ZERO_MEMORY , (1+th)*64*2);
+       (WORD*) HeapAlloc_(Heap, HEAP_ZERO_MEMORY , (1+th)*64*2);
   CreateMipMapMT2(mptr->lpTexture3, mptr->lpTexture2, th);        
 }
 
@@ -1181,7 +1181,7 @@ void ReleaseResources()
 	HeapReleased=0;
     for (int t=0; t<1024; t++)
 	 if (Textures[t]) {
-      _HeapFree(Heap, 0, (void*)Textures[t]);
+      HeapFree_(Heap, 0, (void*)Textures[t]);
 	  Textures[t] = NULL;
 	 } else break;
 
@@ -1189,18 +1189,18 @@ void ReleaseResources()
     for (int m=0; m<255; m++) {
      TModel *mptr = MObjects[m].model;	 
      if (mptr) {
-		_HeapFree(Heap,0,MObjects[m].bmpmodel.lpTexture);  
+		HeapFree_(Heap,0,MObjects[m].bmpmodel.lpTexture);  
 		MObjects[m].bmpmodel.lpTexture = NULL;
 
 		if (MObjects[m].vtl.FramesCount>0) {
-		 _HeapFree(Heap, 0, MObjects[m].vtl.aniData);
+		 HeapFree_(Heap, 0, MObjects[m].vtl.aniData);
 		 MObjects[m].vtl.aniData = NULL;
 		 }
 		
-        _HeapFree(Heap,0,mptr->lpTexture);   mptr->lpTexture  = NULL;
-        _HeapFree(Heap,0,mptr->lpTexture2);  mptr->lpTexture2 = NULL;
-        _HeapFree(Heap,0,mptr->lpTexture3);  mptr->lpTexture3 = NULL;
-        _HeapFree(Heap,0,MObjects[m].model);              
+        HeapFree_(Heap,0,mptr->lpTexture);   mptr->lpTexture  = NULL;
+        HeapFree_(Heap,0,mptr->lpTexture2);  mptr->lpTexture2 = NULL;
+        HeapFree_(Heap,0,mptr->lpTexture3);  mptr->lpTexture3 = NULL;
+        HeapFree_(Heap,0,MObjects[m].model);              
         MObjects[m].model = NULL;
 		MObjects[m].vtl.FramesCount = 0;
      } else break;
@@ -1208,13 +1208,13 @@ void ReleaseResources()
 	
 	for (int a=0; a<255; a++) {
 	  if (!Ambient[a].sfx.lpData) break;
-	  _HeapFree(Heap, 0, Ambient[a].sfx.lpData);	  
+	  HeapFree_(Heap, 0, Ambient[a].sfx.lpData);	  
 	  Ambient[a].sfx.lpData = NULL;
 	}
 
 	for (int r=0; r<255; r++) {
 		if (!RandSound[r].lpData) break;	  
-		_HeapFree(Heap, 0, RandSound[r].lpData);
+		HeapFree_(Heap, 0, RandSound[r].lpData);
 		RandSound[r].lpData = NULL;	  
 		RandSound[r].length = 0;
 	}	
@@ -1223,8 +1223,8 @@ void ReleaseResources()
 
 void LoadBMPModel(TObject &obj)
 {
-	obj.bmpmodel.lpTexture = (WORD*) _HeapAlloc(Heap, 0, 128 * 128 * 2);
-	//WORD * lpT             = (WORD*) _HeapAlloc(Heap, 0, 256 * 256 * 2);
+	obj.bmpmodel.lpTexture = (WORD*) HeapAlloc_(Heap, 0, 128 * 128 * 2);
+	//WORD * lpT             = (WORD*) HeapAlloc_(Heap, 0, 256 * 256 * 2);
     //ReadFile(hfile, lpT, 256*256*2, &l, NULL);
     //DATASHIFT(obj.bmpmodel.lpTexture, 128*128*2);
 	//BrightenTexture(lpT, 256*256);
@@ -1233,7 +1233,7 @@ void LoadBMPModel(TObject &obj)
 	DATASHIFT(obj.bmpmodel.lpTexture, 128*128*2);
     //CreateMipMapMT(obj.bmpmodel.lpTexture, lpT, 128);    
 
-	//_HeapFree(Heap, 0, lpT);
+	//HeapFree_(Heap, 0, lpT);
 
     if (HARD3D)
 	for (int x=0; x<128; x++)
@@ -1472,14 +1472,14 @@ void LoadResources()
 	ReadFile(hfile, &RdCount, 4, &l, NULL); 
    	for (int r=0; r<RdCount; r++) {
 	  ReadFile(hfile, &RandSound[r].length, 4, &l, NULL); 
-	  RandSound[r].lpData = (short int*) _HeapAlloc(Heap,0,RandSound[r].length);	  
+	  RandSound[r].lpData = (short int*) HeapAlloc_(Heap,0,RandSound[r].length);	  
 	  ReadFile(hfile, RandSound[r].lpData, RandSound[r].length, &l, NULL); 
 	}
 
 	ReadFile(hfile, &AmbCount, 4, &l, NULL); 
 	for (int a=0; a<AmbCount; a++) {
 	  ReadFile(hfile, &Ambient[a].sfx.length, 4, &l, NULL); 
-	  Ambient[a].sfx.lpData = (short int*) _HeapAlloc(Heap,0,Ambient[a].sfx.length);	  
+	  Ambient[a].sfx.lpData = (short int*) HeapAlloc_(Heap,0,Ambient[a].sfx.length);	  
 	  ReadFile(hfile, Ambient[a].sfx.lpData, Ambient[a].sfx.length, &l, NULL); 
 
 	  ReadFile(hfile, Ambient[a].rdata, sizeof(Ambient[a].rdata), &l, NULL); 
@@ -1726,19 +1726,19 @@ void ReleaseCharacterInfo(TCharacterInfo &chinfo)
 {
 	if (!chinfo.mptr) return;
 	
-	_HeapFree(Heap, 0, chinfo.mptr);
+	HeapFree_(Heap, 0, chinfo.mptr);
 	chinfo.mptr = NULL;
 
 	int c; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
 	for (c = 0; c<64; c++) {
      if (!chinfo.Animation[c].aniData) break;
-	 _HeapFree(Heap, 0, chinfo.Animation[c].aniData);
+	 HeapFree_(Heap, 0, chinfo.Animation[c].aniData);
      chinfo.Animation[c].aniData = NULL;
 	}
 
 	for (c = 0; c<64; c++) {
      if (!chinfo.SoundFX[c].lpData) break;
-	 _HeapFree(Heap, 0, chinfo.SoundFX[c].lpData);
+	 HeapFree_(Heap, 0, chinfo.SoundFX[c].lpData);
      chinfo.SoundFX[c].lpData = NULL;
 	}
 
@@ -1769,7 +1769,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 
 //============= read model =================//
 
-    chinfo.mptr = (TModel*) _HeapAlloc(Heap, 0, sizeof(TModel));
+    chinfo.mptr = (TModel*) HeapAlloc_(Heap, 0, sizeof(TModel));
 
     ReadFile( hfile, &chinfo.mptr->VCount,      4,         &l, NULL );
     ReadFile( hfile, &chinfo.mptr->FCount,      4,         &l, NULL );
@@ -1782,7 +1782,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
           else  chinfo.mptr->TextureHeight = chinfo.mptr->TextureSize>>9;    
     chinfo.mptr->TextureSize = chinfo.mptr->TextureHeight*512;
 
-    chinfo.mptr->lpTexture = (WORD*) _HeapAlloc(Heap, 0, chinfo.mptr->TextureSize);    
+    chinfo.mptr->lpTexture = (WORD*) HeapAlloc_(Heap, 0, chinfo.mptr->TextureSize);    
 
     ReadFile(hfile, chinfo.mptr->lpTexture, ts, &l, NULL);
 	BrightenTexture(chinfo.mptr->lpTexture, ts/2);
@@ -1809,7 +1809,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
       ReadFile(hfile, &chinfo.Animation[a].FramesCount, 4, &l, NULL);
       chinfo.Animation[a].AniTime = (chinfo.Animation[a].FramesCount * 1000) / chinfo.Animation[a].aniKPS;
       chinfo.Animation[a].aniData = (short int*) 
-          _HeapAlloc(Heap, 0, (chinfo.mptr->VCount*chinfo.Animation[a].FramesCount*6) );
+          HeapAlloc_(Heap, 0, (chinfo.mptr->VCount*chinfo.Animation[a].FramesCount*6) );
 
       ReadFile(hfile, chinfo.Animation[a].aniData, (chinfo.mptr->VCount*chinfo.Animation[a].FramesCount*6), &l, NULL);
     }
@@ -1819,7 +1819,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
     for (int s=0; s<chinfo.SfxCount; s++) {
       ReadFile(hfile, tmp, 32, &l, NULL);
       ReadFile(hfile, &chinfo.SoundFX[s].length, 4, &l, NULL);
-       chinfo.SoundFX[s].lpData = (short int*) _HeapAlloc(Heap, 0, chinfo.SoundFX[s].length);
+       chinfo.SoundFX[s].lpData = (short int*) HeapAlloc_(Heap, 0, chinfo.SoundFX[s].length);
       ReadFile(hfile, chinfo.SoundFX[s].lpData, chinfo.SoundFX[s].length, &l, NULL);
     }
 
@@ -1981,7 +1981,7 @@ void SaveScreenShot()
 
 
     char t[12];
-    wsprintf(t,"HUNT%004d.BMP",++_shotcounter);
+    wsprintf(t,"HUNT%004d.BMP",++shotcounter_);
     hf = CreateFile(t,
                    GENERIC_READ | GENERIC_WRITE, 
                    (DWORD) 0, 
@@ -2209,10 +2209,10 @@ void CreateLog()
 }
 
 
-void PrintLog(LPSTR l)
+void PrintLog(const char* l)
 {
 	DWORD w;
-	
+
 	if (l[strlen(l)-1]==0x0A) {
 		BYTE b = 0x0D;
 		WriteFile(hlog, l, strlen(l)-1, &w, NULL);

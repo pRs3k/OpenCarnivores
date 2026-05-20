@@ -1,0 +1,5 @@
+C:\Users\User\Documents\claude_code\OpenCarnivores\mathematics.cpp:87:17: warning: call to 'sqrt' promotes float to double [performance-type-promotion-in-math-fn]
+C:\Users\User\Documents\claude_code\OpenCarnivores\mathematics.cpp:93:11: warning: function is not thread safe [concurrency-mt-unsafe]
+C:\Users\User\Documents\claude_code\OpenCarnivores\mathematics.cpp:93:11: warning: rand() has limited randomness; use C++11 random library instead [cert-msc30-c,cert-msc50-cpp]
+C:\Users\User\Documents\claude_code\OpenCarnivores\mathematics.cpp:100:12: warning: function is not thread safe [concurrency-mt-unsafe]
+C:\Users\User\Documents\claude_code\OpenCarnivores\mathematics.cpp:100:12: warning: rand() has limited randomness; use C++11 random library instead [cert-msc30-c,cert-msc50-cpp]

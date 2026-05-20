@@ -5,6 +5,12 @@ Graphics / Rendering
 
     Binoculars in widescreen don't have a graphic to extend to the edges of the screen and are currently just replaced with black (Graphics can all be upscaled in photoshop)
 
+    Ground warping
+    Reflections on weapons not smooth or accurate
+    Sky still obviously moves a little when the player looks around
+    Periodically check for new OpenXR SDK releases here https://github.com/KhronosGroup/OpenXR-SDK/releases in order to know when it's time to update our openxr_loader.dll file
+    The resolution in options menu should be a drop down when you click it
+
 UI / Text / Menus
 
     Make sure the slider values make sense in the OPT menu (like what is the range of possible numbers for "Density" and what can the player set it to, etc.)

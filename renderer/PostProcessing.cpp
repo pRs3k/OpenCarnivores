@@ -5,7 +5,7 @@
 #include <fstream>
 #include <string>
 
-extern void PrintLog(char* msg);
+extern void PrintLog(const char* msg);
 
 static GLuint CompilePostShader(GLenum type, const char* src) {
     GLuint s = glCreateShader(type);
@@ -170,6 +170,15 @@ bool PostProcessingPipeline::Initialize(int screenWidth, int screenHeight) {
     if (!m_bloomDownsampled.Create(bloomW, bloomH, false)) return false;
     if (!m_bloomBlurH.Create(bloomW, bloomH, false)) return false;
     if (!m_bloomBlurV.Create(bloomW, bloomH, false)) return false;
+
+    // SOURCEPORT: Create shadow map FBOs (depth-only, fixed size)
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        if (!m_shadowMaps[i].Create(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, true)) {
+            PrintLog("[PostProcessing] WARNING: Shadow map creation failed\n");
+            // Continue anyway — shadows will simply not render, rest of pipeline works
+        }
+        m_cascadeDistances[i] = 100.0f * (i + 1);  // 100, 200, 300 GU
+    }
 
     // Create fullscreen quad
     float quadVertices[] = {
@@ -423,5 +432,33 @@ void PostProcessingPipeline::Compose(FramebufferObject* src, FramebufferObject* 
     } else {
         // For blending modes, would need a shader to sample source texture
         // For now, skip implementation (used by bloom via manual rendering)
+    }
+}
+
+void PostProcessingPipeline::UpdateShadowMatrices(const float* cameraPos, const float* cameraDir,
+                                                   float fovY, float aspect) {
+    // SOURCEPORT: Compute light view/projection matrices for each shadow cascade.
+    // Placeholder implementation — computes identity matrices.
+    // Full implementation should:
+    //   1. Split camera frustum into N distance slices
+    //   2. For each slice, compute a light view matrix looking along m_lightDirection
+    //   3. Compute orthographic projection tightly fitting the frustum slice
+    // For now, initialize to identity so shadow mapping infrastructure doesn't crash.
+
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        // Identity view matrix
+        float* view = m_lightViewMatrix[i];
+        view[0]=1; view[1]=0; view[2]=0;  view[3]=0;
+        view[4]=0; view[5]=1; view[6]=0;  view[7]=0;
+        view[8]=0; view[9]=0; view[10]=1; view[11]=0;
+        view[12]=0; view[13]=0; view[14]=0; view[15]=1;
+
+        // Orthographic projection matrix for 1000×1000 GU view
+        float* proj = m_lightProjMatrix[i];
+        float size = 1000.0f;
+        proj[0]=1/size; proj[1]=0; proj[2]=0; proj[3]=0;
+        proj[4]=0; proj[5]=1/size; proj[6]=0; proj[7]=0;
+        proj[8]=0; proj[9]=0; proj[10]=-2/1000; proj[11]=0;
+        proj[12]=0; proj[13]=0; proj[14]=-1; proj[15]=1;
     }
 }

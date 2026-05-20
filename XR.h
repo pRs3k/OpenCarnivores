@@ -98,6 +98,13 @@ int PollVRBtnEdge();
     // call EyeFBO(eye, currentIndex) to bind the render target.
     unsigned int EyeFBO(int eye, uint32_t imageIndex);
 
+    // Recreate swapchains with the current OptSSFactor supersampling scale.
+    // Safe to call when the session is running; updates eye render target
+    // resolution and adjusts WinW/WinH accordingly. Returns false if the
+    // session is not active or swapchain recreation fails (rendering reverts
+    // to previous resolution).
+    bool ReconfigureSwapchainResolution();
+
     // ── Step 5: per-frame XR frame loop ──────────────────────────────────────
 
     // Call once per rendered frame (when SessionRunning()) before any rendering.

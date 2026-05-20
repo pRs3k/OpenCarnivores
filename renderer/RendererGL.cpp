@@ -67,7 +67,12 @@ void main() {
     // NDC position = pos_ndc.xyz (unchanged), but varyings are now correct.
     // Guard: HUD/sky/2D geometry uses sz=0 (aDepth=0) — keep w=1 for those.
     if (aDepth > 0.0) {
-        float rhw = max(aDepth, 0.01) / 16.0;
+        // SOURCEPORT: clamp was 0.01 (= 1600 GU clip), pinning vRhw for all distant
+        // terrain to the same value and making camZ=1/vRhw report ≤1600 GU everywhere
+        // past that radius → depth-based LOD stuck at ~0 → temporal aliasing at 2K
+        // minification onset (~3200 GU) → "headlamp circle".  1e-4 moves the guard to
+        // 160 000 GU (well beyond any render distance) so real depths pass through.
+        float rhw = max(aDepth, 1e-4) / 16.0;
         float w   = 1.0 / rhw;
         gl_Position  = vec4(pos_ndc.xyz * w, w);
         vTexCoordR   = aTexCoord * rhw;
@@ -117,6 +122,19 @@ uniform vec3      uSunDirView;     // normalized; camera-ish space approximation
 // 0 = normal, 1 = PBR disabled (Lambert only), 2 = PBR-active fragments shown as magenta.
 uniform int uDebugMode;
 
+// SOURCEPORT: screen-space fog (idea 4). Computed per-fragment from depth and
+// reconstructed world Y so headbob (stepdy) never affects fog density.
+// _ZSCALE=-16 => vRhw=1/|camZ| => camDist=1/vRhw is camera depth in GU.
+// ctHScale=64 is hardcoded (compile-time constant in Hunt.h).
+uniform float uFogYBeginGU;  // fog ceiling in GU = fptr->YBegin * 64
+uniform float uFogTransp;    // density distance (fptr->Transp)
+uniform float uFogLimit;     // max fog factor   (fptr->FLimit)
+uniform float uFogCameraY;   // stable camera Y without headbob (CameraYStable)
+uniform int   uCameraInFog;  // 1 = camera centre is below fog ceiling
+uniform float uFogVideoCY;   // D3D screen centre Y in pixels (VideoCY)
+uniform float uFogWinH;      // window height in pixels
+uniform float uFogCameraH;   // perspective Y scale factor (CameraH)
+
 out vec4 FragColor;
 
 // Christian Schüler's cotangent-frame trick — builds tangent basis from
@@ -161,32 +179,19 @@ void main() {
 
     ivec2 tsz = textureSize(uTexture, 0);
 
-    // SOURCEPORT: LOD computation split by geometry type.
-    // For alpha-tested geometry (foliage/trees): use depth-based LOD derived from
-    // camera-space Z (= 1/vRhw).  Screen-space derivatives (dFdx/dFdy) change with
-    // headbob because all vertex screen-Y positions oscillate, making dFdy(vTexCoord)
-    // oscillate, LOD oscillate, and foliage sample from mip 1+ (slightly different
-    // colour) → the whole scene darkens while walking → headlamp appears by contrast.
-    // Camera depth (rv.z) is unaffected by a vertical headbob for a level camera, so
-    // depth-based LOD is stable and eliminates the strobe/headlamp entirely.
-    // For opaque geometry (terrain): screen-space derivative LOD is fine; terrain has
-    // no mipmaps so the lod value is irrelevant (textureLod always returns level 0).
-    float lod;
-    if (uAlphaTest) {
-        float camZ = 1.0 / max(vRhw, 1e-6);
-        lod = max(0.0, 0.5 * log2(camZ / 512.0) - 0.75);
-    } else {
-        vec2 dt_x = dFdx(vTexCoord) * vec2(tsz);
-        vec2 dt_y = dFdy(vTexCoord) * vec2(tsz);
-        float rho2 = max(dot(dt_x, dt_x), dot(dt_y, dt_y));
-        lod = max(0.0, 0.5 * log2(max(rho2, 1e-10)) - 0.75);
-    }
-    // SOURCEPORT: NEAREST-equivalent snap for alpha-tested foliage; LOD 0 always
-    // (no mip blending for cutout geometry — matches original D3D NEAREST behaviour).
-    vec2 sampleUV = uAlphaTest
-        ? (floor(vTC * vec2(tsz)) + 0.5) / vec2(tsz)
-        : vTC;
-    float sampleLOD = uAlphaTest ? 0.0 : lod;
+    // SOURCEPORT: depth-based LOD for ALL geometry — eliminates headlamp circle.
+    // Screen-space derivatives (dFdx/dFdy) oscillate with headbob because vertex
+    // screen-Y positions oscillate each frame, making LOD oscillate frame-to-frame
+    // and sampling different mip levels → temporal brightness variation that averages
+    // to a persistent "headlamp circle" on both foliage and terrain (terrain now has
+    // mipmaps via glGenerateMipmap, so LOD choice matters for terrain too).
+    // Camera depth (1/vRhw) is unaffected by a vertical headbob on level ground, so
+    // depth-based LOD is stable and eliminates the headlamp on all geometry types.
+    float camZ = 1.0 / max(vRhw, 1e-6);
+    float lod  = max(0.0, 0.5 * log2(camZ / 512.0) - 0.75);
+    // SOURCEPORT: use depth-based LOD for all geometry and plain vTC (no texel-snap).
+    vec2 sampleUV = vTC;
+    float sampleLOD = lod;
     vec4 texel = textureLod(uTexture, sampleUV, sampleLOD);
 
     if (uAlphaTest && uDebugMode != 9) {
@@ -213,6 +218,35 @@ void main() {
     // SOURCEPORT: mode 11 = UV fract at 100x magnification. A 0.001 UV drift (invisible at 1x
     // in mode 8) shows as 0.1 color-unit phase shift here — confirms or rules out sub-texel drift.
     if (uDebugMode == 11) { FragColor = vec4(fract(vTC * 100.0), 0.0, 1.0); return; }
+    // SOURCEPORT: mode 14 = smooth vTexCoord (GL perspective-correct) at 100x magnification.
+    // Companion to mode 11. If pillar is ABSENT here but present in mode 11, the error is in
+    // the noperspective vTexCoordR/vRhw manual division — switch foliage to use vTexCoord.
+    if (uDebugMode == 14) { FragColor = vec4(fract(vTexCoord * 100.0), 0.0, 1.0); return; }
+    // SOURCEPORT: mode 15 = |vTexCoord - vTC| * 10 — UV disagreement between GL and manual path.
+    // Bright regions show where the two perspective-correction methods produce different UVs.
+    // If the pillar/circle shape matches the headlamp, this is the source of the UV drift.
+    if (uDebugMode == 15) { FragColor = vec4(abs(vTexCoord - vTC) * 10.0, 0.0, 1.0); return; }
+    // SOURCEPORT: mode 16 = vRhw grayscale (camera depth, near=bright).
+    // Reveals which geometry has anomalous depth/rhw that might corrupt noperspective UV interp.
+    if (uDebugMode == 16) { FragColor = vec4(vec3(clamp(vRhw * 16.0, 0.0, 1.0)), 1.0); return; }
+    // SOURCEPORT: mode 17 = foliage invisible (all alpha-tested fragments discarded).
+    // If headlamp circle disappears in this mode → circle is foliage-only, not terrain.
+    if (uDebugMode == 17) { if (uAlphaTest) discard; FragColor = vec4(texel.rgb * vColor.rgb, 1.0); return; }
+    // SOURCEPORT: mode 18 = terrain invisible (opaque fragments → solid gray).
+    // If headlamp circle disappears in this mode → circle is terrain, not foliage.
+    if (uDebugMode == 18) { if (!uAlphaTest) { FragColor = vec4(0.5, 0.5, 0.5, 1.0); return; } }
+    // SOURCEPORT: mode 19 = opaque blending only (no premultiplied alpha).
+    // If circle disappears here → it's an additive/special blend artifact.
+    if (uDebugMode == 19) { FragColor = vec4(color.rgb, 1.0); return; }
+    // SOURCEPORT: mode 20 = depth visualization (vRhw indicates camera distance).
+    // Shows if there's an anomalous depth boundary that creates a circle artifact.
+    if (uDebugMode == 20) { float d = clamp(vRhw * 8.0, 0.0, 1.0); FragColor = vec4(d, d, d, 1.0); return; }
+    // SOURCEPORT: mode 21 = vertex Light heatmap (shows per-vertex brightness from lightmap).
+    // If circle appears here → the circle is in the pre-computed Light values, not rendering.
+    if (uDebugMode == 21) { float l = clamp(color.r / 255.0, 0.0, 1.0); FragColor = vec4(l, l, l, 1.0); return; }
+    // SOURCEPORT: mode 22 = flat magenta (verify mode is working).
+    // If screen is NOT bright magenta, mode 22 isn't executing.
+    if (uDebugMode == 22) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
 
     // SOURCEPORT: PBR path — Cook-Torrance GGX on top of retail vertex light.
     // vColor.rgb already encodes per-vertex Lambert against the sun + ambient,
@@ -259,7 +293,31 @@ void main() {
     float maxC  = max(max(bright.r, bright.g), bright.b);
     if (maxC > 1.0) bright /= maxC;
     color.rgb = bright;
-    if (uFogEnabled) color.rgb = mix(uFogColor.rgb, color.rgb, vFog);
+    // SOURCEPORT: screen-space fog — replaces per-vertex vFog which pulsed with headbob.
+    // Reconstruct world Y from gl_FragCoord.y + depth, then mirror CalcFogLevel formula.
+    if (uFogEnabled && uDebugMode != 13) {
+        float camDist = 1.0 / max(vRhw, 1e-6);
+
+        // D3D sy = WinH - gl_FragCoord.y; camRelY = (VideoCY - sy) * camDist / CameraH
+        float camRelY = (uFogVideoCY - uFogWinH + gl_FragCoord.y) * camDist / max(uFogCameraH, 1.0);
+        float worldY  = camRelY + uFogCameraY;
+
+        const float kInvHScale = 1.0 / 64.0;  // 1/ctHScale
+        float fla = -(worldY      - uFogYBeginGU) * kInvHScale;
+        float flb = -(uFogCameraY - uFogYBeginGU) * kInvHScale;
+        if (uCameraInFog == 0) flb = min(flb, 0.0);
+
+        float fogFactor = 0.0;
+        if (fla > 0.0 || flb > 0.0) {
+            float d = camDist;
+            if (fla < 0.0) { d *= flb / (flb - fla); fla = 0.0; }
+            if (flb < 0.0) { d *= fla / (fla - flb); flb = 0.0; }
+            float fl = (fla + flb) * (d + uFogTransp * 0.5) / max(uFogTransp, 1.0);
+            fogFactor = clamp(fl / max(uFogLimit, 1.0), 0.0, 1.0);
+        }
+        if (uDebugMode == 12) { FragColor = vec4(fogFactor, fogFactor, fogFactor, 1.0); return; }
+        color.rgb = mix(color.rgb, uFogColor.rgb, fogFactor);
+    }
 
     FragColor = color;
 }
@@ -531,6 +589,25 @@ void RendererGL::CompileShaders() {
     m_locRoughnessFactor  = glGetUniformLocation(m_shaderProgram, "uRoughnessFactor");
     m_locSunDirView       = glGetUniformLocation(m_shaderProgram, "uSunDirView");
     m_locDebugMode        = glGetUniformLocation(m_shaderProgram, "uDebugMode");
+
+    // SOURCEPORT: screen-space fog uniform locations
+    m_locFogYBeginGU  = glGetUniformLocation(m_shaderProgram, "uFogYBeginGU");
+    m_locFogTransp    = glGetUniformLocation(m_shaderProgram, "uFogTransp");
+    m_locFogLimit     = glGetUniformLocation(m_shaderProgram, "uFogLimit");
+    m_locFogCameraY   = glGetUniformLocation(m_shaderProgram, "uFogCameraY");
+    m_locCameraInFog  = glGetUniformLocation(m_shaderProgram, "uCameraInFog");
+    m_locFogVideoCY   = glGetUniformLocation(m_shaderProgram, "uFogVideoCY");
+    m_locFogWinH      = glGetUniformLocation(m_shaderProgram, "uFogWinH");
+    m_locFogCameraH   = glGetUniformLocation(m_shaderProgram, "uFogCameraH");
+    glUniform1f(m_locFogYBeginGU, 0.0f);
+    glUniform1f(m_locFogTransp,   4000.0f);
+    glUniform1f(m_locFogLimit,    1.0f);
+    glUniform1f(m_locFogCameraY,  0.0f);
+    glUniform1i(m_locCameraInFog, 0);
+    glUniform1f(m_locFogVideoCY,  300.0f);
+    glUniform1f(m_locFogWinH,     600.0f);
+    glUniform1f(m_locFogCameraH,  400.0f);
+
     GLint locNormal = glGetUniformLocation(m_shaderProgram, "uNormalMap");
     GLint locMR     = glGetUniformLocation(m_shaderProgram, "uMRMap");
     GLint locAO     = glGetUniformLocation(m_shaderProgram, "uAOMap");
@@ -566,6 +643,35 @@ void RendererGL::CompileShaders() {
     glUniformMatrix4fv(m_locProjection, 1, GL_FALSE, proj);
 
     glUniform1i(m_locTexture, 0); // Texture unit 0
+
+    // SOURCEPORT: Compile depth shader for shadow mapping
+    std::string depthVsDisk = ReadTextFile("shaders/depth.vert");
+    std::string depthFsDisk = ReadTextFile("shaders/depth.frag");
+    const char* depthVsSrc = depthVsDisk.empty() ? "// Default depth vertex shader\n#version 330 core\nlayout(location=0) in vec2 aPos;\nlayout(location=1) in float aDepth;\nvoid main() { gl_Position = vec4(aPos, aDepth, 1.0); }" : depthVsDisk.c_str();
+    const char* depthFsSrc = depthFsDisk.empty() ? "// Default depth fragment shader\n#version 330 core\nout float fragDepth;\nvoid main() { fragDepth = gl_FragCoord.z; }" : depthFsDisk.c_str();
+
+    GLuint depthVs = CompileShader(GL_VERTEX_SHADER, depthVsSrc);
+    GLuint depthFs = CompileShader(GL_FRAGMENT_SHADER, depthFsSrc);
+
+    GLuint depthProg = glCreateProgram();
+    glAttachShader(depthProg, depthVs);
+    glAttachShader(depthProg, depthFs);
+    glLinkProgram(depthProg);
+
+    glGetProgramiv(depthProg, GL_LINK_STATUS, &success);
+    if (!success) {
+        char log[512];
+        glGetProgramInfoLog(depthProg, sizeof(log), nullptr, log);
+        fprintf(stderr, "Depth shader link error: %s\n", log);
+        glDeleteProgram(depthProg);
+        m_depthShaderProgram = 0;
+    } else {
+        if (m_depthShaderProgram) glDeleteProgram(m_depthShaderProgram);
+        m_depthShaderProgram = depthProg;
+    }
+
+    glDeleteShader(depthVs);
+    glDeleteShader(depthFs);
 }
 
 void RendererGL::CreateBuffers() {
@@ -739,13 +845,6 @@ static inline float rgl_linear_to_srgb(float c)
 }
 static void rgl_GenerateLinearMipmaps(const uint32_t* level0, int w0, int h0)
 {
-    FILE* dbg = fopen("C:\\Users\\User\\Documents\\claude_code\\OpenCarnivores\\debug_renderer.txt", "a");
-    if (dbg) {
-        fprintf(dbg, "[rgl_GenerateLinearMipmaps] Generating mipmaps for %dx%d texture\n", w0, h0);
-        fflush(dbg);
-        fclose(dbg);
-    }
-
     std::vector<uint32_t> src(level0, level0 + w0 * h0);
     int w = w0, h = h0;
     for (int lv = 1; w > 1 || h > 1; ++lv) {
@@ -805,36 +904,27 @@ GLuint RendererGL::UploadTexture16(void* data, int w, int h) {
         rgba[i] = m_isRGB565 ? RGB565toRGBA(src[i]) : RGB555toRGBA(src[i]);
     }
 
-    // SOURCEPORT: only transparent textures (foliage) get a mip chain.
-    // Opaque textures use GL_LINEAR — no mip selection, driver LOD bias irrelevant.
-    // See renderd3d.cpp::gl_UploadRGBA for the full explanation.
-    bool hasTransparency = false;
-    for (int i = 0; i < w * h; i++) {
-        if ((rgba[i] >> 24) == 0) {
-            hasTransparency = true;
-            break;
-        }
-    }
-
+    // SOURCEPORT: all textures now get a full sRGB-correct mip chain.
+    // Previously opaque (terrain) textures had MAX_LEVEL=0 to avoid the gamma-
+    // incorrect glGenerateMipmap "circle of light" artifact. With rgl_GenerateLinearMipmaps
+    // that artifact is gone, and without mipmaps terrain shimmers at 144 Hz (temporal
+    // aliasing: each frame samples a different texel from mip 0). Foliage forced
+    // sampleLOD=0 for the same reason; the shader now uses the computed depth-based
+    // LOD so the mip chain is actually exercised and absorbs the per-frame jitter.
     GLuint tex;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    if (hasTransparency)
-        rgl_GenerateLinearMipmaps(rgba.data(), w, h);
+    rgl_GenerateLinearMipmaps(rgba.data(), w, h);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // SOURCEPORT: Set MAX_LEVEL to actual mip count so textureLod() in the shader
-    // clamps safely — non-mipmap textures land on level 0 for any computed LOD.
     {
         int maxLvl = 0;
         for (int s = std::max(w, h); s > 1; s >>= 1, maxLvl++);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, hasTransparency ? maxLvl : 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, maxLvl);
     }
-    GLenum minFilter = hasTransparency
-        ? (m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST)
-        : (m_linearFilter ? GL_LINEAR : GL_NEAREST);
+    GLenum minFilter = m_linearFilter ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, minFilter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, m_linearFilter ? GL_LINEAR : GL_NEAREST);
     if (m_maxAnisotropy > 1)
@@ -1037,6 +1127,21 @@ void RendererGL::SetFogColor(uint32_t color) {
     m_fogColor[3] = 1.0f;
     glUniform4fv(m_locFogColor, 1, m_fogColor);
     glClearColor(m_fogColor[0], m_fogColor[1], m_fogColor[2], 1.0f);
+}
+
+// SOURCEPORT: upload screen-space fog parameters once per frame (after CAMERAINFOG update).
+// Replaces per-vertex fog that pulsed with headbob.
+void RendererGL::SetFogParams(float fogYBeginGU, float fogTransp, float fogLimit,
+                               float cameraY, int cameraInFog,
+                               float videoCY, float winH, float cameraH) {
+    glUniform1f(m_locFogYBeginGU, fogYBeginGU);
+    glUniform1f(m_locFogTransp,   fogTransp);
+    glUniform1f(m_locFogLimit,    fogLimit);
+    glUniform1f(m_locFogCameraY,  cameraY);
+    glUniform1i(m_locCameraInFog, cameraInFog);
+    glUniform1f(m_locFogVideoCY,  videoCY);
+    glUniform1f(m_locFogWinH,     winH);
+    glUniform1f(m_locFogCameraH,  cameraH);
 }
 
 void RendererGL::SetLinearFilter(bool enabled) {
@@ -1665,4 +1770,42 @@ void RendererGL::UnbindAndDownscaleSSA() {
     glBlitFramebuffer(0, 0, m_ssaWidth, m_ssaHeight, 0, 0, m_width, m_height,
                       GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_LINEAR);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+// SOURCEPORT: Shadow mapping support (Phase 2.1)
+
+void RendererGL::BeginShadowPass() {
+    if (!m_depthShaderProgram) return;
+    glUseProgram(m_depthShaderProgram);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);  // Don't write color in depth pass
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);  // Standard depth test for shadow depth pass
+    glClearDepth(1.0);  // Standard clear (far = 1.0) for depth pass
+}
+
+void RendererGL::EndShadowPass() {
+    // Restore normal rendering state
+    glUseProgram(m_shaderProgram);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthFunc(GL_GEQUAL);  // Restore reversed depth convention
+    glClearDepth(0.0);  // Restore reversed clear (far = 0.0)
+}
+
+void RendererGL::GetLightTransform(int cascade, float* outViewMatrix, float* outProjMatrix) {
+    // SOURCEPORT: Placeholder — will compute light view/proj matrices based on camera
+    // frustum split and light direction. For now, returns identity matrices.
+    if (!outViewMatrix || !outProjMatrix) return;
+
+    auto pipeline = (PostProcessingPipeline*)m_postProcessingPipeline;
+    if (!pipeline) return;
+
+    const float* viewMat = pipeline->GetLightViewMatrix(cascade);
+    const float* projMat = pipeline->GetLightProjMatrix(cascade);
+
+    if (viewMat) std::memcpy(outViewMatrix, viewMat, 16 * sizeof(float));
+    else std::memset(outViewMatrix, 0, 16 * sizeof(float));
+
+    if (projMat) std::memcpy(outProjMatrix, projMat, 16 * sizeof(float));
+    else std::memset(outProjMatrix, 0, 16 * sizeof(float));
 }

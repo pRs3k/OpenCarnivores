@@ -34,9 +34,9 @@ typedef void* LPDIRECTDRAWSURFACE;
 
 
 #ifdef _MAIN_
- #define _EXTORNOT 
+ #define EXTORNOT 
 #else
- #define _EXTORNOT extern
+ #define EXTORNOT extern
 #endif
 
 #define pi 3.1415926535f
@@ -50,8 +50,8 @@ typedef void* LPDIRECTDRAWSURFACE;
 //                    override it after reading a header.
 //   gMapMask       — gMapSize - 1, for wrap-around indexing (was hardcoded `& 1023`).
 #define ctMapSize 1024
-_EXTORNOT int gMapSize;
-_EXTORNOT int gMapMask;
+EXTORNOT int gMapSize;
+EXTORNOT int gMapMask;
 
 
 
@@ -67,30 +67,30 @@ typedef struct tagTRGB {
      BYTE R;
 } TRGB;
 
-typedef struct _Animation {
+typedef struct Animation {
   char aniName[32];
   int aniKPS, FramesCount, AniTime;
   short int* aniData;
 } TAni;
 
-typedef struct _VTLdata {  
+typedef struct VTLdata {  
   int aniKPS, FramesCount, AniTime;
   short int* aniData;
 } TVTL;
 
-typedef struct _SoundFX {
+typedef struct SoundFX {
   int  length;
   short int* lpData;
 } TSFX;
 
 
 
-typedef struct _TRD {
+typedef struct TRD_ {
   int  RNumber, RVolume, RFreq;
   WORD REnvir, Flags;
 } TRD;
 
-typedef struct _TAmbient {
+typedef struct TAmbient_ {
   TSFX sfx;
   TRD  rdata[16];
   int  RSFXCount;
@@ -110,7 +110,7 @@ typedef struct TagTEXTURE  {
 
 
 
-typedef struct _TPicture {
+typedef struct TPicture_ {
    int W,H;
    WORD* lpImage;
 } TPicture;
@@ -171,7 +171,7 @@ typedef struct TagClipPoint {
 
 
 //================= MODEL ========================
-typedef struct _Point3d {
+typedef struct Point3d {
 	float x; 
 	float y; 
 	float z;
@@ -181,7 +181,7 @@ typedef struct _Point3d {
 
 
 
-typedef struct _Face {
+typedef struct Face {
    int v1, v2, v3;   
 #ifdef _soft
    int   tax, tbx, tcx, tay, tby, tcy;
@@ -194,7 +194,7 @@ typedef struct _Face {
 } TFace;
 
 
-typedef struct _Facef {
+typedef struct Facef {
    int v1, v2, v3;   
    float tax, tbx, tcx, tay, tby, tcy;
    WORD Flags,DMask;
@@ -204,7 +204,7 @@ typedef struct _Facef {
 
 
 
-typedef struct _Obj {
+typedef struct Obj {
    char OName [32];
    float ox; 
    float oy;
@@ -233,7 +233,7 @@ typedef struct TagMODEL {
 //=========== END MODEL ==============================//
 
 
-typedef struct _ObjInfo {
+typedef struct ObjInfo {
    int  Radius;
    int  YLo, YHi;
    int  linelenght, lintensity;
@@ -246,12 +246,12 @@ typedef struct _ObjInfo {
    BYTE res[16];
 } TObjInfo;
 
-typedef struct _TBMPModel {
+typedef struct TBMPModel_ {
     Vector3d  gVertex[4];
 	WORD     *lpTexture;
 } TBMPModel;
 
-typedef struct _TBound {	
+typedef struct TBound_ {	
 	float cx, cy, a, b,  y1, y2;
 } TBound;
 
@@ -264,7 +264,7 @@ typedef struct TagObject {
 } TObject;
 
 
-typedef struct _TCharacterInfo {
+typedef struct TCharacterInfo_ {
   char ModelName[32];
   int AniCount,SfxCount;
   TModel* mptr;
@@ -273,7 +273,7 @@ typedef struct _TCharacterInfo {
   int  Anifx[64];
 } TCharacterInfo;
 
-typedef struct _TWeapon {
+typedef struct TWeapon_ {
   TCharacterInfo chinfo[10];
   TPicture       BulletPic[10];
   Vector3d       normals[1024];
@@ -283,7 +283,7 @@ typedef struct _TWeapon {
 
 
 
-typedef struct _TWCircle {
+typedef struct TWCircle_ {
     Vector3d pos;
 	float scale;
 	int FTime;    
@@ -292,7 +292,7 @@ typedef struct _TWCircle {
 
 
 
-typedef struct _TCharacter  {
+typedef struct TCharacter_  {
   int CType, AI;
   TCharacterInfo *pinfo;
   int StateF;
@@ -324,7 +324,7 @@ typedef struct tagPlayer {
 } TPlayer;
 
 
-typedef struct _TDemoPoint {
+typedef struct TDemoPoint_ {
   Vector3d pos;
   int DemoTime, CIndex;
 } TDemoPoint;
@@ -355,13 +355,13 @@ typedef struct tagLandingList {
 } TLandingList;
 
 
-typedef struct _TPlayerR {
+typedef struct TPlayerR_ {
 	char PName[128];
 	int  RegNumber;
 	int  Score, Rank;
 } TPlayerR;
 
-typedef struct _TTrophyItem {
+typedef struct TTrophyItem_ {
   int ctype, weapon, phase,
 	  height, weight, score,
 	  date, time;
@@ -370,13 +370,13 @@ typedef struct _TTrophyItem {
 } TTrophyItem;
 
 
-typedef struct _TStats {
+typedef struct TStats_ {
 	int smade, success;
 	float path, time;
 } TStats;
 
 
-typedef struct _TTrophyRoom {
+typedef struct TTrophyRoom_ {
   char PlayerName[128];
   int  RegNumber;
   int  Score, Rank;
@@ -388,7 +388,7 @@ typedef struct _TTrophyRoom {
 
 
 
-typedef struct _TDinoInfo {
+typedef struct TDinoInfo_ {
 	char Name[48], FName[48], PName[48];	
 	int Health0, AI;
 	BOOL DangerCall;
@@ -400,14 +400,14 @@ typedef struct _TDinoInfo {
 } TDinoInfo;
 
 
-typedef struct _TWeapInfo {
+typedef struct TWeapInfo_ {
 	char Name[48], FName[48], BFName[48];
 	float Power, Prec, Loud, Rate;
 	int Shots, Optic, Fall, TraceC, Reload;
 } TWeapInfo;
 
 
-typedef struct _TFogEntity {
+typedef struct TFogEntity_ {
   int fogRGB;
   float YBegin;
   BOOL  Mortal;
@@ -415,14 +415,14 @@ typedef struct _TFogEntity {
 } TFogEntity;
 
 
-typedef struct _TWaterEntity {
+typedef struct TWaterEntity_ {
   int tindex, wlevel;
   float transp;
   int fogRGB;
 } TWaterEntity;
 
 
-typedef struct _TWind {
+typedef struct TWind_ {
    float alpha;
    float speed;
    Vector3d nv;
@@ -431,13 +431,13 @@ typedef struct _TWind {
 
 
 
-typedef struct _TElement {
+typedef struct TElement_ {
    Vector3d pos, speed;
    int     Flags;
    float   R;
 } TElement;
 
-typedef struct _TElements {
+typedef struct TElements_ {
 	int Type, ECount, EDone, LifeTime;
 	int Param1, Param2, Param3;
 	DWORD RGBA, RGBA2;
@@ -446,12 +446,12 @@ typedef struct _TElements {
 } TElements;
 
 
-typedef struct _TBloodP {
+typedef struct TBloodP_ {
 	int LTime;
 	Vector3d pos;
 } TBloodP;
 
-typedef struct _TBTrail {
+typedef struct TBTrail_ {
 	int Count;
     TBloodP Trail[512];
 } TBTrail;
@@ -501,7 +501,7 @@ void ProcessMapW2(int x, int y, int r);
 void DrawTPlane(BOOL);
 void DrawTPlaneClip(BOOL);
 void ClearVideoBuf();
-void DrawTrophyText(int, int, float = 1.0f);
+void DrawTrophyText(int, int, float = 1.0f, bool = false);
 void DrawHMap();
 void RenderCharacter(int);
 void RenderShip();
@@ -553,8 +553,8 @@ void CalcBoundBox(TModel* mptr, TBound *bound);
 void  NormVector(Vector3d&, float); 
 float SGN(float);
 void  DeltaFunc(float &a, float b, float d);
-void  MulVectorsScal(Vector3d&, Vector3d&, float&);
-void  MulVectorsVect(Vector3d&, Vector3d&, Vector3d&);
+void  MulVectorsScal(const Vector3d&, const Vector3d&, float&);
+void  MulVectorsVect(const Vector3d&, const Vector3d&, Vector3d&);
 Vector3d SubVectors( Vector3d&, Vector3d& );
 Vector3d AddVectors( Vector3d&, Vector3d& );
 Vector3d RotateVector(Vector3d&);
@@ -605,13 +605,13 @@ void CreateFadeTab();
 void CreateVideoDIB();
 void RenderLightMap();
 
-void MulVectorsVect(Vector3d& v1, Vector3d& v2, Vector3d& r );
-void MulVectorsScal(Vector3d& v1,Vector3d& v2, float& r);
+void MulVectorsVect(const Vector3d& v1, const Vector3d& v2, Vector3d& r );
+void MulVectorsScal(const Vector3d& v1, const Vector3d& v2, float& r);
 Vector3d SubVectors( Vector3d& v1, Vector3d& v2 );
 void NormVector(Vector3d& v, float Scale);
 
-LPVOID _HeapAlloc(HANDLE hHeap, DWORD dwFlags, DWORD dwBytes);
-BOOL _HeapFree(HANDLE hHeap, DWORD  dwFlags, LPVOID lpMem);
+LPVOID HeapAlloc_(HANDLE hHeap, DWORD dwFlags, DWORD dwBytes);
+BOOL HeapFree_(HANDLE hHeap, DWORD  dwFlags, LPVOID lpMem);
 
 //============ game ===========================//
 float GetLandCeilH(float, float);
@@ -646,132 +646,132 @@ void AddWCircle(float, float, float);
 void AnimateProcesses();
 void DoHalt(LPSTR);
 
-_EXTORNOT   char logt[128];
+EXTORNOT   char logt[128];
 void CreateLog();
-void PrintLog(LPSTR l);
+void PrintLog(const char* l);
 void CloseLog();
 
-_EXTORNOT   float BackViewR;
-_EXTORNOT   int   BackViewRR;
-_EXTORNOT   int   UnderWaterT;
-_EXTORNOT   int   TotalC, TotalW;
+EXTORNOT   float BackViewR;
+EXTORNOT   int   BackViewRR;
+EXTORNOT   int   UnderWaterT;
+EXTORNOT   int   TotalC, TotalW;
 
 
 //========== common ==================//
-_EXTORNOT   HWND    hwndMain;
-_EXTORNOT   HINSTANCE  hInst;
-_EXTORNOT   HANDLE  Heap;
-_EXTORNOT   HDC     hdcMain, hdcCMain;
-_EXTORNOT   BOOL    blActive;
-_EXTORNOT   BYTE    KeyboardState[256];
-_EXTORNOT   int     KeyFlags, _shotcounter;
+EXTORNOT   HWND    hwndMain;
+EXTORNOT   HINSTANCE  hInst;
+EXTORNOT   HANDLE  Heap;
+EXTORNOT   HDC     hdcMain, hdcCMain;
+EXTORNOT   BOOL    blActive;
+EXTORNOT   BYTE    KeyboardState[256];
+EXTORNOT   int     KeyFlags, shotcounter_;
 
-_EXTORNOT   TMessageList MessageList;
-_EXTORNOT   char    ProjectName[128];
-_EXTORNOT   int     _GameState;
-_EXTORNOT   TSFX    fxCall[10][3], fxScream[4];
-_EXTORNOT   TSFX    fxUnderwater, fxWaterIn, fxWaterOut, fxJump, fxStep[3], fxStepW[3];
-_EXTORNOT   TSFX    fxMenuAmb, fxMenuGo, fxMenuMov;
+EXTORNOT   TMessageList MessageList;
+EXTORNOT   char    ProjectName[128];
+EXTORNOT   int     GameState_;
+EXTORNOT   TSFX    fxCall[10][3], fxScream[4];
+EXTORNOT   TSFX    fxUnderwater, fxWaterIn, fxWaterOut, fxJump, fxStep[3], fxStepW[3];
+EXTORNOT   TSFX    fxMenuAmb, fxMenuGo, fxMenuMov;
 //========== map =====================//
-_EXTORNOT   byte HMap[ctMapSize][ctMapSize];
-_EXTORNOT   byte WMap[ctMapSize][ctMapSize];
-_EXTORNOT   byte HMapO[ctMapSize][ctMapSize];
-_EXTORNOT   WORD FMap[ctMapSize][ctMapSize];
-_EXTORNOT   byte LMap[ctMapSize][ctMapSize];
-_EXTORNOT   WORD TMap1[ctMapSize][ctMapSize];
-_EXTORNOT   WORD TMap2[ctMapSize][ctMapSize];
-_EXTORNOT   byte OMap[ctMapSize][ctMapSize];
+EXTORNOT   byte HMap[ctMapSize][ctMapSize];
+EXTORNOT   byte WMap[ctMapSize][ctMapSize];
+EXTORNOT   byte HMapO[ctMapSize][ctMapSize];
+EXTORNOT   WORD FMap[ctMapSize][ctMapSize];
+EXTORNOT   byte LMap[ctMapSize][ctMapSize];
+EXTORNOT   WORD TMap1[ctMapSize][ctMapSize];
+EXTORNOT   WORD TMap2[ctMapSize][ctMapSize];
+EXTORNOT   byte OMap[ctMapSize][ctMapSize];
 
-_EXTORNOT   byte FogsMap[512][512];
-_EXTORNOT   byte AmbMap[512][512];
+EXTORNOT   byte FogsMap[512][512];
+EXTORNOT   byte AmbMap[512][512];
 
-_EXTORNOT   TFogEntity    FogsList[256];
-_EXTORNOT   TWaterEntity  WaterList[256];
-_EXTORNOT   TWind       Wind;
-_EXTORNOT   TShip       Ship;
-_EXTORNOT   TShipTask   ShipTask;
+EXTORNOT   TFogEntity    FogsList[256];
+EXTORNOT   TWaterEntity  WaterList[256];
+EXTORNOT   TWind       Wind;
+EXTORNOT   TShip       Ship;
+EXTORNOT   TShipTask   ShipTask;
 
-_EXTORNOT   int SkyR, SkyG, SkyB, WaterR, WaterG, WaterB, WaterA,
+EXTORNOT   int SkyR, SkyG, SkyB, WaterR, WaterG, WaterB, WaterA,
                 SkyTR,SkyTG,SkyTB, CurFogColor;
-_EXTORNOT   int RandomMap[32][32];
+EXTORNOT   int RandomMap[32][32];
 
-_EXTORNOT   Vector2df PhongMapping[1024];
-_EXTORNOT   TPicture TFX_SPECULAR, TFX_ENVMAP;
-_EXTORNOT   WORD SkyPic[256*256];
-_EXTORNOT   WORD SkyFade[9][128*128];
-_EXTORNOT   BYTE SkyMap[128*128];
+EXTORNOT   Vector2df PhongMapping[1024];
+EXTORNOT   TPicture TFX_SPECULAR, TFX_ENVMAP;
+EXTORNOT   WORD SkyPic[256*256];
+EXTORNOT   WORD SkyFade[9][128*128];
+EXTORNOT   BYTE SkyMap[128*128];
 
-_EXTORNOT   TEXTURE* Textures[1024];
-_EXTORNOT   TAmbient Ambient[256];
-_EXTORNOT   TSFX     RandSound[256];
+EXTORNOT   TEXTURE* Textures[1024];
+EXTORNOT   TAmbient Ambient[256];
+EXTORNOT   TSFX     RandSound[256];
 
 //========= GAME ====================//
-_EXTORNOT int TargetDino, TargetArea, TargetWeapon, WeaponPres, TargetCall,
+EXTORNOT int TargetDino, TargetArea, TargetWeapon, WeaponPres, TargetCall,
               TrophyTime, ObservMode, Tranq, ObjectsOnLook,
 			  CurrentWeapon, ShotsLeft[10], AmmoMag[10];
 
-_EXTORNOT Vector3d answpos;
-_EXTORNOT int answtime, answcall;
+EXTORNOT Vector3d answpos;
+EXTORNOT int answtime, answcall;
 
-_EXTORNOT BOOL ScentMode, CamoMode, 
+EXTORNOT BOOL ScentMode, CamoMode, 
                RadarMode, LockLanding, 
 			   TrophyMode, DoubleAmmo;
 
-_EXTORNOT TTrophyRoom TrophyRoom;
-//_EXTORNOT TPlayerR PlayerR[16];
-_EXTORNOT TPicture LandPic,DinoPic,DinoPicM, MapPic, WepPic;
-_EXTORNOT HFONT fnt_BIG, fnt_Small, fnt_Midd;
-_EXTORNOT TLandingList LandingList;
+EXTORNOT TTrophyRoom TrophyRoom;
+//EXTORNOT TPlayerR PlayerR[16];
+EXTORNOT TPicture LandPic,DinoPic,DinoPicM, MapPic, WepPic;
+EXTORNOT HFONT fnt_BIG, fnt_Small, fnt_Midd;
+EXTORNOT TLandingList LandingList;
 
 //======== MODEL ======================//
-_EXTORNOT TObject  MObjects[256];
-_EXTORNOT TModel* mptr;
-_EXTORNOT TWeapon Weapon;
+EXTORNOT TObject  MObjects[256];
+EXTORNOT TModel* mptr;
+EXTORNOT TWeapon Weapon;
 
 
-_EXTORNOT int   OCount, iModelFade, iModelBaseFade, Current;
-_EXTORNOT Vector3d  rVertex[1024];
-_EXTORNOT TObj      gObj[1024];
-_EXTORNOT Vector2di gScrp[1024];
+EXTORNOT int   OCount, iModelFade, iModelBaseFade, Current;
+EXTORNOT Vector3d  rVertex[1024];
+EXTORNOT TObj      gObj[1024];
+EXTORNOT Vector2di gScrp[1024];
 
 //============= Characters ==============//
-_EXTORNOT TPicture  PausePic, ExitPic, TrophyExit, TrophyPic;
-_EXTORNOT TModel *SunModel;
-_EXTORNOT TCharacterInfo WCircleModel;
-_EXTORNOT TModel *CompasModel;
-_EXTORNOT TModel *Binocular;
-_EXTORNOT TDinoInfo DinoInfo[32];
-_EXTORNOT TWeapInfo WeapInfo[8];
-_EXTORNOT TCharacterInfo ShipModel;
-_EXTORNOT int AI_to_CIndex[32];
-_EXTORNOT int ChCount, WCCount, ElCount,
+EXTORNOT TPicture  PausePic, ExitPic, TrophyExit, TrophyPic;
+EXTORNOT TModel *SunModel;
+EXTORNOT TCharacterInfo WCircleModel;
+EXTORNOT TModel *CompasModel;
+EXTORNOT TModel *Binocular;
+EXTORNOT TDinoInfo DinoInfo[32];
+EXTORNOT TWeapInfo WeapInfo[8];
+EXTORNOT TCharacterInfo ShipModel;
+EXTORNOT int AI_to_CIndex[32];
+EXTORNOT int ChCount, WCCount, ElCount,
               ShotDino, TrophyBody;
-_EXTORNOT TCharacterInfo WindModel;
-_EXTORNOT TCharacterInfo PlayerInfo;
-_EXTORNOT TCharacterInfo ChInfo[32];
-_EXTORNOT TCharacter     Characters[256];
-_EXTORNOT TWCircle       WCircles[128];
-_EXTORNOT TDemoPoint     DemoPoint;
+EXTORNOT TCharacterInfo WindModel;
+EXTORNOT TCharacterInfo PlayerInfo;
+EXTORNOT TCharacterInfo ChInfo[32];
+EXTORNOT TCharacter     Characters[256];
+EXTORNOT TWCircle       WCircles[128];
+EXTORNOT TDemoPoint     DemoPoint;
 
-_EXTORNOT TPlayer        Players[16];
-_EXTORNOT Vector3d       PlayerPos, CameraPos;
+EXTORNOT TPlayer        Players[16];
+EXTORNOT Vector3d       PlayerPos, CameraPos;
 
 //========== Render ==================//
-_EXTORNOT   LPDIRECTDRAW lpDD;
-_EXTORNOT   LPDIRECTDRAW2 lpDD2;
-//_EXTORNOT   LPDIRECTINPUT lpDI;
+EXTORNOT   LPDIRECTDRAW lpDD;
+EXTORNOT   LPDIRECTDRAW2 lpDD2;
+//EXTORNOT   LPDIRECTINPUT lpDI;
 
-_EXTORNOT   void* lpVideoRAM;
-_EXTORNOT   LPDIRECTDRAWSURFACE lpddsPrimary;
-_EXTORNOT   BOOL DirectActive, RestartMode;
-_EXTORNOT   BOOL LoDetailSky;
-_EXTORNOT   int  WinW,WinH,WinEX,WinEY,VideoCX,VideoCY,iBytesPerLine,ts,r,MapMinY;
-_EXTORNOT   float CameraW,CameraH,Soft_Persp_K, stepdy, stepdd, SunShadowK, FOVK;
-_EXTORNOT   CLIPPLANE ClipA,ClipB,ClipC,ClipD,ClipZ,ClipW;
-_EXTORNOT   int u,vused, CCX, CCY;
+EXTORNOT   void* lpVideoRAM;
+EXTORNOT   LPDIRECTDRAWSURFACE lpddsPrimary;
+EXTORNOT   BOOL DirectActive, RestartMode;
+EXTORNOT   BOOL LoDetailSky;
+EXTORNOT   int  WinW,WinH,WinEX,WinEY,VideoCX,VideoCY,iBytesPerLine,ts,r,MapMinY;
+EXTORNOT   float CameraW,CameraH,Soft_Persp_K, stepdy, stepdd, SunShadowK, FOVK;
+EXTORNOT   CLIPPLANE ClipA,ClipB,ClipC,ClipD,ClipZ,ClipW;
+EXTORNOT   int u,vused, CCX, CCY;
 
-_EXTORNOT   DWORD Mask1,Mask2;
-_EXTORNOT   DWORD HeapAllocated, HeapReleased;
+EXTORNOT   DWORD Mask1,Mask2;
+EXTORNOT   DWORD HeapAllocated, HeapReleased;
 
 
 // SOURCEPORT: Per-frame, camera-centred terrain vertex cache. The retail
@@ -783,49 +783,50 @@ _EXTORNOT   DWORD HeapAllocated, HeapReleased;
 // Memory cost per frame: 512*512*sizeof(EPoint) ≈ 8 MB per array.
 #define VMAP_DIM    512
 #define VMAP_CENTER (VMAP_DIM/2)
-_EXTORNOT   EPoint VMap[VMAP_DIM][VMAP_DIM];
-_EXTORNOT   EPoint VMap2[VMAP_DIM][VMAP_DIM];
-_EXTORNOT   EPoint ev[3];
+EXTORNOT   EPoint VMap[VMAP_DIM][VMAP_DIM];
+EXTORNOT   EPoint VMap2[VMAP_DIM][VMAP_DIM];
+EXTORNOT   EPoint ev[3];
 
-_EXTORNOT   ClipPoint cp[16];
-_EXTORNOT   ClipPoint hleft,hright;
+EXTORNOT   ClipPoint cp[16];
+EXTORNOT   ClipPoint hleft,hright;
 
 
-_EXTORNOT   void  *HLineT;
-_EXTORNOT   int   rTColor;
-_EXTORNOT   int   SKYMin, SKYDTime, GlassL, ctViewR, ctViewR1, ctViewRM,
+EXTORNOT   void  *HLineT;
+EXTORNOT   int   rTColor;
+EXTORNOT   int   SKYMin, SKYDTime, GlassL, ctViewR, ctViewR1, ctViewRM,
                   dFacesCount, ReverseOn, TDirection;
-_EXTORNOT   WORD  FadeTab[65][0x8000];
-_EXTORNOT   TElements Elements[32];
-_EXTORNOT   TBTrail   BloodTrail;
+EXTORNOT   WORD  FadeTab[65][0x8000];
+EXTORNOT   TElements Elements[32];
+EXTORNOT   TBTrail   BloodTrail;
 
-_EXTORNOT   int     PrevTime, TimeDt, T, Takt, RealTime, StepTime, MyHealth, ExitTime,
+EXTORNOT   int     PrevTime, TimeDt, T, Takt, RealTime, StepTime, MyHealth, ExitTime,
                     ChCallTime, CallLockTime, NextCall;
-_EXTORNOT   float   DeltaT;
-_EXTORNOT   float   CameraX, CameraY, CameraZ, CameraAlpha, CameraBeta, CameraGamma;  // SOURCEPORT: gamma = roll (head tilt)
-_EXTORNOT   float   g_vrCamCenterX, g_vrCamCenterZ;  // SOURCEPORT: VR head-centre position for sky (no IPD parallax)
-_EXTORNOT   float   g_vrBodyYaw;  // SOURCEPORT: VR body-yaw offset for locomotion turning
-_EXTORNOT   float   g_vrHeadRefX, g_vrHeadRefY, g_vrHeadRefZ;  // SOURCEPORT: initial head pos in OpenXR metres (6DoF anchor)
-_EXTORNOT   bool    g_vrHeadRefSet;   // SOURCEPORT: whether reference position has been captured
-_EXTORNOT   float   g_vrRoomOffsetX, g_vrRoomOffsetY, g_vrRoomOffsetZ;  // SOURCEPORT: roomscale offset in game units this frame
-_EXTORNOT   float   PlayerX, PlayerY, PlayerZ, PlayerAlpha, PlayerBeta, PlayerGamma,  // SOURCEPORT: gamma = roll (head tilt)
+EXTORNOT   float   DeltaT;
+EXTORNOT   float   CameraX, CameraY, CameraZ, CameraAlpha, CameraBeta, CameraGamma;  // SOURCEPORT: gamma = roll (head tilt)
+EXTORNOT   float   CameraYStable;  // SOURCEPORT: CameraY without headbob (PlayerY+HeadY); used for fog/shading to prevent stepdy from pulsing fog density
+EXTORNOT   float   g_vrCamCenterX, g_vrCamCenterZ;  // SOURCEPORT: VR head-centre position for sky (no IPD parallax)
+EXTORNOT   float   g_vrBodyYaw;  // SOURCEPORT: VR body-yaw offset for locomotion turning
+EXTORNOT   float   g_vrHeadRefX, g_vrHeadRefY, g_vrHeadRefZ;  // SOURCEPORT: initial head pos in OpenXR metres (6DoF anchor)
+EXTORNOT   bool    g_vrHeadRefSet;   // SOURCEPORT: whether reference position has been captured
+EXTORNOT   float   g_vrRoomOffsetX, g_vrRoomOffsetY, g_vrRoomOffsetZ;  // SOURCEPORT: roomscale offset in game units this frame
+EXTORNOT   float   PlayerX, PlayerY, PlayerZ, PlayerAlpha, PlayerBeta, PlayerGamma,  // SOURCEPORT: gamma = roll (head tilt)
                     HeadY, HeadBackR, HeadBSpeed, HeadAlpha, HeadBeta,
                     SSpeed,VSpeed,RSpeed,YSpeed;      
-_EXTORNOT   Vector3d PlayerNv;
+EXTORNOT   Vector3d PlayerNv;
 
-_EXTORNOT   float   ca,sa,cb,sb,cg,sg, wpnDAlpha, wpnDBeta;  // SOURCEPORT: cg,sg = cos/sin of roll (head tilt)
-_EXTORNOT   void    *lpVideoBuf, *lpTextureAddr;
-_EXTORNOT   HBITMAP hbmpVideoBuf;
-_EXTORNOT   HCURSOR hcArrow;
-_EXTORNOT   int     DivTbl[10240];
+EXTORNOT   float   ca,sa,cb,sb,cg,sg, wpnDAlpha, wpnDBeta;  // SOURCEPORT: cg,sg = cos/sin of roll (head tilt)
+EXTORNOT   void    *lpVideoBuf, *lpTextureAddr;
+EXTORNOT   HBITMAP hbmpVideoBuf;
+EXTORNOT   HCURSOR hcArrow;
+EXTORNOT   int     DivTbl[10240];
 
-_EXTORNOT   Vector3d  v[3];
-_EXTORNOT   ScrPoint  scrp[3];
-_EXTORNOT   MScrPoint mscrp[3];
-_EXTORNOT   Vector3d  nv, waterclipbase, Sun3dPos;
+EXTORNOT   Vector3d  v[3];
+EXTORNOT   ScrPoint  scrp[3];
+EXTORNOT   MScrPoint mscrp[3];
+EXTORNOT   Vector3d  nv, waterclipbase, Sun3dPos;
 
 
-_EXTORNOT   struct _t {
+EXTORNOT   struct t_ {
               int fkForward, fkBackward, fkUp, fkDown, fkLeft, fkRight, fkFire, fkShow, fkSLeft, fkSRight, fkStrafe, fkJump, fkRun, fkCrouch, fkCall, fkCCall, fkBinoc;
 	} KeyMap;
 
@@ -910,31 +911,31 @@ _EXTORNOT   struct _t {
 
 
 
-_EXTORNOT BOOL WATERANI,Clouds,SKY,GOURAUD,
+EXTORNOT BOOL WATERANI,Clouds,SKY,GOURAUD,
                MODELS,TIMER,BITMAPP,MIPMAP,
                NOCLIP,CLIP3D,NODARKBACK,CORRECTION, LOWRESTX, 
 			   FOGENABLE, FOGON, CAMERAINFOG,
                WATERREVERSE,waterclip,UNDERWATER, ONWATER, NeedWater,
                SWIM, FLY, PAUSE, OPTICMODE, BINMODE, EXITMODE, MapMode, RunMode;
-_EXTORNOT int  CameraFogI;
-_EXTORNOT int OptDayNight, OptAgres, OptDens, OptSens, OptRes, OptViewR,
+EXTORNOT int  CameraFogI;
+EXTORNOT int OptDayNight, OptAgres, OptDens, OptSens, OptRes, OptViewR,
               OptMsSens, OptBrightness, OptSound, OptRender,
               OptText, OptSys, WaitKey, OPT_ALPHA_COLORKEY;
-_EXTORNOT BOOL SHADOWS3D,REVERSEMS;
+EXTORNOT BOOL SHADOWS3D,REVERSEMS;
 
 // SOURCEPORT: Phase 4 display options (OpenGL path only)
 // OptDisplayMode: 0=windowed, 1=fullscreen, 2=borderless
 // OptVSync:       0=disabled, 1=enabled (default)
 // OptResW/H:      0 = use SetupRes() preset; nonzero = override resolution
-_EXTORNOT int  OptDisplayMode, OptVSync, OptResW, OptResH;
+EXTORNOT int  OptDisplayMode, OptVSync, OptResW, OptResH;
 
 // SOURCEPORT: graphics quality options (apply to flatscreen and VR)
 // OptAnisoLevel:   1=Low (2x), 2=Medium (4x), 3=High (8x), 4=Max (16x)
 // OptSSFactor:     100-200, supersampling multiplier for VR eye FBOs (100=no scaling)
-_EXTORNOT int  OptAnisoLevel, OptSSFactor;
+EXTORNOT int  OptAnisoLevel, OptSSFactor;
 
-_EXTORNOT BOOL SLOW, DEBUG, MORPHP, MORPHA;
-_EXTORNOT HANDLE hlog;
+EXTORNOT BOOL SLOW, DEBUG, MORPHP, MORPHA;
+EXTORNOT HANDLE hlog;
 
 // SOURCEPORT: Phase 1 post-processing effect toggles and parameters (inline for C++17)
 // Bloom effect: bright pixel extraction + separable Gaussian blur
@@ -992,13 +993,13 @@ typedef struct tagAudioQuad
   float x3,y3,z3;	
   float x4,y4,z4;	
 } AudioQuad;
-_EXTORNOT int AudioFCount;
-_EXTORNOT AudioQuad data[8192];
-_EXTORNOT void UploadGeometry();
-_EXTORNOT int Env;
+EXTORNOT int AudioFCount;
+EXTORNOT AudioQuad data[8192];
+EXTORNOT void UploadGeometry();
+EXTORNOT int Env;
 
 //========== for 3d hardware =============//
-_EXTORNOT BOOL HARD3D;
+EXTORNOT BOOL HARD3D;
 void ShowVideo();
 void Init3DHardware();
 void Activate3DHardware();
@@ -1018,7 +1019,7 @@ void EndLoading();
 void PrintLoad(char *t);
 
 #ifdef _MAIN_
-_EXTORNOT char KeysName[256][24] = {
+EXTORNOT char KeysName[256][24] = {
 "...",
 "Esc",
 "1",
@@ -1157,5 +1158,5 @@ _EXTORNOT char KeysName[256][24] = {
 "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
 	};
 #else
-   _EXTORNOT char KeysName[256][24]; // SOURCEPORT: was 128, must match _MAIN_ definition
+   EXTORNOT char KeysName[256][24]; // SOURCEPORT: was 128, must match _MAIN_ definition
 #endif

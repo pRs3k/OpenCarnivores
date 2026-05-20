@@ -116,7 +116,13 @@ void Load() {
         while (*val == ' ' || *val == '\t') ++val;
 
         int suffix = GetKeySuffix(key);  // 0=key, 1=pad, 2=vr
-        int v = std::atoi(val);
+        char* end;
+        long vlong = std::strtol(val, &end, 10);
+        if (end == val || *end != '\0') {
+            ++skipped;
+            continue;
+        }
+        int v = (int)vlong;
 
         bool matched = false;
         for (Action* a = Table(); a->name; ++a) {

@@ -1,0 +1,5 @@
+C:\Users\User\Documents\claude_code\OpenCarnivores\Bindings.cpp:119:17: warning: 'atoi' used to convert a string to an integer value, but function will not report conversion errors; consider using 'strtol' instead [bugprone-unchecked-string-to-number-conversion,cert-err34-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Bindings.cpp:146:13: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Bindings.cpp:153:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Bindings.cpp:155:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\Bindings.cpp:166:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]

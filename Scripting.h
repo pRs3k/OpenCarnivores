@@ -15,8 +15,8 @@
 // This layer is entirely optional: if `scripts/` is absent or Lua init
 // fails, the engine runs exactly as before with zero overhead.
 
-struct _TCharacter;
-typedef struct _TCharacter TCharacter;
+struct TCharacter_;
+typedef struct TCharacter_ TCharacter;
 
 namespace Scripting {
 

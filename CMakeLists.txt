@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(OpenCarnivores LANGUAGES C CXX RC)
 
+# SOURCEPORT: Reject Visual Studio generator to avoid creating hand-maintained .vcxproj files.
+# CMake is the source of truth; use Ninja or Unix Makefiles instead.
+if(CMAKE_GENERATOR MATCHES "Visual Studio")
+    message(FATAL_ERROR
+        "Visual Studio generator not allowed. Use a different generator:\n"
+        "  - Ninja (recommended): cmake -G Ninja -DRENDERER=opengl ..\n"
+        "  - Unix Makefiles: cmake -G \"Unix Makefiles\" -DRENDERER=opengl ..\n"
+        "  - NMake Makefiles: cmake -G \"NMake Makefiles\" -DRENDERER=opengl ..\n"
+        "Reason: .vcxproj files are hand-maintained and become stale; CMake is the source of truth.")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -16,6 +27,12 @@ add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 if(MSVC)
     add_compile_options(/W3 /wd4996 /wd4244 /wd4267)
     add_link_options(/MAP)
+endif()
+
+# SOURCEPORT: Clang on Windows has issues with SDL2 headers defining _m_prefetch.
+# Suppress the warning about redefining builtin functions.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-Wno-builtin-macro-redefined)
 endif()
 
 # ─── Renderer-specific setup ────────────────────────────────────────────────

@@ -18,8 +18,8 @@
 #define TCMAX ((128<<16)-62024)
 #define TCMIN ((000<<16)+62024)
 
-#define _ZSCALE - 16.f
-#define _AZSCALE (1.f /  16.f);
+#define ZSCALE_ (-16.f)
+#define AZSCALE_ (1.f / 16.f)
 
 // SOURCEPORT: Object-render-list cap sized for the old ctViewR≤122 ceiling.
 // At ctViewR=250 the terrain scan covers ~240k tiles and the retail 2048 cap
@@ -27,6 +27,11 @@
 // disappear. Bumped to 65536; Vector2di is 8 B so this is 512 KB of BSS.
 Vector2di ORList[65536];
 int ORLCount = 0;
+
+// SOURCEPORT: debug toggles (defined in Hunt2.cpp)
+extern BOOL DBG_NO_WEAPON;
+extern BOOL DBG_NO_SUN;
+extern BOOL DBG_NO_SKY;
 
 // SOURCEPORT: Vertex pointers — used by all geometry code in both backends.
 // Under D3D6: point into locked execute buffer memory.
@@ -127,7 +132,7 @@ int vFogT[1024];
 BOOL SmallFont;
 
 #ifdef _d3d
-typedef struct _d3dmemmap {
+typedef struct d3dmemmap_ {
   int cpuaddr, size, lastused;
   LPDIRECTDRAWSURFACE     lpddTexture;
   D3DTEXTUREHANDLE        hTexture;
@@ -136,7 +141,7 @@ typedef struct _d3dmemmap {
 
 #ifdef _opengl
 // SOURCEPORT: GL texture cache entry
-typedef struct _d3dmemmap {
+typedef struct d3dmemmap_ {
   uintptr_t cpuaddr;  // SOURCEPORT: 64-bit pointer key — int would truncate on x64
   int size, lastused;
   GLuint                  glTexId;
@@ -1365,7 +1370,7 @@ void d3dTestDrawTri(float color, float tx)
 	 
 	 lpVertex->sx       = 0;
      lpVertex->sy       = 0;
-     lpVertex->sz       = _ZSCALE / 10;
+     lpVertex->sz       = ZSCALE_ / 10;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = color;
 	 lpVertex->specular = 0xFF000000;
@@ -1375,7 +1380,7 @@ void d3dTestDrawTri(float color, float tx)
 
 	 lpVertex->sx       = 100;
      lpVertex->sy       = 0;
-     lpVertex->sz       = _ZSCALE / 10;
+     lpVertex->sz       = ZSCALE_ / 10;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = color;
 	 lpVertex->specular = 0xFF000000;
@@ -1385,7 +1390,7 @@ void d3dTestDrawTri(float color, float tx)
 
 	 lpVertex->sx       = 0;
      lpVertex->sy       = 100;
-     lpVertex->sz       = _ZSCALE / 10;
+     lpVertex->sz       = ZSCALE_ / 10;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = color;
 	 lpVertex->specular = 0xFF000000;
@@ -2409,10 +2414,11 @@ void ShowVideo()
 
 
   if (UNDERWATER)
-	  RenderFSRect(CurFogColor+0x70000000);  
-	  
+	  RenderFSRect(CurFogColor+0x70000000);
+
+  // SOURCEPORT: debug toggle to skip sun glare (Shift+U)
   if (OptDayNight!=2)
-  if (!UNDERWATER && (SunLight>1.0f) ) {
+  if (!UNDERWATER && (SunLight>1.0f) && !DBG_NO_SUN) {
    RenderFSRect(0xFFFFC0 + ((int)SunLight<<24));
   }
 
@@ -2437,20 +2443,20 @@ void ShowVideo()
   // SOURCEPORT: sample sun-flare occlusion from the depth buffer before the
   // swap — all opaque geometry has written depth by this point.
   extern bool XR_StereoActiveForLog();
-  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:SunOcc\n"); }
+  if (XR_StereoActiveForLog()) { extern void PrintLog(const char*); PrintLog("SV:SunOcc\n"); }
   gl_SampleSunOcclusion();
-  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:EndFrame\n"); }
+  if (XR_StereoActiveForLog()) { extern void PrintLog(const char*); PrintLog("SV:EndFrame\n"); }
   // SOURCEPORT: Present the companion window before clearing the framebuffer.
   // Eye swapchain images are already released (xrReleaseSwapchainImage was
   // called per-eye during the stereo loop) so the default FB is safe to
   // present at any time.  xrEndFrame runs after this in the main loop and
   // submits the already-released swapchain images to the compositor.
   g_glRenderer->EndFrame();
-  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:Clear\n"); }
+  if (XR_StereoActiveForLog()) { extern void PrintLog(const char*); PrintLog("SV:Clear\n"); }
   d3dClearBuffers();
-  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:BeginFrame\n"); }
+  if (XR_StereoActiveForLog()) { extern void PrintLog(const char*); PrintLog("SV:BeginFrame\n"); }
   g_glRenderer->BeginFrame();
-  if (XR_StereoActiveForLog()) { extern void PrintLog(char*); PrintLog("SV:Done\n"); }
+  if (XR_StereoActiveForLog()) { extern void PrintLog(const char*); PrintLog("SV:Done\n"); }
 #endif
 }
 
@@ -3018,8 +3024,8 @@ void DrawTPlaneClip(BOOL SECONT)
 
      lpVertexG->sx       = (float)cp[0].ev.scrx / 16.f;
      lpVertexG->sy       = (float)cp[0].ev.scry / 16.f;
-     lpVertexG->sz       = _ZSCALE / cp[0].ev.v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->sz       = ZSCALE_ / cp[0].ev.v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
      lpVertexG->color    = (int)(cp[0].ev.Light) * 0x00010101 | ((int)cp[0].ev.ALPHA<<24);
      lpVertexG->specular = (255-(int)cp[0].ev.Fog)<<24;
      lpVertexG->tu       = (float)(cp[0].tx) / (128.f*65536.f);
@@ -3028,8 +3034,8 @@ void DrawTPlaneClip(BOOL SECONT)
 
      lpVertexG->sx       = (float)cp[u+1].ev.scrx / 16.f;
      lpVertexG->sy       = (float)cp[u+1].ev.scry / 16.f;
-     lpVertexG->sz       = _ZSCALE / cp[u+1].ev.v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->sz       = ZSCALE_ / cp[u+1].ev.v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
      lpVertexG->color    = (int)(cp[u+1].ev.Light) * 0x00010101 | ((int)cp[u+1].ev.ALPHA<<24);
      lpVertexG->specular = (255-(int)cp[u+1].ev.Fog)<<24;
      lpVertexG->tu       = (float)(cp[u+1].tx) / (128.f*65536.f);
@@ -3038,8 +3044,8 @@ void DrawTPlaneClip(BOOL SECONT)
 
      lpVertexG->sx       = (float)cp[u+2].ev.scrx / 16.f;
      lpVertexG->sy       = (float)cp[u+2].ev.scry / 16.f;
-     lpVertexG->sz       = _ZSCALE / cp[u+2].ev.v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->sz       = ZSCALE_ / cp[u+2].ev.v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
      lpVertexG->color    = (int)(cp[u+2].ev.Light) * 0x00010101 | ((int)cp[u+2].ev.ALPHA<<24);
      lpVertexG->specular = (255-(int)cp[u+2].ev.Fog)<<24;
      lpVertexG->tu       = (float)(cp[u+2].tx) / (128.f*65536.f);
@@ -3078,7 +3084,7 @@ void DrawTPlane(BOOL SECONT)
    // SOURCEPORT: skip software backface test in GL path. The dot-product is near zero
    // on sloped terrain and flips sign as the camera moves, popping individual triangles
    // in/out. In D3D6 this was masked by fog; without fog it is visible. GL already has
-   // glDisable(GL_CULL_FACE) + depth testing, so the software test is not needed.
+   // glDisable(GL_CULLFace) + depth testing, so the software test is not needed.
     MulVectorsVect(SubVectors(ev[1].v, ev[0].v), SubVectors(ev[2].v, ev[0].v), nv);
     if (nv.x*ev[0].v.x  +  nv.y*ev[0].v.y  +  nv.z*ev[0].v.z<0) return;
 #endif
@@ -3186,26 +3192,8 @@ void DrawTPlane(BOOL SECONT)
        break;
      }
     }
-	
 
-	int alpha1 = 255;
-	int alpha2 = 255;
-	int alpha3 = 255;
 
-  //if (!WATERREVERSE)
-	
-   if (zs > (ctViewR-8)<<8) {    
-     int zz;
-     zz = (int)VectorLength(ev[0].v) - 256 * (ctViewR-4);
-     if (zz > 0) alpha1 = max(0, 255 - zz / 3); else alpha1 = 255;
-	 
-     zz = (int)VectorLength(ev[1].v) - 256 * (ctViewR-4);
-     if (zz > 0) alpha2 = max(0, 255 - zz / 3); else alpha2 = 255;
-
-     zz = (int)VectorLength(ev[2].v) - 256 * (ctViewR-4);
-     if (zz > 0) alpha3 = max(0, 255 - zz / 3); else alpha3 = 255;
-   }
-          
      if (!lpVertexG) 
        d3dStartBufferG();
 	 
@@ -3245,9 +3233,9 @@ void DrawTPlane(BOOL SECONT)
 
      lpVertexG->sx       = (float)ev[0].scrx / 16;
      lpVertexG->sy       = (float)ev[0].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[0].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | alpha1<<24;
+     lpVertexG->sz       = ZSCALE_ / ev[0].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
+     lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | 0xFF000000;
 	 lpVertexG->specular = (255-(int)ev[0].Fog)<<24;//0x7F000000;
      lpVertexG->tu       = (float)(scrp[0].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(scrp[0].ty) / (128.f*65536.f);
@@ -3255,9 +3243,9 @@ void DrawTPlane(BOOL SECONT)
 
 	 lpVertexG->sx       = (float)ev[1].scrx / 16;
      lpVertexG->sy       = (float)ev[1].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[1].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | alpha2<<24;
+     lpVertexG->sz       = ZSCALE_ / ev[1].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
+     lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | 0xFF000000;
 	 lpVertexG->specular = (255-(int)ev[1].Fog)<<24;//0x7F000000;
      lpVertexG->tu       = (float)(scrp[1].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(scrp[1].ty) / (128.f*65536.f);
@@ -3265,9 +3253,9 @@ void DrawTPlane(BOOL SECONT)
 
 	 lpVertexG->sx       = (float)ev[2].scrx / 16;
      lpVertexG->sy       = (float)ev[2].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[2].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
-     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | alpha3<<24;
+     lpVertexG->sz       = ZSCALE_ / ev[2].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
+     lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | 0xFF000000;
      lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
      lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
      lpVertexG->tv       = (float)(scrp[2].ty) / (128.f*65536.f);
@@ -3404,18 +3392,10 @@ void DrawTPlaneW(BOOL SECONT)
     }
 	
 
-   if (!UNDERWATER)
-   if (zs > (ctViewR-8)<<8) {    
-     float zz;
-     zz = VectorLength(ev[0].v) - 256 * (ctViewR-4);
-     if (zz > 0) ev[0].ALPHA = max(0.f,255.f - zz / 3.f);
-	 
-     zz = VectorLength(ev[1].v) - 256 * (ctViewR-4);
-     if (zz > 0) ev[1].ALPHA = max(0.f, 255.f - zz / 3.f);
-
-     zz = VectorLength(ev[2].v) - 256 * (ctViewR-4);
-     if (zz > 0) ev[2].ALPHA = max(0,255.f - zz / 3.f);
-   }
+   // SOURCEPORT: alpha fade removed; set full opacity for all terrain
+   ev[0].ALPHA = 255.f;
+   ev[1].ALPHA = 255.f;
+   ev[2].ALPHA = 255.f;
 
         
      if (!lpVertexG) 
@@ -3455,8 +3435,8 @@ void DrawTPlaneW(BOOL SECONT)
 
      lpVertexG->sx       = (float)ev[0].scrx / 16;
      lpVertexG->sy       = (float)ev[0].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[0].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->sz       = ZSCALE_ / ev[0].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
      lpVertexG->color    = (int)(ev[0].Light) * 0x00010101 | ev[0].ALPHA<<24;
 	 lpVertexG->specular = (255-(int)ev[0].Fog)<<24;
      lpVertexG->tu       = (float)(scrp[0].tx) / (128.f*65536.f);
@@ -3465,8 +3445,8 @@ void DrawTPlaneW(BOOL SECONT)
 
 	 lpVertexG->sx       = (float)ev[1].scrx / 16;
      lpVertexG->sy       = (float)ev[1].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[1].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->sz       = ZSCALE_ / ev[1].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
      lpVertexG->color    = (int)(ev[1].Light) * 0x00010101 | ev[1].ALPHA<<24;
 	 lpVertexG->specular = (255-(int)ev[1].Fog)<<24;
      lpVertexG->tu       = (float)(scrp[1].tx) / (128.f*65536.f);
@@ -3475,8 +3455,8 @@ void DrawTPlaneW(BOOL SECONT)
 
 	 lpVertexG->sx       = (float)ev[2].scrx / 16;
      lpVertexG->sy       = (float)ev[2].scry / 16;
-     lpVertexG->sz       = _ZSCALE / ev[2].v.z;
-     lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+     lpVertexG->sz       = ZSCALE_ / ev[2].v.z;
+     lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
      lpVertexG->color    = (int)(ev[2].Light) * 0x00010101 | ev[2].ALPHA<<24;
 	 lpVertexG->specular = (255-(int)ev[2].Fog)<<24;
      lpVertexG->tu       = (float)(scrp[2].tx) / (128.f*65536.f);
@@ -3621,8 +3601,98 @@ void RenderModelsList()
   d3dEndBufferG(TRUE);
 }
 
+#ifdef _opengl
+// SOURCEPORT: simplified GL terrain renderer. Renders all visible tiles with proper
+// texture binding. Works per-tile instead of bucketing to isolate rendering issues.
+static void DrawTerrainGL() {
+    static const float UV[4][4][2] = {
+        {{TCMIN,TCMIN},{TCMAX,TCMIN},{TCMIN,TCMAX},{TCMAX,TCMAX}},
+        {{TCMIN,TCMAX},{TCMIN,TCMIN},{TCMAX,TCMAX},{TCMAX,TCMIN}},
+        {{TCMAX,TCMAX},{TCMIN,TCMAX},{TCMAX,TCMIN},{TCMIN,TCMIN}},
+        {{TCMAX,TCMIN},{TCMAX,TCMAX},{TCMIN,TCMIN},{TCMIN,TCMAX}},
+    };
+    const float uvScale = 1.f / (128.f * 65536.f);
+
+    d3dStartBufferG();
+    int currentTex = -1;
+
+    for (int dy = -ctViewR; dy <= ctViewR; dy++) {
+        for (int dx = -ctViewR; dx <= ctViewR; dx++) {
+            int mx = (CCX + dx) & gMapMask;
+            int my = (CCY + dy) & gMapMask;
+            int vx = dx + VMAP_CENTER, vy = dy + VMAP_CENTER;
+
+            const EPoint& tl = VMap[vy  ][vx  ];
+            const EPoint& tr = VMap[vy  ][vx+1];
+            const EPoint& bl = VMap[vy+1][vx  ];
+            const EPoint& br = VMap[vy+1][vx+1];
+
+            // Skip if any corner behind camera or obscured
+            if ((tl.DFlags & tr.DFlags & bl.DFlags & br.DFlags) & 128) continue;
+            if ((tl.DFlags & tr.DFlags & bl.DFlags & br.DFlags) & 0x7F) continue;
+
+            int ti = TMap1[my][mx];
+            if (ti >= 1024 || !Textures[ti] || !Textures[ti]->DataA) continue;
+
+            // Texture switch: flush and rebind
+            if (currentTex != ti) {
+                if (GVCnt > 0) {
+                    d3dEndBufferG(FALSE);
+                    d3dStartBufferG();
+                }
+                d3dSetTexture(Textures[ti]->DataA, 128, 128);
+                if (!hTexture) continue;
+                hGTexture = hTexture;
+#ifdef _opengl
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+#endif
+                currentTex = ti;
+            }
+
+            // Flush if buffer full
+            if (GVCnt + 6 > 4096 * 3 - 12) {
+                d3dEndBufferG(FALSE);
+                d3dStartBufferG();
+                hGTexture = hTexture;
+#ifdef _opengl
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+#endif
+            }
+
+            int tdir = FMap[my][mx] & 3;
+            bool rev = (FMap[my][mx] & fmReverse) != 0;
+
+            auto emit = [&](const EPoint& ep, int ci) {
+                lpVertexG->sx      = (float)ep.scrx * (1.f / 16.f);
+                lpVertexG->sy      = (float)ep.scry * (1.f / 16.f);
+                lpVertexG->sz      = ZSCALE_ / ep.v.z;
+                lpVertexG->rhw     = lpVertexG->sz * AZSCALE_;
+                lpVertexG->color   = (uint32_t)ep.Light * 0x00010101u | 0xFF000000u;
+                lpVertexG->specular = (uint32_t)(255 - (int)ep.Fog) << 24;
+                lpVertexG->tu      = UV[tdir][ci][0] * uvScale;
+                lpVertexG->tv      = UV[tdir][ci][1] * uvScale;
+                lpVertexG++;
+            };
+
+            if (!rev) {
+                emit(tl, 0); emit(tr, 1); emit(br, 3);
+                emit(tl, 0); emit(br, 3); emit(bl, 2);
+            } else {
+                emit(tl, 0); emit(tr, 1); emit(bl, 2);
+                emit(bl, 2); emit(tr, 1); emit(br, 3);
+            }
+            GVCnt += 6;
+        }
+    }
+
+    if (GVCnt > 0) d3dEndBufferG(FALSE);
+}
+#endif // _opengl
+
 void ProcessMap(int x, int y, int r)
-{ 
+{
    //WATERREVERSE = FALSE;
    if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
@@ -3651,24 +3721,15 @@ void ProcessMap(int x, int y, int r)
 
    if ( fabs(xx*FOVK) > -zz + BackR) return;
    
-    
-   zs = (int)sqrt( xx*xx + zz*zz + yy*yy);          
-   
-   
-#ifdef _opengl
-   // SOURCEPORT: GL uses hardware trilinear mipmaps — always use full-res DataA.
-   // The DataA/DataB software LOD swap is redundant and causes a visible texture pop
-   // at zs=2560 (the switch boundary). Mipmaps handle all LOD transparently.
-   d3dSetTexture(Textures[t1]->DataA, 128, 128);
-#else
+
+   zs = (int)sqrt( xx*xx + zz*zz + yy*yy);
    if (MIPMAP && (zs > 256 * 10 && t1 || LOWRESTX)) d3dSetTexture(Textures[t1]->DataB, 64, 64);
                                                else d3dSetTexture(Textures[t1]->DataA, 128, 128);
-#endif
 
    if (r>8) DrawTPlane(FALSE);
-       else DrawTPlaneClip(FALSE);    
+       else DrawTPlaneClip(FALSE);
 
-   if (ReverseOn) { ev[0] = ev[2]; ev[2] = VMap[y+1][x+1]; } 
+   if (ReverseOn) { ev[0] = ev[2]; ev[2] = VMap[y+1][x+1]; }
              else { ev[1] = ev[2]; ev[2] = VMap[y+1][x];   }
 
    if (r>8) DrawTPlane(TRUE);
@@ -3864,10 +3925,6 @@ void RenderGround()
 
    for (r=ctViewR1-2; r>0; r--) {
 #else
-   // SOURCEPORT: disable terrain LOD in GL path — always use full-detail ProcessMap
-   // for all rings. ProcessMap2 (2×2 coarse tiles) causes visible height popping when
-   // tiles cross the ctViewR1 boundary as the camera moves. Modern GPUs handle the
-   // extra triangles trivially. Start full-detail loop from ctViewR down to 1.
    r = ctViewR;
    for (int x=r; x>-r; x--) {
 	   ProcessMap(CCX+r, CCY+x, r);
@@ -4015,7 +4072,7 @@ void RenderCircle(float cx, float cy, float z, float _R, DWORD RGBA, DWORD RGBA2
   */
   float  R = (float)((int)(      _R*16.f)) / 16.f;  
   float R2 = (float)((int)(0.65f*_R*16.f)) / 16.f;  
-  float sz = _ZSCALE / z;  
+  float sz = ZSCALE_ / z;  
 
   lpVertex->sx       = cx;
   lpVertex->sy       = cy;  
@@ -4293,8 +4350,8 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    lpVertexG->sx       = (float)gScrp[0].x;
    lpVertexG->sy       = (float)gScrp[0].y;
-   lpVertexG->sz       = _ZSCALE / rVertex[0].z;
-   lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+   lpVertexG->sz       = ZSCALE_ / rVertex[0].z;
+   lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
    lpVertexG->color    = argb;
    lpVertexG->specular = vFogT[0];
    lpVertexG->tu       = (float)(0.0f);
@@ -4303,8 +4360,8 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    lpVertexG->sx       = (float)gScrp[1].x;
    lpVertexG->sy       = (float)gScrp[1].y;
-   lpVertexG->sz       = _ZSCALE / rVertex[1].z;
-   lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+   lpVertexG->sz       = ZSCALE_ / rVertex[1].z;
+   lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
    lpVertexG->color    = argb;
    lpVertexG->specular = vFogT[1];
    lpVertexG->tu       = (float)(0.995f);
@@ -4313,8 +4370,8 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    lpVertexG->sx       = (float)gScrp[2].x;
    lpVertexG->sy       = (float)gScrp[2].y;
-   lpVertexG->sz       = _ZSCALE / rVertex[2].z;
-   lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+   lpVertexG->sz       = ZSCALE_ / rVertex[2].z;
+   lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
    lpVertexG->color    = argb;
    lpVertexG->specular = vFogT[2];
    lpVertexG->tu       = (float)(0.995f);
@@ -4325,8 +4382,8 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    lpVertexG->sx       = (float)gScrp[0].x;
    lpVertexG->sy       = (float)gScrp[0].y;
-   lpVertexG->sz       = _ZSCALE / rVertex[0].z;
-   lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+   lpVertexG->sz       = ZSCALE_ / rVertex[0].z;
+   lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
    lpVertexG->color    = argb;
    lpVertexG->specular = vFogT[0];
    lpVertexG->tu       = (float)(0.0f);
@@ -4335,8 +4392,8 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    lpVertexG->sx       = (float)gScrp[2].x;
    lpVertexG->sy       = (float)gScrp[2].y;
-   lpVertexG->sz       = _ZSCALE / rVertex[2].z;
-   lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+   lpVertexG->sz       = ZSCALE_ / rVertex[2].z;
+   lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
    lpVertexG->color    = argb;
    lpVertexG->specular = vFogT[2];
    lpVertexG->tu       = (float)(0.995f);
@@ -4345,8 +4402,8 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    lpVertexG->sx       = (float)gScrp[3].x;
    lpVertexG->sy       = (float)gScrp[3].y;
-   lpVertexG->sz       = _ZSCALE / rVertex[3].z;
-   lpVertexG->rhw      = lpVertexG->sz * _AZSCALE;
+   lpVertexG->sz       = ZSCALE_ / rVertex[3].z;
+   lpVertexG->rhw      = lpVertexG->sz * AZSCALE_;
    lpVertexG->color    = argb;
    lpVertexG->specular = vFogT[3];
    lpVertexG->tu       = (float)(0.0f);
@@ -4507,7 +4564,7 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
 	 int _ml = ml + mptr->VLight[VT][fptr->v1]; if (_ml > 255) _ml = 255;
 	 lpVertex->sx       = (float)gScrp[fptr->v1].x;
      lpVertex->sy       = (float)gScrp[fptr->v1].y;
-     lpVertex->sz       = _ZSCALE / rVertex[fptr->v1].z;
+     lpVertex->sz       = ZSCALE_ / rVertex[fptr->v1].z;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = _ml * 0x00010101 | alphamask;
 	 lpVertex->specular = vFogT[fptr->v1];
@@ -4518,7 +4575,7 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
      _ml = ml + mptr->VLight[VT][fptr->v2]; if (_ml > 255) _ml = 255;
 	 lpVertex->sx       = (float)gScrp[fptr->v2].x;
      lpVertex->sy       = (float)gScrp[fptr->v2].y;
-     lpVertex->sz       = _ZSCALE / rVertex[fptr->v2].z;
+     lpVertex->sz       = ZSCALE_ / rVertex[fptr->v2].z;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = _ml * 0x00010101 | alphamask;
 	 lpVertex->specular = vFogT[fptr->v2];
@@ -4529,7 +4586,7 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
 	 _ml = ml + mptr->VLight[VT][fptr->v3]; if (_ml > 255) _ml = 255;
 	 lpVertex->sx       = (float)gScrp[fptr->v3].x;
      lpVertex->sy       = (float)gScrp[fptr->v3].y;
-     lpVertex->sz       = _ZSCALE / rVertex[fptr->v3].z;
+     lpVertex->sz       = ZSCALE_ / rVertex[fptr->v3].z;
      lpVertex->rhw      = 1.f;
      lpVertex->color    = _ml * 0x00010101 | alphamask;
 	 lpVertex->specular = vFogT[fptr->v3];
@@ -4647,7 +4704,7 @@ void RenderShadowClip(TModel* _mptr,
 	   u = 0;
 	   lpVertex->sx       = (float)(VideoCX - (int)(cp[u].ev.v.x / cp[u].ev.v.z * CameraW));
        lpVertex->sy       = (float)(VideoCY + (int)(cp[u].ev.v.y / cp[u].ev.v.z * CameraH));
-       lpVertex->sz       = (_ZSCALE-0.5f) / cp[u].ev.v.z;
+       lpVertex->sz       = (ZSCALE_-0.5f) / cp[u].ev.v.z;
        lpVertex->rhw      = 1.f;
        lpVertex->color    = GlassL;
 	   lpVertex->specular = 0xFF000000;
@@ -4658,7 +4715,7 @@ void RenderShadowClip(TModel* _mptr,
 	   u = j+1;
 	   lpVertex->sx       = (float)(VideoCX - (int)(cp[u].ev.v.x / cp[u].ev.v.z * CameraW));
        lpVertex->sy       = (float)(VideoCY + (int)(cp[u].ev.v.y / cp[u].ev.v.z * CameraH));
-       lpVertex->sz       = (_ZSCALE-0.5f) / cp[u].ev.v.z;
+       lpVertex->sz       = (ZSCALE_-0.5f) / cp[u].ev.v.z;
        lpVertex->rhw      = 1.f;
        lpVertex->color    = GlassL;
 	   lpVertex->specular = 0xFF000000;
@@ -4669,7 +4726,7 @@ void RenderShadowClip(TModel* _mptr,
 	   u = j+2;
 	   lpVertex->sx       = (float)(VideoCX - (int)(cp[u].ev.v.x / cp[u].ev.v.z * CameraW));
        lpVertex->sy       = (float)(VideoCY + (int)(cp[u].ev.v.y / cp[u].ev.v.z * CameraH));
-       lpVertex->sz       = (_ZSCALE-0.5f) / cp[u].ev.v.z;
+       lpVertex->sz       = (ZSCALE_-0.5f) / cp[u].ev.v.z;
        lpVertex->rhw      = 1.f;
        lpVertex->color    = GlassL;
 	   lpVertex->specular = 0xFF000000;
@@ -4810,10 +4867,20 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
 
     for (u=0; u<vused-2; u++) {
 		 int _flight = flight + cp[0].ev.Light;   if (_flight > 255) _flight = 255;
+#ifdef _opengl
+         // SOURCEPORT: sub-pixel float positions eliminate integer-quantisation UV drift.
+         // D3D6 applied a half-pixel correction to TL verts; our GL path did not, so
+         // (int) truncation of projected X/Y caused perspective-correct UV to jump by
+         // ~1 texel each time headbob (stepdy) moved a vertex across a pixel boundary,
+         // producing the bobbing "headlamp circle" on foliage.
+	   	 lpVertex->sx       = (float)VideoCX - cp[0].ev.v.x / cp[0].ev.v.z * CameraW;
+         lpVertex->sy       = (float)VideoCY + cp[0].ev.v.y / cp[0].ev.v.z * CameraH;
+#else
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[0].ev.v.x / cp[0].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[0].ev.v.y / cp[0].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[0].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+#endif
+         lpVertex->sz       = ZSCALE_ / cp[0].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = _flight * 0x00010101 | almask;
 		 lpVertex->specular = ((int)cp[0].ev.Fog)<<24;
          lpVertex->tu       = (float)(cp[0].tx);
@@ -4821,10 +4888,15 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
          lpVertex++;
 
 		 _flight = flight + cp[u+1].ev.Light;     if (_flight > 255) _flight = 255;
+#ifdef _opengl
+	   	 lpVertex->sx       = (float)VideoCX - cp[u+1].ev.v.x / cp[u+1].ev.v.z * CameraW;
+         lpVertex->sy       = (float)VideoCY + cp[u+1].ev.v.y / cp[u+1].ev.v.z * CameraH;
+#else
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+1].ev.v.x / cp[u+1].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+1].ev.v.y / cp[u+1].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[u+1].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+#endif
+         lpVertex->sz       = ZSCALE_ / cp[u+1].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = _flight * 0x00010101 | almask;
 		 lpVertex->specular = ((int)cp[u+1].ev.Fog)<<24;
          lpVertex->tu       = (float)(cp[u+1].tx);
@@ -4832,10 +4904,15 @@ void RenderModelClip(TModel* _mptr, float x0, float y0, float z0, int light, int
          lpVertex++;
 
 		 _flight = flight + cp[u+2].ev.Light;     if (_flight > 255) _flight = 255;
+#ifdef _opengl
+	   	 lpVertex->sx       = (float)VideoCX - cp[u+2].ev.v.x / cp[u+2].ev.v.z * CameraW;
+         lpVertex->sy       = (float)VideoCY + cp[u+2].ev.v.y / cp[u+2].ev.v.z * CameraH;
+#else
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+2].ev.v.x / cp[u+2].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+2].ev.v.y / cp[u+2].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[u+2].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+#endif
+         lpVertex->sz       = ZSCALE_ / cp[u+2].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = _flight * 0x00010101 | almask;
 		 lpVertex->specular = ((int)cp[u+2].ev.Fog)<<24;
          lpVertex->tu       = (float)(cp[u+2].tx);
@@ -4945,8 +5022,8 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
     for (u=0; u<vused-2; u++) {        	     		 
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[0].ev.v.x / cp[0].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[0].ev.v.y / cp[0].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[0].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+         lpVertex->sz       = ZSCALE_ / cp[0].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = PHCOLOR;
 		 lpVertex->specular = 0xFF000000;
          lpVertex->tu       = (float)(cp[0].tx);
@@ -4955,8 +5032,8 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
 		 
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+1].ev.v.x / cp[u+1].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+1].ev.v.y / cp[u+1].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[u+1].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+         lpVertex->sz       = ZSCALE_ / cp[u+1].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = PHCOLOR;
 		 lpVertex->specular = 0xFF000000;
          lpVertex->tu       = (float)(cp[u+1].tx);
@@ -4965,8 +5042,8 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
 		 
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+2].ev.v.x / cp[u+2].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+2].ev.v.y / cp[u+2].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[u+2].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+         lpVertex->sz       = ZSCALE_ / cp[u+2].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = PHCOLOR;
 		 lpVertex->specular = 0xFF000000;
          lpVertex->tu       = (float)(cp[u+2].tx);
@@ -5090,8 +5167,8 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
     for (u=0; u<vused-2; u++) {        	     		 
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[0].ev.v.x / cp[0].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[0].ev.v.y / cp[0].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[0].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+         lpVertex->sz       = ZSCALE_ / cp[0].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = PHCOLOR;
 		 lpVertex->specular = 0xFF000000;
          lpVertex->tu       = (float)(cp[0].tx);
@@ -5100,8 +5177,8 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
 		 
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+1].ev.v.x / cp[u+1].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+1].ev.v.y / cp[u+1].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[u+1].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+         lpVertex->sz       = ZSCALE_ / cp[u+1].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = PHCOLOR;
 		 lpVertex->specular = 0xFF000000;
          lpVertex->tu       = (float)(cp[u+1].tx);
@@ -5110,8 +5187,8 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
 		 
 	   	 lpVertex->sx       = (float)(VideoCX - (int)(cp[u+2].ev.v.x / cp[u+2].ev.v.z * CameraW));
          lpVertex->sy       = (float)(VideoCY + (int)(cp[u+2].ev.v.y / cp[u+2].ev.v.z * CameraH));
-         lpVertex->sz       = _ZSCALE / cp[u+2].ev.v.z;
-         lpVertex->rhw      = lpVertex->sz * _AZSCALE;
+         lpVertex->sz       = ZSCALE_ / cp[u+2].ev.v.z;
+         lpVertex->rhw      = lpVertex->sz * AZSCALE_;
          lpVertex->color    = PHCOLOR;
 		 lpVertex->specular = 0xFF000000;
          lpVertex->tu       = (float)(cp[u+2].tx);
@@ -6232,7 +6309,8 @@ sky_done:
 
    nv = RotateVector(Sun3dPos);
    SunLight = 0;
-   if (nv.z < -2024) RenderSun(nv.x, nv.y, nv.z);
+   // SOURCEPORT: debug toggle to skip sun rendering (Shift+U)
+   if (nv.z < -2024 && !DBG_NO_SUN) RenderSun(nv.x, nv.y, nv.z);
 }
 
 

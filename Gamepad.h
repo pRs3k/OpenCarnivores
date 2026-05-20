@@ -45,7 +45,7 @@ SDL_GameController* GetPad();
 // Virtual button indices for the analog inputs, so triggers and stick
 // directions are bindable just like face/dpad buttons. Values start at 64 to
 // stay above SDL_CONTROLLER_BUTTON_MAX (currently ~21) with room to grow.
-enum {
+enum : uint8_t {
     PAD_VBTN_FIRST    = 64,
     PAD_VBTN_LT       = 64,
     PAD_VBTN_RT       = 65,

@@ -1,0 +1,5 @@
+C:\Users\User\Documents\claude_code\OpenCarnivores\DataDefs.cpp:35:12: warning: enum 'JKind' uses a larger base type ('int', size: 4 bytes) than necessary for its value set, consider using 'std::uint8_t' (1 byte) as the base type to reduce its size [performance-enum-size]
+C:\Users\User\Documents\claude_code\OpenCarnivores\DataDefs.cpp:157:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\DataDefs.cpp:159:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\DataDefs.cpp:162:17: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
+C:\Users\User\Documents\claude_code\OpenCarnivores\DataDefs.cpp:163:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]

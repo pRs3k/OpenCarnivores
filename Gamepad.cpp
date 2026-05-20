@@ -313,6 +313,8 @@ bool HandleEvent(const SDL_Event& ev) {
         DispatchButton(ev.cbutton.button, false);
         return true;
     }
+    default:
+        break;
     }
     return false;
 }

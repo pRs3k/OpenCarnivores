@@ -30,10 +30,10 @@
 
 #include "SDL_stdinc.h"
 
-#if defined(_MSC_VER) && (_MSC_VER >= 1400)
+#if defined(_MSC_VER) && (_MSC_VER >= 1400) && !defined(__clang__)
 /* As of Clang 11, '_m_prefetchw' is conflicting with the winnt.h's version,
-   so we define the needed '_m_prefetch' here as a pseudo-header, until the issue is fixed. */
-#ifdef __clang__
+   so we define the needed '_m_prefetch' here as a pseudo-header, until the issue is fixed.
+   Modern Clang (22.1.0+) already has _m_prefetch as a builtin, so skip this for Clang. */
 #ifndef __PRFCHWINTRIN_H
 #define __PRFCHWINTRIN_H
 static __inline__ void __attribute__((__always_inline__, __nodebug__))
@@ -42,7 +42,6 @@ _m_prefetch(void *__P)
   __builtin_prefetch(__P, 0, 3 /* _MM_HINT_T0 */);
 }
 #endif /* __PRFCHWINTRIN_H */
-#endif /* __clang__ */
 
 #include <intrin.h>
 #endif

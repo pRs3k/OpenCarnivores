@@ -32,10 +32,10 @@
 
 /* Need to do this here because intrin.h has C++ code in it */
 /* Visual Studio 2005 has a bug where intrin.h conflicts with winnt.h */
-#if defined(_MSC_VER) && (_MSC_VER >= 1500) && (defined(_M_IX86) || defined(_M_X64))
-#ifdef __clang__
+#if defined(_MSC_VER) && (_MSC_VER >= 1500) && (defined(_M_IX86) || defined(_M_X64)) && !defined(__clang__)
 /* As of Clang 11, '_m_prefetchw' is conflicting with the winnt.h's version,
-   so we define the needed '_m_prefetch' here as a pseudo-header, until the issue is fixed. */
+   so we define the needed '_m_prefetch' here as a pseudo-header, until the issue is fixed.
+   Modern Clang (22.1.0+) already has _m_prefetch as a builtin, so skip this for Clang. */
 
 #ifndef __PRFCHWINTRIN_H
 #define __PRFCHWINTRIN_H
@@ -47,7 +47,8 @@ _m_prefetch(void *__P)
 }
 
 #endif /* __PRFCHWINTRIN_H */
-#endif /* __clang__ */
+#include <intrin.h>
+#elif !defined(__clang__)
 #include <intrin.h>
 #ifndef _WIN64
 #ifndef __MMX__
