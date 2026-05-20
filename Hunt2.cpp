@@ -2134,7 +2134,7 @@ void ProcessGame()
             // from SetStencilMode(1) are reset to 0 each frame; without this the
             // PhongMap/EnvMap stencil test (mode 2) would accept stale marks from
             // the previous frame's weapon position.
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
             // SOURCEPORT: disable alpha writes for the entire eye render.
             // The Meta Quest compositor inspects the FBO alpha channel even in
             // XR_ENVIRONMENT_BLEND_MODE_OPAQUE.  Semi-transparent faces (sfTransparent
@@ -2234,6 +2234,33 @@ void ProcessGame()
             };
             d3dUpdateProjection(proj);
         }
+        // SOURCEPORT: Phase 2.1 - Render shadow maps before main scene
+        extern bool g_enableShadows;
+        extern RendererGL* g_glRenderer;
+        if (g_enableShadows && g_Renderer) {
+            if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
+                // Update light direction from sun position
+                if (Sun3dPos.z < -512.f) {  // Sun is behind camera (not facing player)
+                    pipeline->SetLightDirection(Sun3dPos.x / 1024.f, Sun3dPos.y / 1024.f, Sun3dPos.z / 1024.f);
+                } else {
+                    // Default: upper-right light when sun is in front
+                    pipeline->SetLightDirection(0.6f, 0.6f, 0.2f);
+                }
+
+                // Update cascade matrices from camera position
+                if (g_glRenderer) {
+                    pipeline->UpdateShadowMatrices(&CameraX, nullptr, 0.f, 1.f);
+
+                    // Render depth pass for each cascade
+                    for (int cascade = 0; cascade < 3; ++cascade) {
+                        g_glRenderer->BeginShadowCascade(cascade);
+                        DrawScene();
+                        g_glRenderer->EndShadowPass();
+                    }
+                }
+            }
+        }
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
         DrawScene();
         // SOURCEPORT: render companion HUD pass with flatscreen camera.
@@ -2246,6 +2273,33 @@ void ProcessGame()
     } else
 #endif
     {
+        // SOURCEPORT: Phase 2.1 - Render shadow maps before main scene (flatscreen)
+        extern bool g_enableShadows;
+        extern RendererGL* g_glRenderer;
+        if (g_enableShadows && g_Renderer) {
+            if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
+                // Update light direction from sun position
+                if (Sun3dPos.z < -512.f) {  // Sun is behind camera
+                    pipeline->SetLightDirection(Sun3dPos.x / 1024.f, Sun3dPos.y / 1024.f, Sun3dPos.z / 1024.f);
+                } else {
+                    // Default: upper-right light when sun is in front
+                    pipeline->SetLightDirection(0.6f, 0.6f, 0.2f);
+                }
+
+                // Update cascade matrices from camera position
+                if (g_glRenderer) {
+                    pipeline->UpdateShadowMatrices(&CameraX, nullptr, 0.f, 1.f);
+
+                    // Render depth pass for each cascade
+                    for (int cascade = 0; cascade < 3; ++cascade) {
+                        g_glRenderer->BeginShadowCascade(cascade);
+                        DrawScene();
+                        g_glRenderer->EndShadowPass();
+                    }
+                }
+            }
+        }
+
         DrawScene();
     }
 
