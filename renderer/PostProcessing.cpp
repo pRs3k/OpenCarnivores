@@ -254,8 +254,9 @@ void PostProcessingPipeline::ApplyEffects() {
         shadersLoaded = true;
     }
 
-    extern bool  g_enableBloom, g_enableToneMapping;
+    extern bool  g_enableBloom, g_enableToneMapping, g_enableShadows;
     extern float g_bloomThreshold, g_bloomKnee, g_bloomIntensity, g_tonemapExposure;
+    extern float g_shadowIntensity;
 
     glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
@@ -263,7 +264,53 @@ void PostProcessingPipeline::ApplyEffects() {
     glBindVertexArray(m_fsQuadVao);
 
     GLuint sceneTex = m_sourceFBO.GetColorTexture();
+    GLuint depthTex = m_sourceFBO.GetDepthTexture();
     GLuint bloomTex = 0;
+
+    // SOURCEPORT: Phase 2.1 - Apply shadows (must be first to darken base scene)
+    static uint32_t shadowProg = 0;
+    static bool shadowProgLoaded = false;
+    if (!shadowProgLoaded) {
+        shadowProg = LoadPostProcessShader("shadows");
+        shadowProgLoaded = true;
+    }
+
+    if (g_enableShadows && shadowProg && depthTex) {
+        m_intermediate1.Bind();
+        glUseProgram(shadowProg);
+
+        // Bind scene color
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneTex);
+        glUniform1i(glGetUniformLocation(shadowProg, "uScreenColor"), 0);
+
+        // Bind depth buffer
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, depthTex);
+        glUniform1i(glGetUniformLocation(shadowProg, "uScreenDepth"), 1);
+
+        // Bind shadow maps
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);  // TODO: bind actual shadow map array
+        glUniform1i(glGetUniformLocation(shadowProg, "uShadowMaps"), 2);
+
+        // Set shadow uniforms
+        glUniform1f(glGetUniformLocation(shadowProg, "uIntensity"), g_shadowIntensity);
+        glUniform3f(glGetUniformLocation(shadowProg, "uLightDir"),
+                   m_lightDirection[0], m_lightDirection[1], m_lightDirection[2]);
+        glUniform3f(glGetUniformLocation(shadowProg, "uCascadeDistances"),
+                   m_cascadeDistances[0], m_cascadeDistances[1], m_cascadeDistances[2]);
+
+        // Set light view-projection matrices
+        for (int i = 0; i < 3; i++) {
+            char locName[64];
+            snprintf(locName, sizeof(locName), "uLightViewProj[%d]", i);
+            glUniformMatrix4fv(glGetUniformLocation(shadowProg, locName), 1, GL_FALSE, m_lightProjMatrix[i]);
+        }
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        sceneTex = m_intermediate1.GetColorTexture();  // Use shadowed result for next effect
+    }
 
     // Bloom extraction + separable blur at half resolution
     if (g_enableBloom && thresholdProg && blurHProg && blurVProg) {

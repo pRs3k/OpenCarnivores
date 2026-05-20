@@ -956,6 +956,7 @@ float  g_ssrIntensity = 0.5f;           // 0.0-1.0 (reflection blend factor)
 // Dynamic shadow mapping: cascaded PCF shadows from sun light
 bool   g_enableShadows = false;
 int    g_shadowQuality = 2;             // 0=off, 1=low, 2=medium, 3=high
+float  g_shadowIntensity = 0.7f;        // 0.0-1.0 (shadow darkness blend factor)
 #else
 extern bool   g_enableBloom;
 extern float  g_bloomIntensity;
@@ -967,6 +968,7 @@ extern bool   g_enableSSR;
 extern float  g_ssrIntensity;
 extern bool   g_enableShadows;
 extern int    g_shadowQuality;
+extern float  g_shadowIntensity;
 #endif
 
 
