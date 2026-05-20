@@ -2,6 +2,7 @@
 #include "glad/gl.h"
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include <fstream>
 #include <string>
 
@@ -438,27 +439,86 @@ void PostProcessingPipeline::Compose(FramebufferObject* src, FramebufferObject* 
 void PostProcessingPipeline::UpdateShadowMatrices(const float* cameraPos, const float* cameraDir,
                                                    float fovY, float aspect) {
     // SOURCEPORT: Compute light view/projection matrices for each shadow cascade.
-    // Placeholder implementation — computes identity matrices.
-    // Full implementation should:
-    //   1. Split camera frustum into N distance slices
-    //   2. For each slice, compute a light view matrix looking along m_lightDirection
-    //   3. Compute orthographic projection tightly fitting the frustum slice
-    // For now, initialize to identity so shadow mapping infrastructure doesn't crash.
+    // Uses logarithmic cascade splitting: split camera frustum into N cascades
+    // where cascade i covers depths [nearPlane * split^i, nearPlane * split^(i+1)]
+    // This distributes cascade resolution proportionally to visual importance.
+
+    float nearPlane = 1.0f;
+    float farPlane = 10000.0f;  // Far clip distance in GU
+    float splitLambda = 0.95f;  // Blends linear (0) and logarithmic (1) splitting
+
+    // Normalize light direction
+    float lightLen = std::sqrt(m_lightDirection[0]*m_lightDirection[0] +
+                              m_lightDirection[1]*m_lightDirection[1] +
+                              m_lightDirection[2]*m_lightDirection[2]);
+    float lightDir[3] = { m_lightDirection[0]/lightLen,
+                          m_lightDirection[1]/lightLen,
+                          m_lightDirection[2]/lightLen };
 
     for (int i = 0; i < SHADOW_CASCADES; i++) {
-        // Identity view matrix
-        float* view = m_lightViewMatrix[i];
-        view[0]=1; view[1]=0; view[2]=0;  view[3]=0;
-        view[4]=0; view[5]=1; view[6]=0;  view[7]=0;
-        view[8]=0; view[9]=0; view[10]=1; view[11]=0;
-        view[12]=0; view[13]=0; view[14]=0; view[15]=1;
+        // Compute cascade distance split using logarithmic split
+        float linearSplit = nearPlane + (farPlane - nearPlane) * (float)(i+1) / SHADOW_CASCADES;
+        float logSplit = nearPlane * std::pow(farPlane / nearPlane, (float)(i+1) / SHADOW_CASCADES);
+        float cascadeNear = (i == 0) ? nearPlane :
+                           nearPlane * std::pow(farPlane / nearPlane, (float)i / SHADOW_CASCADES);
+        float cascadeFar = linearSplit * (1.0f - splitLambda) + logSplit * splitLambda;
+        m_cascadeDistances[i] = cascadeFar;
 
-        // Orthographic projection matrix for 1000×1000 GU view
+        // Light view matrix: look along light direction from a point above the scene
+        // Position light "behind" the cascade center to get good shadow depth resolution
+        float cascadeCenter = (cascadeNear + cascadeFar) * 0.5f;
+        float lightDist = cascadeFar * 2.0f;  // Position light 2x cascade far plane away
+
+        float lightPos[3] = { cameraPos[0] - lightDir[0] * lightDist,
+                              cameraPos[1] - lightDir[1] * lightDist,
+                              cameraPos[2] - lightDir[2] * lightDist };
+
+        // Build light view matrix (looking toward light direction from light position)
+        // Simplified approach: use light direction as forward, construct orthogonal basis
+        float forward[3] = { -lightDir[0], -lightDir[1], -lightDir[2] };  // Toward camera
+
+        // Use world Y as reference for "up" unless parallel to forward
+        float up[3] = { 0.0f, 1.0f, 0.0f };
+        float dot = forward[0]*up[0] + forward[1]*up[1] + forward[2]*up[2];
+        if (std::abs(dot) > 0.95f) {  // Nearly parallel, use X instead
+            up[0] = 1.0f; up[1] = 0.0f; up[2] = 0.0f;
+        }
+
+        // Compute right = forward × up
+        float right[3] = { forward[1]*up[2] - forward[2]*up[1],
+                           forward[2]*up[0] - forward[0]*up[2],
+                           forward[0]*up[1] - forward[1]*up[0] };
+        float rightLen = std::sqrt(right[0]*right[0] + right[1]*right[1] + right[2]*right[2]);
+        right[0]/=rightLen; right[1]/=rightLen; right[2]/=rightLen;
+
+        // Recompute up = right × forward (now orthogonal)
+        up[0] = right[1]*forward[2] - right[2]*forward[1];
+        up[1] = right[2]*forward[0] - right[0]*forward[2];
+        up[2] = right[0]*forward[1] - right[1]*forward[0];
+        float upLen = std::sqrt(up[0]*up[0] + up[1]*up[1] + up[2]*up[2]);
+        up[0]/=upLen; up[1]/=upLen; up[2]/=upLen;
+
+        // Assemble view matrix: [right up forward pos]
+        // GL view matrix maps world space to view space: -Z forward, +Y up, +X right
+        float* view = m_lightViewMatrix[i];
+        view[0] = right[0];   view[4] = right[1];   view[8] = right[2];   view[12] = 0;
+        view[1] = up[0];      view[5] = up[1];      view[9] = up[2];      view[13] = 0;
+        view[2] = forward[0]; view[6] = forward[1]; view[10] = forward[2]; view[14] = 0;
+        view[3] = 0;          view[7] = 0;          view[11] = 0;          view[15] = 1;
+
+        // Apply translation: -dot(right, lightPos) etc.
+        view[12] = -(right[0]*lightPos[0] + right[1]*lightPos[1] + right[2]*lightPos[2]);
+        view[13] = -(up[0]*lightPos[0] + up[1]*lightPos[1] + up[2]*lightPos[2]);
+        view[14] = -(forward[0]*lightPos[0] + forward[1]*lightPos[1] + forward[2]*lightPos[2]);
+
+        // Orthographic projection: fit cascade frustum
+        // For simplicity, use fixed view size; ideally computed from frustum geometry
+        float projSize = 1500.0f;  // GU (covers ~3000x3000 area in world space)
         float* proj = m_lightProjMatrix[i];
-        float size = 1000.0f;
-        proj[0]=1/size; proj[1]=0; proj[2]=0; proj[3]=0;
-        proj[4]=0; proj[5]=1/size; proj[6]=0; proj[7]=0;
-        proj[8]=0; proj[9]=0; proj[10]=-2/1000; proj[11]=0;
-        proj[12]=0; proj[13]=0; proj[14]=-1; proj[15]=1;
+        float invSize = 1.0f / projSize;
+        proj[0]  = invSize; proj[1]  = 0;       proj[2]  = 0;         proj[3]  = 0;
+        proj[4]  = 0;       proj[5]  = invSize; proj[6]  = 0;         proj[7]  = 0;
+        proj[8]  = 0;       proj[9]  = 0;       proj[10] = -2.0f/lightDist; proj[11] = 0;
+        proj[12] = 0;       proj[13] = 0;       proj[14] = -1.0f;     proj[15] = 1.0f;
     }
 }
