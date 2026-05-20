@@ -98,15 +98,38 @@ Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `G
 
 ## Phase 2 Roadmap (In Progress)
 
-**Phase 2.1: Dynamic Shadow Mapping** (⏳ In Progress)
-- **Infrastructure**: ✅ Shadow map FBOs (3 cascades, 2048×2048 each), depth shader, light matrix placeholders
-- **Remaining**:
-  - Compute proper light view-projection matrices based on camera frustum split
-  - Implement depth pass rendering (BeginShadowPass/RenderShadowPass/EndShadowPass)
-  - PCF shadow sampling in postprocess shader
-  - Wire shadow maps into main rendering path
-  - Menu controls for shadow quality (low/medium/high/ultra)
-- **Files**: `PostProcessing.h/cpp`, `RendererGL.h/cpp`, `shaders/depth.vert/frag`, `shaders/postprocess/shadows.frag`
+**Phase 2.1: Dynamic Shadow Mapping** (⏳ In Progress — ~50% complete)
+
+**Architecture**:
+- `PostProcessingPipeline`: Manages 3 shadow map cascades (2048×2048 depth textures), light direction, view-projection matrices
+- `RendererGL`: Depth shader compilation, BeginShadowCascade/EndShadowPass state management
+- `shaders/depth.vert/frag`: Depth-only rendering (light POV), alpha-tested foliage support
+- `shaders/postprocess/shadows.frag`: PCF shadow sampling (placeholder, awaiting depth pass integration)
+
+**Completed**:
+- ✅ Shadow map FBO pipeline (3 cascades at 2048×2048, with color suppression)
+- ✅ Depth shader for light-POV rendering with alpha test support
+- ✅ Logarithmic frustum splitting (95% log, 5% linear) for cascade distance distribution
+- ✅ Light view matrix computation from light direction + camera position
+- ✅ Orthographic projection per cascade matching frustum geometry
+- ✅ Depth rendering state management (BeginShadowCascade/SetDepthOnlyMode/EndShadowPass)
+- ✅ Shader infrastructure plumbed into compilation pipeline
+
+**Remaining** (~50%):
+1. **Hook depth pass into Hunt2.cpp render loop**: Call BeginShadowCascade(i) before scene rendering for each cascade, then EndShadowPass() after
+2. **World position reconstruction**: In shadows.frag, read screen depth and reconstruct world position using inverse projection
+3. **Cascade selection**: Choose cascade based on camera-to-pixel distance
+4. **PCF shadow sampling**: Transform world position to light space, sample shadow maps with 4-8 tap filtering
+5. **Shadow modulation**: Apply shadow factor (0=full shadow, 1=lit) to screen color based on uIntensity parameter
+6. **Menu integration**: Wire g_shadowQuality setting to FBO creation, distance thresholds
+
+**Known limitations**:
+- Depth pass requires rendering scene twice (main render + depth-only render); currently infrastructure-only, not yet integrated into Hunt2.cpp's frame loop
+- PCF filtering currently uses simple 4-tap pattern; could expand to 8-16 tap for quality
+- No soft shadows or penumbra estimation yet (could use variance shadows in future)
+- Light direction is currently hardcoded in PostProcessingPipeline; should come from sun animation/time-of-day system
+
+**Files modified**: `PostProcessing.h/cpp`, `RendererGL.h/cpp`, `shaders/depth.vert/frag`, `shaders/postprocess/shadows.frag`, `RENDERING.md`
 
 - **Phase 2.2**: Bloom + Tone Mapping — ✅ Complete (Reinhard tone curve working)
 - **Phase 2.3**: Screen-Space Reflections — Ray-marched reflections on shiny surfaces (4-5 hours)
