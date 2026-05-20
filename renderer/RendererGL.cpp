@@ -1774,27 +1774,64 @@ void RendererGL::UnbindAndDownscaleSSA() {
 
 // SOURCEPORT: Shadow mapping support (Phase 2.1)
 
-void RendererGL::BeginShadowPass() {
-    if (!m_depthShaderProgram) return;
-    glUseProgram(m_depthShaderProgram);
-    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);  // Don't write color in depth pass
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);  // Standard depth test for shadow depth pass
-    glClearDepth(1.0);  // Standard clear (far = 1.0) for depth pass
+void RendererGL::BeginShadowCascade(int cascade) {
+    auto pipeline = (PostProcessingPipeline*)m_postProcessingPipeline;
+    if (!pipeline || cascade < 0 || cascade >= 3) return;
+
+    FramebufferObject* shadowFBO = pipeline->GetShadowMap(cascade);
+    if (!shadowFBO) return;
+
+    shadowFBO->Bind();
+    shadowFBO->Clear(1.0f, 1.0f, 1.0f, 1.0f);  // Clear depth to 1.0 (far plane)
+
+    // Update projection matrix to light space
+    const float* lightView = pipeline->GetLightViewMatrix(cascade);
+    const float* lightProj = pipeline->GetLightProjMatrix(cascade);
+    if (lightView && lightProj) {
+        // Compose view-projection matrix
+        float viewProj[16];
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                viewProj[i*4+j] = 0;
+                for (int k = 0; k < 4; k++) {
+                    viewProj[i*4+j] += lightProj[i*4+k] * lightView[k*4+j];
+                }
+            }
+        }
+        glUseProgram(m_depthShaderProgram);
+        glUniformMatrix4fv(glGetUniformLocation(m_depthShaderProgram, "uProjection"), 1, GL_FALSE, viewProj);
+    }
+
+    SetDepthOnlyMode(true);
 }
 
 void RendererGL::EndShadowPass() {
-    // Restore normal rendering state
+    SetDepthOnlyMode(false);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_width, m_height);
     glUseProgram(m_shaderProgram);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glDepthFunc(GL_GEQUAL);  // Restore reversed depth convention
     glClearDepth(0.0);  // Restore reversed clear (far = 0.0)
+    glDepthFunc(GL_GEQUAL);  // Restore reversed depth convention
+}
+
+void RendererGL::SetDepthOnlyMode(bool enabled) {
+    if (enabled) {
+        glUseProgram(m_depthShaderProgram);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);  // Don't write color
+        glDepthMask(GL_TRUE);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);  // Standard depth test (not reversed)
+        glClearDepth(1.0);  // Standard clear (far = 1.0) for depth pass
+    } else {
+        glUseProgram(m_shaderProgram);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_GEQUAL);  // Restore reversed depth convention
+        glClearDepth(0.0);  // Restore reversed clear (far = 0.0)
+    }
 }
 
 void RendererGL::GetLightTransform(int cascade, float* outViewMatrix, float* outProjMatrix) {
-    // SOURCEPORT: Placeholder — will compute light view/proj matrices based on camera
-    // frustum split and light direction. For now, returns identity matrices.
     if (!outViewMatrix || !outProjMatrix) return;
 
     auto pipeline = (PostProcessingPipeline*)m_postProcessingPipeline;

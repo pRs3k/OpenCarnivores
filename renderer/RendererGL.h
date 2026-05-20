@@ -104,12 +104,14 @@ public:
     int GetMaxAnisotropy() const { return m_maxAnisotropy; }
 
     // SOURCEPORT: shadow mapping support
-    // Switch to depth-only rendering mode for shadow map generation (light POV)
-    void BeginShadowPass();
-    // Restore normal rendering mode after shadow depth pass
+    // Bind a shadow map cascade and switch to depth-only rendering
+    void BeginShadowCascade(int cascade);
+    // Restore normal rendering after shadow depth pass
     void EndShadowPass();
     // Get light-space transformation for a cascade
     void GetLightTransform(int cascade, float* outViewMatrix, float* outProjMatrix);
+    // Enable/disable depth-only shader mode (when shadow cascade is bound)
+    void SetDepthOnlyMode(bool enabled);
 
 
 private:
