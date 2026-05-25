@@ -103,16 +103,74 @@ public:
     // SOURCEPORT: query maximum anisotropic filtering level supported by hardware
     int GetMaxAnisotropy() const { return m_maxAnisotropy; }
 
-    // SOURCEPORT: shadow mapping support
-    // Bind a shadow map cascade and switch to depth-only rendering
+    // SOURCEPORT: legacy cascade shadow API (kept for old call sites, superseded by Path B)
     void BeginShadowCascade(int cascade);
-    // Restore normal rendering after shadow depth pass
     void EndShadowPass();
-    // Get light-space transformation for a cascade
     void GetLightTransform(int cascade, float* outViewMatrix, float* outProjMatrix);
-    // Enable/disable depth-only shader mode (when shadow cascade is bound)
     void SetDepthOnlyMode(bool enabled);
 
+    // SOURCEPORT: Path B world shadow mapping.
+    // Call SetCameraWorldUniforms once per frame (from Hunt2 which has the camera globals),
+    // then BeginWorldShadowPass / draw / EndWorldShadowPass before the main scene.
+    void SetCameraWorldUniforms(float vcx, float vcy, float cw, float ch,
+                                float wx, float wy, float wz,
+                                float ca, float sa, float cb, float sb, float cg, float sg);
+    void BeginWorldShadowPass();
+    void EndWorldShadowPass();
+    // SOURCEPORT: must be called before BeginWorldShadowPass each frame so the
+    // light matrix matches the game sun (derived from SunShadowK in renderd3d).
+    void SetSunDirection(float x, float y, float z);
+
+    // Shadow mode: 0=none, 1=dinos_only (future), 2=full
+    void  SetShadowMode(int mode)     { m_shadowMode = mode; }
+    int   GetShadowMode() const       { return m_shadowMode; }
+    void  SetShadowStrength(float s)  { m_shadowStrength = s; }
+    // SOURCEPORT: shadow ortho half-extent (GU); set from ctViewR*256 each frame.
+    void  SetShadowRange(float r)     { m_shadowRange = r; }
+    // SOURCEPORT: lets game-side render functions (RenderModelsList) skip
+    // during the depth-only pass to avoid double-shadowing dino models.
+    bool  IsShadowPassActive() const  { return m_shadowPassActive; }
+    // SOURCEPORT: terrain shadow path reads these to transform camera-space→world-space.
+    const float* GetCamToWorld()    const { return m_camToWorld; }
+    const float* GetCameraWorldPos() const { return m_cameraWorldPos; }
+    // SOURCEPORT: world-space shadow batch — submit a triangle with world-space
+    // XYZ coordinates directly to the depth map, bypassing camera-space screen
+    // reconstruction.  Used for objects behind the player (tree canopy when the
+    // player turns away).  Call FlushWorldSpaceShadow() before changing textures.
+    void  FlushWorldSpaceShadow();
+    void  SubmitWorldSpaceShadowTriangle(
+              float x0, float y0, float z0,
+              float x1, float y1, float z1,
+              float x2, float y2, float z2,
+              float u0, float v0, float u1, float v1, float u2, float v2,
+              bool alphaTest);
+
+    // SOURCEPORT: Post-process overlay (incremental pipeline, Step 1+)
+    bool m_postOverlayEnabled = false;
+    void RunPostOverlay();
+
+    void EnablePostOverlay(bool enable)   { m_postOverlayEnabled = enable; }
+    bool IsPostOverlayEnabled() const     { return m_postOverlayEnabled; }
+    void SetBloomThreshold(float t)       { m_bloomThreshold = t; }
+    void SetBloomIntensity(float i)       { m_bloomIntensity = i; }
+
+    // SOURCEPORT: tone mapping mode (applied in composite pass after bloom)
+    // 0=off, 1=ACES filmic, 2=Reinhard
+    void SetToneMappingMode(int mode) { m_toneMappingMode = mode; }
+    int  GetToneMappingMode() const   { return m_toneMappingMode; }
+    void SetExposure(float e)         { m_exposure = e; }
+
+    // SOURCEPORT: color grading (contrast, saturation, lift, gain)
+    void SetColorGradingEnabled(bool e)      { m_cgEnabled = e; }
+    bool IsColorGradingEnabled() const       { return m_cgEnabled; }
+    void SetCGSaturation(float s)            { m_cgSaturation = s; }
+    void SetCGContrast(float c)              { m_cgContrast = c; }
+    void SetCGLift(float r, float g, float b){ m_cgLift[0]=r; m_cgLift[1]=g; m_cgLift[2]=b; }
+    void SetCGGain(float r, float g, float b){ m_cgGain[0]=r; m_cgGain[1]=g; m_cgGain[2]=b; }
+
+    // SOURCEPORT: unsharp mask sharpening (0=off, ~0.6 = crisp, ~1.5 = max before halos)
+    void  SetSharpenStrength(float s)  { m_sharpenStrength = s; }
+    float GetSharpenStrength() const   { return m_sharpenStrength; }
 
 private:
     void CompileShaders();
@@ -196,6 +254,54 @@ private:
     static constexpr int MAX_GEOM_VERTICES = 4096 * 3;  // SOURCEPORT: expanded for DrawTerrainGL bucketed batches
     RenderVertex m_mainBuffer[MAX_MAIN_VERTICES];
     RenderVertex m_geomBuffer[MAX_GEOM_VERTICES];
+
+
+    // SOURCEPORT: Path B world shadow map FBO (depth-only, standard convention)
+    GLuint m_worldShadowFBO      = 0;
+    GLuint m_worldShadowDepthTex = 0;
+    static constexpr int WORLD_SHADOW_SIZE = 2048;
+    int    m_shadowMode       = 0;      // 0=none, 2=full
+    float  m_shadowStrength   = 0.5f;
+    float  m_shadowRange      = 16000.f; // SOURCEPORT: ortho half-extent (GU); updated from ctViewR
+    float  m_worldLightMatrix[16] = {}; // combined light view-proj (column-major)
+    // Camera-to-world uniforms — filled by SetCameraWorldUniforms each frame
+    float  m_camToWorld[9]      = {};   // R^T column-major mat3
+    float  m_cameraWorldPos[3]  = {};
+    float  m_unifVideoCX = 0.f, m_unifVideoCY = 0.f;
+    float  m_unifCameraW = 1.f, m_unifCameraH = 1.f;
+    // Sun direction (world space, pointing TOWARD the sun)
+    float  m_sunDirWorld[3] = {0.4f, 0.8f, 0.3f};
+    // SOURCEPORT: true while the depth-only shadow pass owns DrawScene().
+    // UnlockAndDraw* re-asserts m_depthShaderProgram before each draw so that
+    // BindCustomMaterial(nullptr) / UpdateProjection() etc. cannot stomp it.
+    bool   m_shadowPassActive   = false;
+    GLint  m_depthLocAlphaTest  = -1;  // uAlphaTest location in m_depthShaderProgram
+
+    // SOURCEPORT: world-space shadow batch (ws_depth.vert path)
+    GLuint m_wsDepthProgram  = 0;
+    GLuint m_wsVAO           = 0;
+    GLuint m_wsVBO           = 0;
+    struct WSShadowVert { float x, y, z, u, v; };
+    static constexpr int MAX_WS_SHADOW_VERTS = MAX_GEOM_VERTICES;
+    WSShadowVert m_wsShadowBuffer[MAX_WS_SHADOW_VERTS];
+    int          m_wsShadowCount = 0;
+    bool         m_wsAlphaTest   = false;
+
+    // SOURCEPORT: post-process effect state (driven by ShaderPack::Apply)
+    float    m_bloomThreshold  = 0.78f;
+    float    m_bloomIntensity  = 1.5f;
+    int      m_toneMappingMode = 0;   // 0=off, 1=ACES, 2=Reinhard
+    float    m_exposure        = 1.0f;
+
+    // SOURCEPORT: sharpen state
+    float    m_sharpenStrength = 0.0f;
+
+    // SOURCEPORT: color grading state
+    bool     m_cgEnabled     = false;
+    float    m_cgSaturation  = 1.2f;               // slight boost by default
+    float    m_cgContrast    = 1.1f;               // slight punch by default
+    float    m_cgLift[3]     = {0.0f, 0.0f, 0.0f}; // shadow tint (neutral)
+    float    m_cgGain[3]     = {1.0f, 1.0f, 1.0f}; // highlight scale (neutral)
 
     // Current render state
     bool     m_fogEnabled = false;

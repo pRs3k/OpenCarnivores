@@ -70,67 +70,69 @@ Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `G
 - **VR (fade-out)**: Graphic positioned eye-level (`WinH/2.75`) and scaled to 65% of original size for comfort. Text positioned at `y0 + 5*WinH/480` (near top of smaller graphic) with large 90px line spacing (scaled by textScale=0.10f) and full +100px y-offset. The large line spacing and offsets are scaled down by textScale to fit the smaller VR rendering proportionally.
 - **Implementation**: `DrawTrophyText()` accepts `bool isVR` parameter to conditionally apply layout offsets. Line spacing: `isVR ? (90 * WinH/480 * textScale) : (17 * WinH/480)`. Y offset: `isVR ? (100 * WinH/480 * textScale) : 0`. This prevents tight flatscreen text from becoming unreadable in VR, and prevents oversized VR spacing from overflowing flatscreen box.
 
-## Post-Processing Pipeline (Phase 1 ✅ Complete)
+## Shader Packs (Modular System)
 
-**Infrastructure** — Ready for Phase 2 effect implementation:
-- `PostProcessing.h/cpp` — FBO management, effect registry, shader infrastructure
-  - `FramebufferObject` — Color/depth textures, blitting, composition
-  - `PostProcessingPipeline` — Effect lifecycle, enable/disable toggles, composition modes
-  - Composition modes: REPLACE, ADDITIVE, ALPHA_BLEND, SCREEN, MULTIPLY, OVERLAY
-- `Hunt.h` — Global toggles (disabled by default, menu-controllable):
-  - `g_enableBloom`, `g_bloomIntensity`, `g_bloomThreshold`, `g_bloomKnee`
-  - `g_enableToneMapping`, `g_tonemapExposure`
-  - `g_enableSSR`, `g_ssrIntensity`
-  - `g_enableShadows`, `g_shadowQuality`
-- Integration:
-  - `RendererGL::Init()` — pipeline initialization
-  - `Hunt2.cpp` — `ApplyEffects()` calls in flatscreen and VR render paths
-  - `IRenderer` interface — virtual accessor for pipeline
+**Modders can create custom shader packs** to extend visuals without modifying core code:
 
-**Shaders** — Placeholder files ready for Phase 2:
-- `shaders/postprocess/quad.vert` — Fullscreen quad vertex shader
-- `shaders/postprocess/bloom_threshold.frag` — Bright pixel extraction
-- `shaders/postprocess/bloom_blur_h.frag`, `bloom_blur_v.frag` — Separable Gaussian blur
-- `shaders/postprocess/tonemap.frag` — Reinhard tone mapping (HDR→SDR)
-- `shaders/postprocess/shadows.frag` — PCF shadow lookup (placeholder)
-- `shaders/postprocess/ssr.frag` — Ray-marched screen-space reflections (placeholder)
-- `shaders/postprocess/desaturate.frag` — Test shader proving pipeline works
+- **Location**: `shaderpacks/` directory
+- **Per-pack structure**: `pack.json` + shader files organized by type
+- **Documentation**: See [SHADER_PACKS.md](SHADER_PACKS.md) for modding guide
+- **Example pack**: `shaderpacks/example/` — reference implementation
 
-## Phase 2 Roadmap (In Progress)
+**System components**:
+- `ShaderPack.h/cpp` — Pack loading, shader compilation, parameter management
+- `ShaderPackManager` — Discovers and loads packs from disk
+- Post-process effects: Tone mapping, color grading, bloom (modders can add more)
+- Material shaders: Custom terrain/object rendering (extensible foundation)
 
-**Phase 2.1: Dynamic Shadow Mapping** ✅ Complete
+**Hot-reload**: Shaders are loaded at startup; modders can iterate by restarting game.
 
-**Architecture**:
-- `PostProcessingPipeline`: Manages 3 shadow map cascades (2048×2048 depth textures each), light view-projection matrices, cascade distances
-- `RendererGL`: Depth shader compilation and hot-reload, BeginShadowCascade/SetDepthOnlyMode/EndShadowPass state management
-- `Hunt2.cpp`: Integrates shadow depth pass before main DrawScene() for both VR and flatscreen paths
-- `shaders/depth.vert/frag`: Depth-only rendering from light POV, alpha-tested foliage support
-- `shaders/postprocess/shadows.frag`: Cascaded PCF shadow sampling (4-tap filtering, cascade selection, shadow modulation)
+**Design philosophy**: Simple, extensible system for modders. Core rendering stays lean.
 
-**Implemented Features** ✅:
-- Shadow map FBO pipeline: 3 cascades at 2048×2048 (depth-only, color suppression, per-cascade)
-- Depth shader: Light-POV rendering with alpha test for foliage transparency
-- Logarithmic frustum splitting: 95% log, 5% linear for optimal cascade depth distribution
-- Light view-projection matrices: Computed from light direction + camera position, per-cascade orientation
-- Depth rendering: Integrated into Hunt2.cpp before main DrawScene(); renders scene 3× (once per cascade)
-- PCF shadow sampling: 4-tap filtering around shadow coordinate, cascade selection via depth distance
-- Shadow modulation: Blends shadowed (0.0) to lit (1.0) via shadow factor × intensity parameter
-- User controls: `g_enableShadows` toggle, `g_shadowIntensity` (0.0-1.0, default 0.7f), `g_shadowQuality` (1-3)
+**Development history**: See [SHADER_DEVELOPMENT_NOTES.md](SHADER_DEVELOPMENT_NOTES.md) for explanation of what we tried, why we chose this direction, and future plans.
 
-**Known Limitations** (future optimization):
-- Depth-to-world reconstruction uses estimated distance (could be improved with full matrix inversion for higher accuracy)
-- Shadow map resolution fixed at 2048×2048 (could make quality-dependent)
-- No soft shadows/penumbra (variance shadows or PCSS would improve visual quality)
-- Light direction derived from Sun3dPos (hardcoded fallback when sun out-of-view)
-- PCF uses 4-tap pattern (8-16 tap would improve quality at performance cost)
+## World Shadow Mapping ✅
 
-**Files Modified**: `PostProcessing.h/cpp`, `RendererGL.h/cpp`, `Hunt2.cpp`, `Hunt.h`, `shaders/depth.vert/frag`, `shaders/postprocess/shadows.frag`
+Real-time sun shadow mapping implemented in `RendererGL.cpp` / `renderd3d.cpp`.
 
-**Performance**: Shadow depth pass adds ~30-40% overhead (rendering scene 3× at reduced resolution). Can be disabled via menu toggle. Estimated ~2-3ms on modern GPU for 1920×1080.
+**Architecture (Path B — world-space depth pass)**:
+- Shadow pass runs once per frame before the main render: `BeginWorldShadowPass → DrawScene → EndWorldShadowPass → DrawScene`.
+- Light placed at `cameraPos + sunDir × 10 000 GU`; orthographic frustum ±`m_shadowRange` GU (dynamically set to `(ctViewR+2)×256` to match player view distance), near=1, far=20 000, 2048² depth texture (`GL_DEPTH_COMPONENT24`, `GL_CLAMP_TO_BORDER` with border=1).
+- Sun direction from `SunShadowK` (morning 0.7 / noon 0.5 / evening −0.7): `sunDir = (−K, 1, −K)` normalised.
+- PCF 3×3 tap in `basic.frag`; shadow strength is a tunable uniform (`uShadowStrength`).
 
-- **Phase 2.2**: Bloom + Tone Mapping — ✅ Complete (Reinhard tone curve working)
-- **Phase 2.3**: Screen-Space Reflections — Ray-marched reflections on shiny surfaces (4-5 hours)
-- **Phase 2.4**: Normal Mapping Quality — Parallax mapping, PBR parameters (2-3 hours)
+**Terrain shadow depth (view-direction-independent)**:
+- During the shadow pass `ProcessMap` submits terrain triangles using world positions read directly from `HMap[ty][tx] × ctHScale` — no camera-space VMap involved.
+- This is the correct approach: the camera-space pipeline (`ev[i].v`, VMap, RotateVector) is unreliable for shadow geometry because tiles behind the camera have `rv.z > 0` and the reconstruction accumulates floating-point cancellation for large world coords.
+- Triangulation matches `ReverseOn` flag: false → (0,1,3)+(0,3,2); true → (0,1,2)+(2,1,3).
+
+**Object/character shadow depth**:
+- 3D objects submit via `SubmitWorldSpaceShadowTriangle` → `ws_depth.vert` (takes world XYZ directly, applies `uLightSpace`).
+- Accumulated into `m_wsShadowBuffer` (up to `MAX_WS_SHADOW_VERTS`) and flushed in batches.
+
+**Sky plane exclusion**:
+- `RenderSkyPlane` uses `sz = 0.0001f` (not 0), so `depth.vert` reconstructs a world position ~160 000 GU in the camera-forward direction. Looking up past the sun elevation, that position lands behind the light's near plane and `GL_DEPTH_CLAMP` writes depth=0, blackening the shadow map. Fix: `RenderSkyPlane` returns immediately when `IsShadowPassActive()`.
+
+**Fragment-side sampling**:
+- `vWorldPos` reconstructed in `basic.vert` from screen-space `aPos`/`aDepth` via `uCamToWorld` (R^T, column-major mat3 uploaded by `SetCameraWorldUniforms`).
+- Shadow block gated on `vRhw < 1.0` (sky/HUD vertices have `aDepth=0` → `vRhw=1.0` → skipped).
+- `proj.z >= 0` lower bound prevents behind-light geometry (straddling triangles with a behind-camera vertex produce `vWorldPos ≈ 0`) from spuriously shadowing the view.
+
+**Debug modes** (F8 cycles):
+- Mode 8: raw shadow-map depth at fragment's shadow UV (white=far/unwritten, black=near/geometry).
+- Mode 9: shadow UV as RG gradient — uniform colour means world-pos reconstruction is broken.
+
+## Future Enhancements
+
+**Modder-driven feature roadmap**:
+- Advanced lighting models (PBR, physically-based materials)
+- Screen-space ambient occlusion (SSAO)
+- Screen-space reflections (SSR)
+- Advanced post-processing (bloom, motion blur, chromatic aberration)
+- Custom material types and blend modes
+- Cascaded shadow maps for larger shadow coverage at close range
+
+**How to add features**: Create shader packs in `shaderpacks/` with custom effects. See [SHADER_PACKS.md](SHADER_PACKS.md).
 
 ## Long-term Roadmap
 - Formalize the renderer abstraction: move all `d3d*` functions behind the `Renderer` interface entirely, kill `renderd3d.cpp` glue so Vulkan/Metal/WebGPU backends become drop-in.

@@ -20,7 +20,7 @@
 - **Phase 1 — Post-processing Infrastructure ✅ Complete**
 
 - **Phase 2 — Visual Enhancement Effects** (In Progress)
-  - Dynamic Shadow Mapping — cascaded PCF shadows from sun light
+  - Dynamic Shadow Mapping ✅ — PCF 3×3 world-space sun shadows; view-direction-independent terrain depth from HMap; sky plane exclusion; dynamic frustum range tied to ctViewR
   - Bloom + Tone Mapping — bright-pixel bloom, HDR→SDR Reinhard curve
   - Screen-Space Reflections — ray-marched reflections on shiny surfaces
   - Normal Mapping Quality — parallax mapping, PBR parameters

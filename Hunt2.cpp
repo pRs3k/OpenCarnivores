@@ -2247,6 +2247,8 @@ void ProcessGame()
             // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
             // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
             g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
+            // SOURCEPORT: match shadow frustum half-extent to the player's view distance.
+            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f);
             g_glRenderer->BeginWorldShadowPass();
             DrawScene();
             g_glRenderer->EndWorldShadowPass();
@@ -2277,6 +2279,8 @@ void ProcessGame()
             // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
             // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
             g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
+            // SOURCEPORT: match shadow frustum half-extent to the player's view distance.
+            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f);
             g_glRenderer->BeginWorldShadowPass();
             DrawScene();
             g_glRenderer->EndWorldShadowPass();

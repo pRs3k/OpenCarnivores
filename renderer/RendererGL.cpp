@@ -10,12 +10,14 @@
 #undef max
 #include "RendererGL.h"
 #include "PostProcessing.h"
+#include "ShaderPack.h"
 #include "../Materials.h"
 #include "../CustomMaterials.h"
 #include "../HotReload.h"
 #include "../VFS.h"
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 #include <string>
 
 namespace XR { bool StereoActive(); }
@@ -370,7 +372,7 @@ static inline uint32_t RGB555toRGBA(uint16_t c) {
 RendererGL::RendererGL() {}
 
 RendererGL::~RendererGL() {
-    Shutdown();
+    RendererGL::Shutdown(); // SOURCEPORT: explicit non-virtual call avoids virtual dispatch in destructor
 }
 
 bool RendererGL::Init(void* windowHandle, int width, int height) {
@@ -518,6 +520,53 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
     fprintf(stderr, "RendererGL: OpenGL %d.%d initialized (%dx%d mode=%d vsync=%d aniso=%d)\n",
             GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version),
             m_width, m_height, OptDisplayMode, OptVSync, m_maxAnisotropy);
+
+    // SOURCEPORT: Create world shadow map FBO (depth-only, standard GL_LESS convention).
+    {
+        glGenFramebuffers(1, &m_worldShadowFBO);
+        glGenTextures(1, &m_worldShadowDepthTex);
+        glBindTexture(GL_TEXTURE_2D, m_worldShadowDepthTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+                     WORLD_SHADOW_SIZE, WORLD_SHADOW_SIZE,
+                     0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        float border[] = {1.f, 1.f, 1.f, 1.f};
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_worldShadowFBO);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, m_worldShadowDepthTex, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE)
+            fprintf(stderr, "[RendererGL] World shadow FBO incomplete (0x%x)\n", status);
+        else
+            fprintf(stdout, "[RendererGL] World shadow FBO created (%dx%d)\n",
+                    WORLD_SHADOW_SIZE, WORLD_SHADOW_SIZE);
+
+        // Default shadow uniforms in main shader.
+        glUseProgram(m_shaderProgram);
+        glUniform1i(glGetUniformLocation(m_shaderProgram, "uShadowMap"), 4);
+        glUniform1i(glGetUniformLocation(m_shaderProgram, "uWorldShadow"), 0);
+        glUniform1f(glGetUniformLocation(m_shaderProgram, "uShadowStrength"), m_shadowStrength);
+        glUniform1i(glGetUniformLocation(m_shaderProgram, "uWorldShadow"), 0);
+    }
+
+    // SOURCEPORT: auto-load shader pack named "default" if present in shaderpacks/
+    {
+        auto& spm = ShaderPackManager::Get();
+        spm.DiscoverPacks();
+        for (const auto& name : spm.GetAvailable()) {
+            if (name == "default") {
+                spm.ApplyPack("default", this);
+                break;
+            }
+        }
+    }
 
     return true;
 }
@@ -668,10 +717,42 @@ void RendererGL::CompileShaders() {
     } else {
         if (m_depthShaderProgram) glDeleteProgram(m_depthShaderProgram);
         m_depthShaderProgram = depthProg;
+        m_depthLocAlphaTest  = glGetUniformLocation(depthProg, "uAlphaTest");
+        // SOURCEPORT: log depth shader uniform locations so dead-code elimination
+        // of uLightSpace / uCamToWorld (loc==-1) is immediately visible in stderr.
+        fprintf(stderr, "[Shadow] depth prog=%u uLightSpace=%d uCamToWorld=%d uCameraPos=%d\n",
+            depthProg,
+            glGetUniformLocation(depthProg, "uLightSpace"),
+            glGetUniformLocation(depthProg, "uCamToWorld"),
+            glGetUniformLocation(depthProg, "uCameraPos"));
     }
 
     glDeleteShader(depthVs);
     glDeleteShader(depthFs);
+
+    // SOURCEPORT: compile world-space depth shader (ws_depth.vert + depth.frag).
+    // Used for objects behind the camera that cannot be reconstructed from screen-space.
+    std::string wsVsDisk = ReadTextFile("shaders/ws_depth.vert");
+    if (!wsVsDisk.empty()) {
+        GLuint wsVs = CompileShader(GL_VERTEX_SHADER,  wsVsDisk.c_str());
+        GLuint wsFs = CompileShader(GL_FRAGMENT_SHADER, depthFsSrc);
+        GLuint wsProg = glCreateProgram();
+        glAttachShader(wsProg, wsVs);
+        glAttachShader(wsProg, wsFs);
+        glLinkProgram(wsProg);
+        GLint wsOk = 0; glGetProgramiv(wsProg, GL_LINK_STATUS, &wsOk);
+        if (!wsOk) {
+            char log[512]; glGetProgramInfoLog(wsProg, sizeof(log), nullptr, log);
+            fprintf(stderr, "[Shadow] ws_depth link error: %s\n", log);
+            glDeleteProgram(wsProg);
+        } else {
+            if (m_wsDepthProgram) glDeleteProgram(m_wsDepthProgram);
+            m_wsDepthProgram = wsProg;
+            glUseProgram(m_wsDepthProgram);
+            glUniform1i(glGetUniformLocation(m_wsDepthProgram, "uTexture"), 0);
+        }
+        glDeleteShader(wsVs); glDeleteShader(wsFs);
+    }
 }
 
 void RendererGL::CreateBuffers() {
@@ -707,6 +788,18 @@ void RendererGL::CreateBuffers() {
     glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(RenderVertex),
                           (void*)offsetof(RenderVertex, tu));
     glBindVertexArray(0);
+
+    // SOURCEPORT: world-space shadow VAO/VBO (layout: vec3 pos + vec2 uv)
+    glGenVertexArrays(1, &m_wsVAO);
+    glGenBuffers(1, &m_wsVBO);
+    glBindVertexArray(m_wsVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_wsVBO);
+    glBufferData(GL_ARRAY_BUFFER, MAX_WS_SHADOW_VERTS * sizeof(WSShadowVert), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(WSShadowVert), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(WSShadowVert), (void*)(3*sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glBindVertexArray(0);
 }
 
 void RendererGL::InvalidateTextureCache() {
@@ -729,6 +822,13 @@ void RendererGL::Shutdown() {
     }
     m_texCache.clear();
 
+    // SOURCEPORT: world shadow FBO cleanup
+    if (m_worldShadowDepthTex) { glDeleteTextures(1, &m_worldShadowDepthTex); m_worldShadowDepthTex = 0; }
+    if (m_worldShadowFBO)      { glDeleteFramebuffers(1, &m_worldShadowFBO);  m_worldShadowFBO = 0; }
+
+    if (m_wsVBO) { glDeleteBuffers(1, &m_wsVBO); m_wsVBO = 0; }
+    if (m_wsVAO) { glDeleteVertexArrays(1, &m_wsVAO); m_wsVAO = 0; }
+    if (m_wsDepthProgram) { glDeleteProgram(m_wsDepthProgram); m_wsDepthProgram = 0; }
     if (m_bitmapTexture) glDeleteTextures(1, &m_bitmapTexture);
     if (m_vbo) glDeleteBuffers(1, &m_vbo);
     if (m_vao) glDeleteVertexArrays(1, &m_vao);
@@ -778,6 +878,9 @@ void RendererGL::BeginFrame() {
     // same screen-space projection to render pre-transformed vertices correctly.
     std::memcpy(m_projMatrix, proj, sizeof(proj));
 
+    // SOURCEPORT: reset shadow flag each frame; EndWorldShadowPass sets it to 1.
+    glUniform1i(glGetUniformLocation(m_shaderProgram, "uWorldShadow"), 0);
+
     // Route scene into the post-processing FBO only when an effect is active and
     // we are in flatscreen mode. VR uses its own per-eye FBOs via XR::BeginEye().
     // When no effects are enabled we render directly to screen (no FBO overhead).
@@ -797,8 +900,16 @@ void RendererGL::BeginFrame() {
 }
 
 void RendererGL::EndFrame() {
-    // SOURCEPORT: flatscreen supersampling disabled due to FBO rendering issues
-    // VR supersampling available via XR.cpp eye FBO scaling instead
+    // SOURCEPORT: Post-process injection point — runs after all scene rendering,
+    // before buffer swap. Pipeline is built up incrementally:
+    //   Step 1 (current): verify fullscreen quad renders a visible tint
+    //   Step 2: copy backbuffer → texture, render passthrough (no visible change)
+    //   Step 3: bind FBO before scene, read it here
+    //   Step 4+: real effects (bloom, vignette, etc.)
+    // SOURCEPORT: run post-overlay if any post-process effect is active
+    if (m_postOverlayEnabled || m_toneMappingMode != 0 || m_cgEnabled) {
+        RunPostOverlay();
+    }
     SDL_GL_SwapWindow(m_window);
 }
 
@@ -1052,22 +1163,26 @@ void RendererGL::UnlockAndDrawTriangles(int triCount1, int triCount2) {
     int totalVerts = (triCount1 + triCount2) * 3;
     if (totalVerts <= 0) return;
 
+    // SOURCEPORT: re-assert depth program before every draw during the shadow pass.
+    // BindCustomMaterial(nullptr) and UpdateProjection() both call glUseProgram(m_shaderProgram),
+    // which would stomp the depth program set in BeginWorldShadowPass().
+    if (m_shadowPassActive) glUseProgram(m_depthShaderProgram);
+
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, totalVerts * sizeof(RenderVertex), m_mainBuffer);
 
-    // SOURCEPORT: do NOT rebind texture here — d3dSetTexture already bound it.
-    // m_currentTexture is stale since terrain/model rendering bypasses SetTexture().
-
     // Draw normal triangles (no alpha test)
     if (triCount1 > 0) {
-        glUniform1i(m_locAlphaTest, 0);
+        GLint alphaLoc = m_shadowPassActive ? m_depthLocAlphaTest : m_locAlphaTest;
+        if (alphaLoc >= 0) glUniform1i(alphaLoc, 0);
         glDrawArrays(GL_TRIANGLES, 0, triCount1 * 3);
     }
 
     // Draw color-keyed triangles (with alpha test)
     if (triCount2 > 0) {
-        glUniform1i(m_locAlphaTest, 1);
+        GLint alphaLoc = m_shadowPassActive ? m_depthLocAlphaTest : m_locAlphaTest;
+        if (alphaLoc >= 0) glUniform1i(alphaLoc, 1);
         glDrawArrays(GL_TRIANGLES, triCount1 * 3, triCount2 * 3);
     }
 
@@ -1081,17 +1196,20 @@ RenderVertex* RendererGL::LockGeometryBuffer() {
 void RendererGL::UnlockAndDrawGeometry(int vertexCount, bool colorKey) {
     if (vertexCount <= 0) return;
 
+    // SOURCEPORT: re-assert depth program before every draw during the shadow pass.
+    // BindCustomMaterial(nullptr) and UpdateProjection() both call glUseProgram(m_shaderProgram),
+    // which would stomp the depth program set in BeginWorldShadowPass().
+    if (m_shadowPassActive) {
+        glUseProgram(m_depthShaderProgram);
+        // Mirror the alpha-test state (set by SetAlphaTest) into the depth shader.
+        if (m_depthLocAlphaTest >= 0)
+            glUniform1i(m_depthLocAlphaTest, m_alphaTestEnabled ? 1 : 0);
+    }
+
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, vertexCount * sizeof(RenderVertex), m_geomBuffer);
 
-    // SOURCEPORT: do NOT rebind texture here — d3dSetTexture / glBindTexture in
-    // DrawTPlaneClip's texture-change block already set the correct texture.
-
-    // SOURCEPORT: do NOT override uAlphaTest here — d3dStartBufferG()/d3dStartBufferGBMP()
-    // already set the correct alpha-test state via SetAlphaTest(true).  Overriding with
-    // colorKey=false would force uAlphaTest=0 → color.a=1.0 in the shader, making water
-    // (which uses vertex alpha for transparency) fully opaque.
     glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 
     glBindVertexArray(0);
@@ -1100,17 +1218,24 @@ void RendererGL::UnlockAndDrawGeometry(int vertexCount, bool colorKey) {
 // --- Render state ---
 
 void RendererGL::SetRenderStates(bool zWrite, int dstBlend) {
+    // SOURCEPORT: during the shadow pass the game calls SetRenderStates(false,...)
+    // for transparent/additive geometry (water, env-map overlays), which would
+    // disable depth writes and leave the shadow FBO empty.  Ignore all state
+    // changes during the depth-only pass except keeping glDepthMask on.
+    if (m_shadowPassActive) {
+        glDepthMask(GL_TRUE);
+        return;
+    }
     m_zWriteEnabled = zWrite;
     m_dstBlend = dstBlend;
     glDepthMask(zWrite ? GL_TRUE : GL_FALSE);
 
     GLenum glDst;
     switch (dstBlend) {
-        case BLEND_ZERO:        glDst = GL_ZERO; break;
-        case BLEND_ONE:         glDst = GL_ONE; break;
-        case BLEND_SRCALPHA:    glDst = GL_SRC_ALPHA; break;
-        case BLEND_INVSRCALPHA: glDst = GL_ONE_MINUS_SRC_ALPHA; break;
-        default:                glDst = GL_ONE_MINUS_SRC_ALPHA; break;
+        case BLEND_ZERO:     glDst = GL_ZERO; break;
+        case BLEND_ONE:      glDst = GL_ONE; break;
+        case BLEND_SRCALPHA: glDst = GL_SRC_ALPHA; break;
+        default:             glDst = GL_ONE_MINUS_SRC_ALPHA; break; // BLEND_INVSRCALPHA and unknown
     }
     glBlendFunc(GL_SRC_ALPHA, glDst);
 }
@@ -1163,6 +1288,10 @@ void RendererGL::SetHUDMode(bool /*enabled*/) {
 }
 
 void RendererGL::SetZBufferEnabled(bool enabled) {
+    // SOURCEPORT: ignore depth-test disable during shadow pass — the depth-only
+    // FBO requires depth test + write active throughout.  Skip the cached-state
+    // update too so the pre-pass value is intact when the main render begins.
+    if (m_shadowPassActive) return;
     m_zBufferEnabled = enabled;
     if (enabled) {
         glEnable(GL_DEPTH_TEST);
@@ -1177,6 +1306,7 @@ void RendererGL::SetDepthMask(bool write) {
     // SOURCEPORT: set depth write without touching depth test enable state.
     // Used by additive overlay passes (EnvMap/PhongMap) so they read depth
     // (occluded by closer geometry like the player's arm) but don't write it.
+    if (m_shadowPassActive) return;  // SOURCEPORT: always write depth during shadow pass
     m_zWriteEnabled = write;
     glDepthMask(write ? GL_TRUE : GL_FALSE);
 }
@@ -1782,7 +1912,8 @@ void RendererGL::BeginShadowCascade(int cascade) {
     if (!shadowFBO) return;
 
     shadowFBO->Bind();
-    shadowFBO->Clear(1.0f, 1.0f, 1.0f, 1.0f);  // Clear depth to 1.0 (far plane)
+    glClearDepth(0.0);  // Set clear depth to 0.0 (far in reversed depth convention)
+    shadowFBO->Clear(1.0f, 1.0f, 1.0f, 1.0f);  // Clear to white/far (depth=0 in reversed convention)
 
     // Update projection matrix to light space
     const float* lightView = pipeline->GetLightViewMatrix(cascade);
@@ -1790,11 +1921,12 @@ void RendererGL::BeginShadowCascade(int cascade) {
     if (lightView && lightProj) {
         // Compose view-projection matrix
         float viewProj[16];
+        // SOURCEPORT: C = proj*view, column-major: C_cm[i*4+j] = Σk proj_cm[k*4+j]*view_cm[i*4+k]
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
                 viewProj[i*4+j] = 0;
                 for (int k = 0; k < 4; k++) {
-                    viewProj[i*4+j] += lightProj[i*4+k] * lightView[k*4+j];
+                    viewProj[i*4+j] += lightProj[k*4+j] * lightView[i*4+k];
                 }
             }
         }
@@ -1820,8 +1952,10 @@ void RendererGL::SetDepthOnlyMode(bool enabled) {
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);  // Don't write color
         glDepthMask(GL_TRUE);
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LEQUAL);  // Standard depth test (not reversed)
-        glClearDepth(1.0);  // Standard clear (far = 1.0) for depth pass
+        // Use reversed depth convention (GL_GEQUAL) to match game's depth format
+        // Shadow map will store 1=near, 0=far (matching scene's reversed convention)
+        glDepthFunc(GL_GEQUAL);
+        glClearDepth(0.0);  // Reversed: far = 0.0
     } else {
         glUseProgram(m_shaderProgram);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -1846,3 +1980,508 @@ void RendererGL::GetLightTransform(int cascade, float* outViewMatrix, float* out
     if (projMat) std::memcpy(outProjMatrix, projMat, 16 * sizeof(float));
     else std::memset(outProjMatrix, 0, 16 * sizeof(float));
 }
+
+// SOURCEPORT: Path B world shadow mapping ────────────────────────────────────
+
+void RendererGL::SetCameraWorldUniforms(float vcx, float vcy, float cw, float ch,
+                                         float wx, float wy, float wz,
+                                         float ca, float sa, float cb, float sb,
+                                         float cg, float sg) {
+    m_unifVideoCX = vcx; m_unifVideoCY = vcy;
+    m_unifCameraW = cw;  m_unifCameraH = ch;
+    m_cameraWorldPos[0] = wx; m_cameraWorldPos[1] = wy; m_cameraWorldPos[2] = wz;
+
+    // Build camera-to-world rotation matrix R^T (column-major mat3).
+    // R = Rr * Rp * Ry  transforms world-relative → camera space.
+    // R columns (derived algebraically from RotateVector):
+    //   col0 = (cg*ca+sg*sb*sa, -sg*ca+cg*sb*sa, -cb*sa)
+    //   col1 = (sg*cb,           cg*cb,            sb   )
+    //   col2 = (cg*sa-sg*sb*ca, -sg*sa-cg*sb*ca,  cb*ca)
+    // R^T: col j of R^T = row j of R, so a[col*3+row]:
+    //   col0 of R^T = row0 of R = (R[0,0], R[0,1], R[0,2])
+    m_camToWorld[0] = cg*ca + sg*sb*sa;
+    m_camToWorld[1] = sg*cb;
+    m_camToWorld[2] = cg*sa - sg*sb*ca;
+    // col1 of R^T = row1 of R
+    m_camToWorld[3] = -sg*ca + cg*sb*sa;
+    m_camToWorld[4] = cg*cb;
+    m_camToWorld[5] = -sg*sa - cg*sb*ca;
+    // col2 of R^T = row2 of R
+    m_camToWorld[6] = -cb*sa;
+    m_camToWorld[7] = sb;
+    m_camToWorld[8] = cb*ca;
+
+    // Push to main shader so vWorldPos is computed each frame.
+    glUseProgram(m_shaderProgram);
+    GLint loc;
+    // SOURCEPORT: log uniform locations once to stderr so we can detect dead-code
+    // elimination of uCameraPos/uCamToWorld by the GLSL driver (loc==-1 means eliminated).
+    static bool s_loggedLocs = false;
+    if (!s_loggedLocs) {
+        s_loggedLocs = true;
+        fprintf(stderr, "[Shadow] prog=%u uVideoCX=%d uCameraW=%d uCameraPos=%d uCamToWorld=%d\n",
+            m_shaderProgram,
+            glGetUniformLocation(m_shaderProgram, "uVideoCX"),
+            glGetUniformLocation(m_shaderProgram, "uCameraW"),
+            glGetUniformLocation(m_shaderProgram, "uCameraPos"),
+            glGetUniformLocation(m_shaderProgram, "uCamToWorld"));
+    }
+    loc = glGetUniformLocation(m_shaderProgram, "uVideoCX"); glUniform1f(loc, vcx);
+    loc = glGetUniformLocation(m_shaderProgram, "uVideoCY"); glUniform1f(loc, vcy);
+    loc = glGetUniformLocation(m_shaderProgram, "uCameraW"); glUniform1f(loc, cw);
+    loc = glGetUniformLocation(m_shaderProgram, "uCameraH"); glUniform1f(loc, ch);
+    loc = glGetUniformLocation(m_shaderProgram, "uCameraPos");
+    glUniform3fv(loc, 1, m_cameraWorldPos);
+    loc = glGetUniformLocation(m_shaderProgram, "uCamToWorld");
+    glUniformMatrix3fv(loc, 1, GL_FALSE, m_camToWorld);
+}
+
+void RendererGL::FlushWorldSpaceShadow() {
+    if (m_wsShadowCount == 0 || !m_wsDepthProgram || !m_wsVAO) return;
+    glUseProgram(m_wsDepthProgram);
+    glUniformMatrix4fv(glGetUniformLocation(m_wsDepthProgram, "uLightSpace"),
+                       1, GL_FALSE, m_worldLightMatrix);
+    glUniform1i(glGetUniformLocation(m_wsDepthProgram, "uAlphaTest"), m_wsAlphaTest ? 1 : 0);
+    glBindVertexArray(m_wsVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, m_wsVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, m_wsShadowCount * sizeof(WSShadowVert), m_wsShadowBuffer);
+    glDrawArrays(GL_TRIANGLES, 0, m_wsShadowCount);
+    glBindVertexArray(0);
+    m_wsShadowCount = 0;
+    // Restore screen-space depth program for subsequent draws
+    if (m_shadowPassActive) glUseProgram(m_depthShaderProgram);
+}
+
+void RendererGL::SubmitWorldSpaceShadowTriangle(
+    float x0, float y0, float z0,
+    float x1, float y1, float z1,
+    float x2, float y2, float z2,
+    float u0, float v0, float u1, float v1, float u2, float v2,
+    bool alphaTest)
+{
+    // Flush on alpha-test state change or buffer full
+    if (m_wsShadowCount > 0 && alphaTest != m_wsAlphaTest)
+        FlushWorldSpaceShadow();
+    if (m_wsShadowCount + 3 > MAX_WS_SHADOW_VERTS)
+        FlushWorldSpaceShadow();
+    m_wsAlphaTest = alphaTest;
+    m_wsShadowBuffer[m_wsShadowCount++] = {x0, y0, z0, u0, v0};
+    m_wsShadowBuffer[m_wsShadowCount++] = {x1, y1, z1, u1, v1};
+    m_wsShadowBuffer[m_wsShadowCount++] = {x2, y2, z2, u2, v2};
+}
+
+void RendererGL::SetSunDirection(float x, float y, float z) {
+    // SOURCEPORT: caller passes the unnormalized sun direction (e.g. -SunShadowK, 1, -SunShadowK).
+    // Normalise and store; BeginWorldShadowPass reads m_sunDirWorld each frame.
+    float len = sqrtf(x*x + y*y + z*z);
+    if (len < 1e-6f) return;
+    m_sunDirWorld[0] = x / len;
+    m_sunDirWorld[1] = y / len;
+    m_sunDirWorld[2] = z / len;
+}
+
+void RendererGL::BeginWorldShadowPass() {
+    // ── Compute light-space matrix ────────────────────────────────────────────
+    // Sun direction points FROM scene TOWARD sun (unit vector).
+    float lx = m_sunDirWorld[0], ly = m_sunDirWorld[1], lz = m_sunDirWorld[2];
+    float len = sqrtf(lx*lx + ly*ly + lz*lz);
+    lx /= len; ly /= len; lz /= len;
+
+    // SOURCEPORT: place the light IN the sun direction (above the scene).
+    // Light looks toward scene (-sunDir), so Z_view = dist for objects at camera
+    // height, with smaller Z_view = closer to sun = smaller stored depth.
+    const float dist = 10000.0f;
+    float cx = m_cameraWorldPos[0], cy = m_cameraWorldPos[1], cz = m_cameraWorldPos[2];
+    float lpx = cx + lx*dist, lpy = cy + ly*dist, lpz = cz + lz*dist; // light ON sun side
+
+    // Build orthonormal basis.  fwd = -sunDir: light looks TOWARD the scene.
+    float fwd[3] = {-lx, -ly, -lz};
+    float up[3]  = {0.f, 1.f, 0.f};
+    float d = fabsf(fwd[0]*up[0] + fwd[1]*up[1] + fwd[2]*up[2]);
+    if (d > 0.95f) { up[0] = 1.f; up[1] = 0.f; up[2] = 0.f; }
+
+    float rt[3] = { fwd[1]*up[2]-fwd[2]*up[1],
+                    fwd[2]*up[0]-fwd[0]*up[2],
+                    fwd[0]*up[1]-fwd[1]*up[0] };
+    float rlen = sqrtf(rt[0]*rt[0]+rt[1]*rt[1]+rt[2]*rt[2]);
+    rt[0]/=rlen; rt[1]/=rlen; rt[2]/=rlen;
+
+    up[0] = rt[1]*fwd[2]-rt[2]*fwd[1];
+    up[1] = rt[2]*fwd[0]-rt[0]*fwd[2];
+    up[2] = rt[0]*fwd[1]-rt[1]*fwd[0];
+
+    float tx = -(rt[0]*lpx + rt[1]*lpy + rt[2]*lpz);
+    float ty = -(up[0]*lpx + up[1]*lpy + up[2]*lpz);
+    float tz = -(fwd[0]*lpx + fwd[1]*lpy + fwd[2]*lpz);
+
+    // View matrix (column-major GL).
+    float view[16] = {
+        rt[0], up[0], fwd[0], 0.f,
+        rt[1], up[1], fwd[1], 0.f,
+        rt[2], up[2], fwd[2], 0.f,
+        tx,    ty,    tz,     1.f
+    };
+
+    // SOURCEPORT: left-handed ortho — Z_view is positive for objects in front
+    // (Z_view = dist for camera pos). +2/(far-near) maps [near,far]→NDC[-1,+1].
+    // The previous -2/(far-near) mapped Z_view≈10000 to NDC≈-2, clipping everything.
+    // SOURCEPORT: m_shadowRange is set each frame from ctViewR*256 so shadow
+    // coverage matches the player's configured view distance exactly.
+    const float range = m_shadowRange;
+    const float near_z = 1.0f, far_z = 2.0f * dist;
+    float proj[16] = {
+        1.f/range, 0.f,       0.f,                       0.f,
+        0.f,       1.f/range, 0.f,                       0.f,
+        0.f,       0.f,       2.f/(far_z-near_z),        0.f,  // +2, not -2
+        0.f,       0.f,      -(far_z+near_z)/(far_z-near_z), 1.f
+    };
+
+    // SOURCEPORT: lightSpace = proj * view.
+    // Column-major GL convention: M_cm[col=i, row=j] encodes M_math[j][i].
+    // Correct formula for C = A*B: C_cm[i*4+j] = Σk A_cm[k*4+j] * B_cm[i*4+k].
+    // (The previous index order computed view*proj — reversed, scrambling all depths.)
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+            m_worldLightMatrix[i*4+j] = 0.f;
+            for (int k = 0; k < 4; ++k)
+                m_worldLightMatrix[i*4+j] += proj[k*4+j] * view[i*4+k];
+        }
+
+    // ── Set up depth FBO and GL state ─────────────────────────────────────────
+    glBindFramebuffer(GL_FRAMEBUFFER, m_worldShadowFBO);
+    glViewport(0, 0, WORLD_SHADOW_SIZE, WORLD_SHADOW_SIZE);
+    glDepthFunc(GL_LESS);
+    glClearDepth(1.0);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(2.f, 4.f);  // prevent terrain self-shadow acne
+
+    m_shadowPassActive = true; // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
+    // ── Upload uniforms to depth shader ───────────────────────────────────────
+    glUseProgram(m_depthShaderProgram);
+    GLint loc;
+    loc = glGetUniformLocation(m_depthShaderProgram, "uLightSpace");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, m_worldLightMatrix);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uVideoCX"); glUniform1f(loc, m_unifVideoCX);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uVideoCY"); glUniform1f(loc, m_unifVideoCY);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uCameraW"); glUniform1f(loc, m_unifCameraW);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uCameraH"); glUniform1f(loc, m_unifCameraH);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uCameraPos");
+    glUniform3fv(loc, 1, m_cameraWorldPos);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uCamToWorld");
+    glUniformMatrix3fv(loc, 1, GL_FALSE, m_camToWorld);
+    loc = glGetUniformLocation(m_depthShaderProgram, "uTexture"); glUniform1i(loc, 0);
+}
+
+void RendererGL::EndWorldShadowPass() {
+    FlushWorldSpaceShadow();  // SOURCEPORT: flush world-space batch before ending pass
+    m_shadowPassActive = false;
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);     // SOURCEPORT: restore depth write — game may have called
+                              // SetRenderStates(false,...) during the shadow DrawScene.
+    glDepthFunc(GL_GEQUAL);   // Restore reversed depth for main scene
+    glClearDepth(0.0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_width, m_height);
+    glUseProgram(m_shaderProgram);
+
+    // Bind shadow depth texture to unit 4.
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, m_worldShadowDepthTex);
+    glActiveTexture(GL_TEXTURE0);
+
+    // Upload shadow uniforms to main shader.
+    GLint loc;
+    loc = glGetUniformLocation(m_shaderProgram, "uShadowMap");
+    glUniform1i(loc, 4);
+    loc = glGetUniformLocation(m_shaderProgram, "uWorldShadow");
+    glUniform1i(loc, 1);
+    loc = glGetUniformLocation(m_shaderProgram, "uLightSpace");
+    glUniformMatrix4fv(loc, 1, GL_FALSE, m_worldLightMatrix);
+    loc = glGetUniformLocation(m_shaderProgram, "uShadowStrength");
+    glUniform1f(loc, m_shadowStrength);
+}
+
+// SOURCEPORT: Post-process overlay — bloom implementation.
+// Proven approach (Steps 1-3 confirmed):
+//   - fullscreen quad renders correctly
+//   - glCopyTexImage2D reads backbuffer into texture
+//   - shaders can read and modify that texture
+// Bloom pipeline: copy scene → extract brights → blur H → blur V → composite additive
+void RendererGL::RunPostOverlay() {
+    // ── Shared vertex shader ──────────────────────────────────────────────────
+    static const char* VS = R"(
+#version 330 core
+layout(location=0) in vec2 aPos;
+out vec2 vTexCoord;
+void main() { gl_Position = vec4(aPos, 0.0, 1.0); vTexCoord = aPos * 0.5 + 0.5; }
+)";
+
+    // ── Bloom pass shaders ────────────────────────────────────────────────────
+    // Pass 1: extract pixels above brightness threshold
+    static const char* FS_THRESHOLD = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uTex;
+uniform float uThreshold;
+void main() {
+    vec3 c = texture(uTex, vTexCoord).rgb;
+    float brightness = dot(c, vec3(0.299, 0.587, 0.114));
+    float soft = clamp((brightness - uThreshold) / max(uThreshold * 0.5, 0.001), 0.0, 1.0);
+    FragColor = vec4(c * soft, 1.0);
+}
+)";
+
+    // Pass 2: 9-tap Gaussian blur (used for both H and V, direction via uniform)
+    static const char* FS_BLUR = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uTex;
+uniform vec2 uDir;   // (texelW,0) for H, (0,texelH) for V
+void main() {
+    // Gaussian weights for 9 taps (sigma≈2)
+    float w[5] = float[](0.227027, 0.194595, 0.121622, 0.054054, 0.016216);
+    vec3 acc = texture(uTex, vTexCoord).rgb * w[0];
+    for (int i = 1; i < 5; i++) {
+        acc += texture(uTex, vTexCoord + uDir * float(i)).rgb * w[i];
+        acc += texture(uTex, vTexCoord - uDir * float(i)).rgb * w[i];
+    }
+    FragColor = vec4(acc, 1.0);
+}
+)";
+
+    // Pass 3: composite — bloom + tone mapping in one draw call
+    static const char* FS_COMPOSITE = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uScene;
+uniform sampler2D uBloom;
+uniform float uIntensity;
+uniform int   uToneMap;      // 0=off, 1=ACES, 2=Reinhard
+uniform float uExposure;     // pre-exposure multiplier (1.0 = neutral)
+uniform float uCGEnabled;    // 0=off, 1=on
+uniform float uSaturation;   // 1=neutral, >1 vivid, <1 desaturated
+uniform float uContrast;     // 1=neutral, >1 punchy, <1 flat
+uniform vec3  uLift;         // shadow color offset  (0,0,0 = neutral)
+uniform vec3  uGain;         // highlight color scale (1,1,1 = neutral)
+uniform float uSharpen;      // 0=off, >0 = unsharp mask strength
+
+// ACES filmic approximation (Hill/Narkowicz).
+// On LDR input [0,1]: lifts shadows, compresses highlights, adds mid contrast.
+vec3 ACESFilmic(vec3 x) {
+    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    return clamp((x*(a*x+b)) / (x*(c*x+d)+e), 0.0, 1.0);
+}
+
+// Reinhard: simple luminance-preserving compression.
+vec3 Reinhard(vec3 x) {
+    float luma = dot(x, vec3(0.2126, 0.7152, 0.0722));
+    return x / (1.0 + luma);
+}
+
+void main() {
+    vec3 scene = texture(uScene, vTexCoord).rgb;
+    // SOURCEPORT: unsharp mask sharpen — applied to scene before bloom/tonemapping.
+    // Samples 4-tap neighborhood average, adds the high-frequency difference back.
+    // textureSize avoids needing a resolution uniform.
+    if (uSharpen > 0.0) {
+        vec2 ts = 1.0 / vec2(textureSize(uScene, 0));
+        vec3 blur = (texture(uScene, vTexCoord + vec2( ts.x, 0)).rgb +
+                     texture(uScene, vTexCoord + vec2(-ts.x, 0)).rgb +
+                     texture(uScene, vTexCoord + vec2(0,  ts.y)).rgb +
+                     texture(uScene, vTexCoord + vec2(0, -ts.y)).rgb) * 0.25;
+        scene = clamp(scene + (scene - blur) * uSharpen, 0.0, 1.0);
+    }
+    vec3 bloom = texture(uBloom, vTexCoord).rgb;
+    // SOURCEPORT: hue-preserving bloom — drive glow from bloom luminance
+    // scaled by scene color so highlights glow in their own hue.
+    float bloomLuma = dot(bloom, vec3(0.299, 0.587, 0.114)) * uIntensity;
+    vec3 result = 1.0 - (1.0 - scene) * (1.0 - scene * bloomLuma);
+    // SOURCEPORT: tone mapping applied after bloom composite.
+    result *= uExposure;
+    if      (uToneMap == 1) result = ACESFilmic(result);
+    else if (uToneMap == 2) result = Reinhard(result);
+    // SOURCEPORT: color grading — contrast, saturation, lift/gain.
+    // Applied after tone mapping so it operates on the final tonal range.
+    if (uCGEnabled > 0.5) {
+        // Contrast: S-curve pivot around 0.5
+        result = clamp((result - 0.5) * uContrast + 0.5, 0.0, 1.0);
+        // Saturation: lerp toward luma
+        float luma = dot(result, vec3(0.2126, 0.7152, 0.0722));
+        result = clamp(mix(vec3(luma), result, uSaturation), 0.0, 1.0);
+        // Lift/gain: per-channel shadow offset + highlight scale
+        result = clamp(result * uGain + uLift, 0.0, 1.0);
+    }
+    FragColor = vec4(result, 1.0);
+}
+)";
+
+    // ── One-time initialisation ───────────────────────────────────────────────
+    static GLuint s_vao = 0, s_vbo = 0;
+    static GLuint s_progThreshold = 0, s_progBlur = 0, s_progComposite = 0;
+    static GLuint s_sceneTex = 0;
+    static GLuint s_fboA = 0, s_texA = 0;  // half-res ping
+    static GLuint s_fboB = 0, s_texB = 0;  // half-res pong
+    static int    s_bloomW = 0, s_bloomH = 0;
+    static bool   s_ready = false;
+
+    auto compile = [](GLenum type, const char* src) -> GLuint {
+        GLuint s = glCreateShader(type);
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+        GLint ok; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+        if (!ok) {
+            char log[512]; glGetShaderInfoLog(s, 512, nullptr, log);
+            fprintf(stderr, "[Bloom] Shader error: %s\n", log);
+            glDeleteShader(s); return 0;
+        }
+        return s;
+    };
+    auto link = [&](GLuint vs, GLuint fs) -> GLuint {
+        GLuint p = glCreateProgram();
+        glAttachShader(p, vs); glAttachShader(p, fs); glLinkProgram(p);
+        GLint ok; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+        if (!ok) { glDeleteProgram(p); p = 0; }
+        glDeleteShader(vs); glDeleteShader(fs);
+        return p;
+    };
+
+    if (!s_ready) {
+        // Fullscreen quad VAO
+        float verts[] = { -1,-1,  1,-1,  -1,1,  1,1 };
+        glGenVertexArrays(1, &s_vao); glGenBuffers(1, &s_vbo);
+        glBindVertexArray(s_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+        glEnableVertexAttribArray(0);
+        glBindVertexArray(0);
+
+        // Compile programs
+        s_progThreshold = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_THRESHOLD));
+        s_progBlur       = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_BLUR));
+        s_progComposite  = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_COMPOSITE));
+
+        // Scene copy texture (full-res)
+        glGenTextures(1, &s_sceneTex);
+        glBindTexture(GL_TEXTURE_2D, s_sceneTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        s_ready = s_progThreshold && s_progBlur && s_progComposite;
+        fprintf(stdout, "[Bloom] Init %s\n", s_ready ? "OK" : "FAILED");
+    }
+
+    if (!s_ready) return;
+
+    // Recreate half-res FBOs if resolution changed
+    int bw = m_width / 2, bh = m_height / 2;
+    if (bw != s_bloomW || bh != s_bloomH) {
+        s_bloomW = bw; s_bloomH = bh;
+
+        auto makeFBO = [](GLuint& fbo, GLuint& tex, int w, int h) {
+            if (fbo) glDeleteFramebuffers(1, &fbo);
+            if (tex) glDeleteTextures(1, &tex);
+            glGenTextures(1, &tex);
+            glBindTexture(GL_TEXTURE_2D, tex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glGenFramebuffers(1, &fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        };
+        makeFBO(s_fboA, s_texA, bw, bh);
+        makeFBO(s_fboB, s_texB, bw, bh);
+        fprintf(stdout, "[Bloom] FBOs resized to %dx%d\n", bw, bh);
+    }
+
+    // ── Save GL state ─────────────────────────────────────────────────────────
+    GLboolean depthTest;  glGetBooleanv(GL_DEPTH_TEST,     &depthTest);
+    GLboolean depthWrite; glGetBooleanv(GL_DEPTH_WRITEMASK, &depthWrite);
+    GLboolean blend;      glGetBooleanv(GL_BLEND,          &blend);
+    GLint blendSrc, blendDst, prevFBO, prevVAO;
+    glGetIntegerv(GL_BLEND_SRC_RGB,  &blendSrc);
+    glGetIntegerv(GL_BLEND_DST_RGB,  &blendDst);
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_BLEND);
+    glBindVertexArray(s_vao);
+
+    // ── Step A: copy backbuffer → sceneTex ───────────────────────────────────
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s_sceneTex);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, m_width, m_height, 0);
+
+    // ── Steps B-D: bloom extraction + blur (skipped when only tone mapping is active) ──
+    if (m_postOverlayEnabled) {
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboA);
+        glViewport(0, 0, s_bloomW, s_bloomH);
+        glUseProgram(s_progThreshold);
+        glUniform1i(glGetUniformLocation(s_progThreshold, "uTex"), 0);
+        glUniform1f(glGetUniformLocation(s_progThreshold, "uThreshold"), m_bloomThreshold);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboB);
+        glUseProgram(s_progBlur);
+        glBindTexture(GL_TEXTURE_2D, s_texA);
+        glUniform1i(glGetUniformLocation(s_progBlur, "uTex"), 0);
+        glUniform2f(glGetUniformLocation(s_progBlur, "uDir"), 1.0f / s_bloomW, 0.0f);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboA);
+        glBindTexture(GL_TEXTURE_2D, s_texB);
+        glUniform2f(glGetUniformLocation(s_progBlur, "uDir"), 0.0f, 1.0f / s_bloomH);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    // ── Step E: composite scene + bloom → default framebuffer ────────────────
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, m_width, m_height);
+    glUseProgram(s_progComposite);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s_sceneTex);
+    glUniform1i(glGetUniformLocation(s_progComposite, "uScene"), 0);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, s_texA);
+    glUniform1i(glGetUniformLocation(s_progComposite, "uBloom"), 1);
+    glUniform1f(glGetUniformLocation(s_progComposite, "uIntensity"), m_postOverlayEnabled ? m_bloomIntensity : 0.0f);
+    glUniform1i(glGetUniformLocation(s_progComposite, "uToneMap"),    m_toneMappingMode);
+    glUniform1f(glGetUniformLocation(s_progComposite, "uExposure"),   m_exposure);
+    glUniform1f(glGetUniformLocation(s_progComposite, "uCGEnabled"),  m_cgEnabled ? 1.0f : 0.0f);
+    glUniform1f(glGetUniformLocation(s_progComposite, "uSaturation"), m_cgSaturation);
+    glUniform1f(glGetUniformLocation(s_progComposite, "uContrast"),   m_cgContrast);
+    glUniform3f(glGetUniformLocation(s_progComposite, "uLift"),       m_cgLift[0],  m_cgLift[1],  m_cgLift[2]);
+    glUniform3f(glGetUniformLocation(s_progComposite, "uGain"),       m_cgGain[0],  m_cgGain[1],  m_cgGain[2]);
+    glUniform1f(glGetUniformLocation(s_progComposite, "uSharpen"),    m_sharpenStrength);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    // ── Restore GL state ──────────────────────────────────────────────────────
+    glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+    glBindVertexArray(prevVAO);
+    glActiveTexture(GL_TEXTURE0);
+    glUseProgram(m_shaderProgram);
+    if (depthTest)  glEnable(GL_DEPTH_TEST);  else glDisable(GL_DEPTH_TEST);
+    glDepthMask(depthWrite);
+    if (blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFunc(blendSrc, blendDst);
+    glViewport(0, 0, m_width, m_height);
+}
+
+
