@@ -208,7 +208,6 @@ void AddDeadBody(TCharacter *cptr, int phase)
    Characters[ChCount].alpha = CameraAlpha;
    ResetCharacter(&Characters[ChCount]);
 
-   int v = rRand(3);
    if (phase != HUNT_BREATH)
       AddVoicev(fxScream[r].length, fxScream[r].lpData, 256);
 
@@ -620,11 +619,10 @@ void AnimateHuntDead(TCharacter *cptr)
 	//if (!cptr->FTime) ActivateCharacterFx(cptr);
 	
 	ProcessPrevPhase(cptr);
-	BOOL NewPhase = FALSE;
-	
-	cptr->FTime+=TimeDt;      
-    if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime) {		
-		NewPhase = TRUE;		
+
+	cptr->FTime+=TimeDt;
+    if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime) {
+		// SOURCEPORT: removed dead NewPhase local (set but never read in this function)
 		if (cptr->Phase==2)
 			cptr->FTime = cptr->pinfo->Animation[cptr->Phase].AniTime-1;	
 		else
@@ -1264,7 +1262,7 @@ void AnimateRaptor(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
 TBEGIN:
@@ -1521,7 +1519,7 @@ void AnimateVelo(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
 TBEGIN:
@@ -1778,7 +1776,7 @@ void AnimateSpin(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
 TBEGIN:
@@ -2046,7 +2044,7 @@ void AnimateCera(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
 TBEGIN:
@@ -2277,7 +2275,7 @@ void AnimateTRex(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    BOOL LookMode = FALSE;
 
 
@@ -2524,7 +2522,7 @@ void AnimateMosh(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -2707,7 +2705,7 @@ void AnimateBrahi(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;   
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)   
 
 TBEGIN:
    cptr->tgtime = 0;
@@ -2841,7 +2839,7 @@ void AnimateDimet(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -3030,7 +3028,7 @@ void AnimateTric(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -3227,7 +3225,7 @@ void AnimatePac(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -3419,7 +3417,7 @@ void AnimateAnky(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -3610,7 +3608,7 @@ void AnimateSteg(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -3794,7 +3792,7 @@ void AnimatePar(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -3981,7 +3979,7 @@ void AnimateGall(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
 
@@ -4161,7 +4159,7 @@ void AnimateDimor(TCharacter *cptr)
    NewPhase = FALSE;
    int _Phase = cptr->Phase;
    int _FTime = cptr->FTime;
-   float _tgalpha = cptr->tgalpha;
+   // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
       
 
 TBEGIN:
@@ -4371,7 +4369,8 @@ void AnimateCharacters()
     case AI_TREX : if (cptr->Health) AnimateTRex(cptr);  else AnimateTRexDead(cptr);
 		    break;
 
-    case 0       : AnimateHuntDead(cptr); break;			 	
+    case 0       : AnimateHuntDead(cptr); break;
+    default: break;
    }
   }   
 }  

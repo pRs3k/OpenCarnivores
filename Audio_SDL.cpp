@@ -145,10 +145,10 @@ static void SDLCALL AudioCB(void* /*userdata*/, Uint8* stream, int len)
     // ── Clamp and write stereo output ──
     short* out = (short*)stream;
     for (int i = 0; i < n; i++) {
-        out[i * 2]     = (short)std::max(-32768, std::min(32767, L[i]));
-        out[i * 2 + 1] = (short)std::max(-32768, std::min(32767, R[i]));
+        out[static_cast<size_t>(i) * 2]     = (short)std::max(-32768, std::min(32767, L[i]));
+        out[static_cast<size_t>(i) * 2 + 1] = (short)std::max(-32768, std::min(32767, R[i]));
     }
-    if (n < nSamples) memset(out + n * 2, 0, (nSamples - n) * 4);
+    if (n < nSamples) memset(out + static_cast<size_t>(n) * 2, 0, static_cast<size_t>(nSamples - n) * 4);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

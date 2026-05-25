@@ -309,10 +309,10 @@ float GetLandCeilH(float CameraX, float CameraZ)
 
 		if (!(MObjects[ob].info.flags & ofBOUND)) {
          if (MObjects[ob].info.YLo + LandY > h) continue;
-         if (MObjects[ob].info.YLo + LandY < PlayerY+100) continue;         
+         if (MObjects[ob].info.YLo + LandY < PlayerY+100) continue;
 		}
 
-        float r = CR+1;
+        float r;
 
 		if (MObjects[ob].info.flags & ofBOUND)
 		{
@@ -370,7 +370,7 @@ float GetLandQH(float CameraX, float CameraZ)
          //if (MObjects[ob].info.YLo + LandY > PlayerY+256) continue;
 		}
 
-        float r = CR+1;
+        float r;
 
 		if (MObjects[ob].info.flags & ofBOUND)
 		{
@@ -901,6 +901,8 @@ void InitEngine()
        Sun3dPos.y = + 3048;
        Sun3dPos.z = + 3048;
 	   break;
+   default:
+	   break;
    }
 
 	LoadTrophy();
@@ -1120,9 +1122,11 @@ void AddElements(float x, float y, float z, int etype, int cnt)
 		c = ColorSum( ((c & 0xFEFEFE)>>1) , 0x152020);
 #else
 		c = ColorSum( ((c & 0xFEFEFE)>>1) , 0x202015);
-#endif			
+#endif
 		Elements[ElCount].RGBA  = 0xB0000000 + ( ColorSum(c, ColorSum(c,c)) );
-		Elements[ElCount].RGBA2 = 0x40000000 + (c);		
+		Elements[ElCount].RGBA2 = 0x40000000 + (c);
+		break;
+	default:
 		break;
 	}
 			
@@ -1161,8 +1165,10 @@ void AddElements(float x, float y, float z, int etype, int cnt)
 		   case partBubble:
 			    Elements[ElCount].EList[e].speed.x =siRand(40);
 				Elements[ElCount].EList[e].speed.y =rRand(140) + 20;
-				Elements[ElCount].EList[e].speed.z =siRand(40);		
+				Elements[ElCount].EList[e].speed.z =siRand(40);
 				break;
+		   default:
+			    break;
 		}
 	}
 
@@ -1201,7 +1207,7 @@ void MakeShot(float ax, float ay, float az,
 	 bz = az + dl.z;
 	 sres = TraceShot(ax, ay, az, bx, by, bz);
 	 if (sres!=-1) goto ENDTRACE;
-	 ax = bx; ay = by; az = bz;
+	 // SOURCEPORT: removed dead ax=bx/ay=by/az=bz (ax/ay/az not read after last segment)
   }
 
 ENDTRACE:
@@ -1363,7 +1369,8 @@ void AnimateShip()
 	  Ship.FTime-=_TimeDt;
 	  if (Ship.FTime<0) Ship.FTime=0;
 
-	  if (Ship.FTime==0)
+	  // SOURCEPORT: guard cindex before array access (clang-analyzer OOB).
+	  if (Ship.FTime==0 && Ship.cindex != -1)
 		  if (fabs(Characters[Ship.cindex].pos.y - (Ship.pos.y-650 - (Ship.DeltaY-2048))) < 1.f) {
 		      Ship.State = 1;		  	  
 			  AddVoicev(ShipModel.SoundFX[5].length,
@@ -1747,7 +1754,6 @@ void SaveTrophy()
 	char fname[128];
 	wsprintf(fname, "trophy0%d.sav", TrophyRoom.RegNumber);
 
-	int r = TrophyRoom.Rank;
 	TrophyRoom.Rank = 0;
 	if (TrophyRoom.Score >= 100) TrophyRoom.Rank = 1;
 	if (TrophyRoom.Score >= 300) TrophyRoom.Rank = 2;

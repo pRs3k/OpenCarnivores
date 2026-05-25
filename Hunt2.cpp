@@ -703,7 +703,6 @@ SKIPWIND:
 	                &wptr->chinfo[CurrentWeapon].Animation[wptr->state-1], wptr->FTime, 1.0);
   XRLOG("WpnMorphDone");
 
-  b = (float)sin((float)RealTime / 300.f) / 100.f;     
   wpnDAlpha = wptr->shakel * (float)sin((float)RealTime / 300.f+pi/2) / 200.f;
   wpnDBeta  = wptr->shakel * (float)sin((float)RealTime / 300.f) / 400.f;
   nv.z = 0;
@@ -2102,8 +2101,8 @@ void ProcessGame()
 
             // eyeCW/eyeCH are focal lengths in eye-image pixels (EyeWidth/EyeHeight units).
             // Now that WinW/WinH == EyeWidth/EyeHeight, no rescaling is needed.
-            VideoCX = (int)(eyeVCXFrac * (float)WinW + 0.5f);
-            VideoCY = (int)(eyeVCYFrac * (float)WinH + 0.5f);
+            VideoCX = (int)lroundf(eyeVCXFrac * (float)WinW); // SOURCEPORT: lroundf for correct rounding
+            VideoCY = (int)lroundf(eyeVCYFrac * (float)WinH);
             CameraW = eyeCW;
             CameraH = eyeCH;
             // SOURCEPORT: apply binocular zoom to eye-specific camera
@@ -2234,31 +2233,23 @@ void ProcessGame()
             };
             d3dUpdateProjection(proj);
         }
-        // SOURCEPORT: Phase 2.1 - Render shadow maps before main scene
-        extern bool g_enableShadows;
+        // SOURCEPORT: Path B world shadow pass — reconstruct world pos in depth shader.
         extern RendererGL* g_glRenderer;
-        if (g_enableShadows && g_Renderer) {
-            if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
-                // Update light direction from sun position
-                if (Sun3dPos.z < -512.f) {  // Sun is behind camera (not facing player)
-                    pipeline->SetLightDirection(Sun3dPos.x / 1024.f, Sun3dPos.y / 1024.f, Sun3dPos.z / 1024.f);
-                } else {
-                    // Default: upper-right light when sun is in front
-                    pipeline->SetLightDirection(0.6f, 0.6f, 0.2f);
-                }
-
-                // Update cascade matrices from camera position
-                if (g_glRenderer) {
-                    pipeline->UpdateShadowMatrices(&CameraX, nullptr, 0.f, 1.f);
-
-                    // Render depth pass for each cascade
-                    for (int cascade = 0; cascade < 3; ++cascade) {
-                        g_glRenderer->BeginShadowCascade(cascade);
-                        DrawScene();
-                        g_glRenderer->EndShadowPass();
-                    }
-                }
-            }
+        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0) {
+            // Compute fresh trig from current camera angles (don't rely on stale globals).
+            float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
+            float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
+            float _cg = cosf(CameraGamma), _sg = sinf(CameraGamma);
+            g_glRenderer->SetCameraWorldUniforms(
+                (float)VideoCX, (float)VideoCY, CameraW, CameraH,
+                CameraX, CameraY, CameraZ,
+                _ca, _sa, _cb, _sb, _cg, _sg);
+            // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
+            // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
+            g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
+            g_glRenderer->BeginWorldShadowPass();
+            DrawScene();
+            g_glRenderer->EndWorldShadowPass();
         }
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -2273,31 +2264,22 @@ void ProcessGame()
     } else
 #endif
     {
-        // SOURCEPORT: Phase 2.1 - Render shadow maps before main scene (flatscreen)
-        extern bool g_enableShadows;
+        // SOURCEPORT: Path B world shadow pass (flatscreen) — reconstruct world pos in depth shader.
         extern RendererGL* g_glRenderer;
-        if (g_enableShadows && g_Renderer) {
-            if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
-                // Update light direction from sun position
-                if (Sun3dPos.z < -512.f) {  // Sun is behind camera
-                    pipeline->SetLightDirection(Sun3dPos.x / 1024.f, Sun3dPos.y / 1024.f, Sun3dPos.z / 1024.f);
-                } else {
-                    // Default: upper-right light when sun is in front
-                    pipeline->SetLightDirection(0.6f, 0.6f, 0.2f);
-                }
-
-                // Update cascade matrices from camera position
-                if (g_glRenderer) {
-                    pipeline->UpdateShadowMatrices(&CameraX, nullptr, 0.f, 1.f);
-
-                    // Render depth pass for each cascade
-                    for (int cascade = 0; cascade < 3; ++cascade) {
-                        g_glRenderer->BeginShadowCascade(cascade);
-                        DrawScene();
-                        g_glRenderer->EndShadowPass();
-                    }
-                }
-            }
+        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0) {
+            float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
+            float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
+            float _cg = cosf(CameraGamma), _sg = sinf(CameraGamma);
+            g_glRenderer->SetCameraWorldUniforms(
+                (float)VideoCX, (float)VideoCY, CameraW, CameraH,
+                CameraX, CameraY, CameraZ,
+                _ca, _sa, _cb, _sb, _cg, _sg);
+            // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
+            // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
+            g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
+            g_glRenderer->BeginWorldShadowPass();
+            DrawScene();
+            g_glRenderer->EndWorldShadowPass();
         }
 
         DrawScene();
@@ -2323,12 +2305,6 @@ void ProcessGame()
 
     drawSceneStage = "ShowVideo";
     ShowVideo();
-    // SOURCEPORT: Phase 1 post-processing effects (flatscreen)
-    if (g_Renderer) {
-        if (PostProcessingPipeline* pipeline = (PostProcessingPipeline*)g_Renderer->GetPostProcessingPipeline()) {
-            pipeline->ApplyEffects();
-        }
-    }
     drawSceneStage = "frameDone";
 }
 
@@ -2615,7 +2591,6 @@ int main(int argc, char* argv[])
             bool huntReady = RunMenus(appQuit, returnToHunt, TrophyMode);
             PrintLog(appQuit ? "RunMenus: appQuit\n" : (huntReady ? "RunMenus: huntReady\n" : "RunMenus: cancelled\n"));
             if (appQuit || !huntReady) {
-                appRunning = false;
                 break;
             }
             // RunMenus set ProjectName, TargetDino, WeaponPres, etc.
@@ -2688,38 +2663,22 @@ int main(int argc, char* argv[])
                             GameState_ = 0;    // triggers ReInitGame() on next ProcessGame()
                         }
                     }
-                    if (vk == 0x77) { // VK_F8 — cycle PBR debug mode
+                    if (vk == 0x77) { // VK_F8 — cycle renderer debug mode (0-9)
                         extern RendererGL* g_glRenderer;
                         static int s_pbrDebugMode = 0;
-                        s_pbrDebugMode = (s_pbrDebugMode + 1) % 26;
+                        s_pbrDebugMode = (s_pbrDebugMode + 1) % 10;
                         if (g_glRenderer) g_glRenderer->SetDebugMode(s_pbrDebugMode);
                         static char* kModeNames[] = {
-                            (char*)"DEBUG off: normal rendering",
-                            (char*)"DEBUG 1: PBR disabled",
-                            (char*)"DEBUG 2: PBR pixels magenta",
+                            (char*)"DEBUG 0: normal rendering",
+                            (char*)"DEBUG 1: PBR disabled (Lambert only)",
+                            (char*)"DEBUG 2: PBR-active pixels magenta",
                             (char*)"DEBUG 3: vertex color only",
-                            (char*)"DEBUG 4: raw texel (biased LOD)",
-                            (char*)"DEBUG 5: solid gray (geometry test)",
-                            (char*)"DEBUG 6: force mip0 texture",
-                            (char*)"DEBUG 7: LOD heatmap (blue=low red=high)",
-                            (char*)"DEBUG 8: UV fract RG",
-                            (char*)"DEBUG 9: no alpha test - gone=coverage cause",
-                            (char*)"DEBUG 10: terrain texture / foliage=gray",
-                            (char*)"DEBUG 11: UV fract x100 (manual noperspective path)",
-                            (char*)"DEBUG 12: fog factor grayscale",
-                            (char*)"DEBUG 13: fog disabled",
-                            (char*)"DEBUG 14: UV fract x100 (GL smooth path) - no pillar=use smooth",
-                            (char*)"DEBUG 15: |smooth-manual| UV diff x10 - bright=source of drift",
-                            (char*)"DEBUG 16: vRhw depth (near=bright) - anomaly=bad rhw on foliage",
-                            (char*)"DEBUG 17: NO FOLIAGE (circle persists)",
-                            (char*)"DEBUG 18: TERRAIN=gray (circle persists)",
-                            (char*)"DEBUG 19: opaque only (circle persists)",
-                            (char*)"DEBUG 20: depth heatmap (bright=near)",
-                            (char*)"DEBUG 21: Light heatmap (bright=high Light value)",
-                            (char*)"DEBUG 22: flat magenta (circle disappears)",
-                            (char*)"DEBUG 23: near-distance heatmap (magenta=<100GU from camera)",
-                            (char*)"DEBUG 24: vTC fract x4 (perspective-correct UVs) — grid=correct",
-                            (char*)"DEBUG 25: vRhw visualization (smooth gradient if OK)"
+                            (char*)"DEBUG 4: solid gray (geometry coverage)",
+                            (char*)"DEBUG 5: fog factor grayscale (1=clear 0=fogged)",
+                            (char*)"DEBUG 6: fog disabled",
+                            (char*)"DEBUG 7: flat magenta (shader running check)",
+                            (char*)"DEBUG 8: shadow-map depth (white=empty/far gray=depth-data)",
+                            (char*)"DEBUG 9: shadow UV as RG gradient (uniform=world-pos broken)",
                         };
                         AddMessage(kModeNames[s_pbrDebugMode]);
                     }
@@ -2737,15 +2696,70 @@ int main(int argc, char* argv[])
                         if (vk == 'U') SwitchMode((LPSTR)"Sun rendering",  DBG_NO_SUN);
                         if (vk == 'Y') SwitchMode((LPSTR)"Sky plane",      DBG_NO_SKY);
                         if (vk == 'O') SwitchMode((LPSTR)"Fog rendering",  FOGENABLE);
-                        // SOURCEPORT: Phase 2.1 shadow debugging
+                        // SOURCEPORT: Shift+S — toggle world shadows (Path B)
                         if (vk == 'S') {
-                            extern bool g_enableShadows;
-                            extern float g_shadowIntensity;
-                            g_enableShadows = !g_enableShadows;
-                            char buf[256];
-                            snprintf(buf, sizeof(buf), "Shadows %s (intensity %.1f)",
-                                    g_enableShadows ? "ON" : "OFF", g_shadowIntensity);
-                            AddMessage(buf);
+                            extern class RendererGL* g_glRenderer;
+                            if (g_glRenderer) {
+                                int mode = g_glRenderer->GetShadowMode() == 0 ? 2 : 0;
+                                g_glRenderer->SetShadowMode(mode);
+                                AddMessage(mode ? (char*)"World shadows ON" : (char*)"World shadows OFF");
+                            }
+                        }
+                        // SOURCEPORT: Shift+P — toggle bloom post-process overlay
+                        if (vk == 'P') {
+                            extern class RendererGL* g_glRenderer;
+                            if (g_glRenderer) {
+                                g_glRenderer->EnablePostOverlay(!g_glRenderer->IsPostOverlayEnabled());
+                                AddMessage(g_glRenderer->IsPostOverlayEnabled()
+                                    ? (char*)"Bloom ON" : (char*)"Bloom OFF");
+                            }
+                        }
+                        // SOURCEPORT: Shift+Z — toggle sharpen (0 = off, 0.6 = default)
+                        if (vk == 'Z') {
+                            extern class RendererGL* g_glRenderer;
+                            if (g_glRenderer) {
+                                float s = g_glRenderer->GetSharpenStrength() > 0.0f ? 0.0f : 0.6f;
+                                g_glRenderer->SetSharpenStrength(s);
+                                AddMessage(s > 0.0f ? (char*)"Sharpen ON" : (char*)"Sharpen OFF");
+                            }
+                        }
+                        // SOURCEPORT: Shift+C — toggle color grading (saturation + contrast + lift/gain)
+                        if (vk == 'C') {
+                            extern class RendererGL* g_glRenderer;
+                            if (g_glRenderer) {
+                                g_glRenderer->SetColorGradingEnabled(!g_glRenderer->IsColorGradingEnabled());
+                                AddMessage(g_glRenderer->IsColorGradingEnabled()
+                                    ? (char*)"Color grading ON" : (char*)"Color grading OFF");
+                            }
+                        }
+                        // SOURCEPORT: Shift+T — toggle ACES filmic tone mapping on/off
+                        if (vk == 'T') {
+                            extern class RendererGL* g_glRenderer;
+                            if (g_glRenderer) {
+                                int mode = g_glRenderer->GetToneMappingMode() == 0 ? 1 : 0;
+                                g_glRenderer->SetToneMappingMode(mode);
+                                AddMessage(mode ? (char*)"Tone mapping: ACES filmic" : (char*)"Tone mapping OFF");
+                            }
+                        }
+                        // Cascade visualization: Shift+D cycles through cascades 0, 1, 2, off
+                        if (vk == 'D') {
+                            extern class RendererGL* g_glRenderer;
+                            if (g_glRenderer) {
+                                auto* pipeline = (PostProcessingPipeline*)g_glRenderer->GetPostProcessingPipeline();
+                                if (pipeline) {
+                                    int cascade = pipeline->GetDebugShadowVisualization();
+                                    cascade = (cascade + 1) % 4;  // 0, 1, 2, -1 (off), back to 0
+                                    if (cascade == 3) cascade = -1;
+                                    pipeline->SetDebugShadowVisualization(cascade);
+                                    char buf[256];
+                                    if (cascade < 0) {
+                                        snprintf(buf, sizeof(buf), "Shadow debug OFF");
+                                    } else {
+                                        snprintf(buf, sizeof(buf), "Shadow debug CASCADE %d", cascade);
+                                    }
+                                    AddMessage(buf);
+                                }
+                            }
                         }
                     }
                     break; }
@@ -2770,6 +2784,8 @@ int main(int argc, char* argv[])
                 case SDL_CONTROLLERBUTTONDOWN:
                 case SDL_CONTROLLERBUTTONUP:
                     Gamepad::HandleEvent(ev);
+                    break;
+                default:
                     break;
                 }
             }
@@ -2813,7 +2829,6 @@ int main(int argc, char* argv[])
                     g_returnToMenus = false;
                     ReleaseResources();
                     huntDone  = true;
-                    needMenus = true;
                 }
             }
         }

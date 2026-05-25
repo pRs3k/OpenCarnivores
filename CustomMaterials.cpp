@@ -405,6 +405,7 @@ void Apply(const Material* m, const float* projMatrix) {
             case 2: glUniform2f (u.loc, u.v[0], u.v[1]); break;
             case 3: glUniform3f (u.loc, u.v[0], u.v[1], u.v[2]); break;
             case 4: glUniform4f (u.loc, u.v[0], u.v[1], u.v[2], u.v[3]); break;
+            default: break;
         }
     }
 }
