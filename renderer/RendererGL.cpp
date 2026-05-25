@@ -2157,7 +2157,10 @@ void RendererGL::BeginWorldShadowPass() {
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(2.f, 4.f);  // prevent terrain self-shadow acne
+    // SOURCEPORT: scale constant offset with shadow range to maintain bias across
+    // different view distances. Larger range = less depth precision = need more bias.
+    float offsetScale = m_shadowRange / 16000.f;
+    glPolygonOffset(2.5f, 4.f * offsetScale);  // prevent terrain self-shadow acne
 
     m_shadowPassActive = true; // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
     // ── Upload uniforms to depth shader ───────────────────────────────────────
