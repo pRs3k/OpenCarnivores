@@ -529,8 +529,14 @@ bool RendererGL::Init(void* windowHandle, int width, int height) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
                      WORLD_SHADOW_SIZE, WORLD_SHADOW_SIZE,
                      0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        // SOURCEPORT: GL_LINEAR + GL_COMPARE_REF_TO_TEXTURE enables hardware PCF:
+        // the GPU bilinearly blends 4 depth comparisons per sample, giving smooth
+        // shadow edges without a staircase pattern. sampler2DShadow in the shader
+        // then returns a continuous [0,1] lit factor instead of a binary result.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
         float border[] = {1.f, 1.f, 1.f, 1.f};

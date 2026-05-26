@@ -32,9 +32,9 @@ uniform int uDebugMode;
 // SOURCEPORT: world shadow mapping.
 // uWorldShadow gates shadow sampling; uShadowMap is bound to unit 4.
 // uLightSpace projects world position to shadow NDC for depth comparison.
-uniform bool      uWorldShadow;
-uniform sampler2D uShadowMap;
-uniform mat4      uLightSpace;
+uniform bool            uWorldShadow;
+uniform sampler2DShadow uShadowMap;  // SOURCEPORT: hardware PCF — GL_COMPARE_REF_TO_TEXTURE
+uniform mat4            uLightSpace;
 uniform float     uShadowStrength;
 uniform float     uShadowBias;      // SOURCEPORT: one texel in NDC depth, computed CPU-side
 
@@ -166,11 +166,11 @@ void main() {
         vec3 proj  = lsPos.xyz / lsPos.w;
         proj = proj * 0.5 + 0.5;  // NDC [-1,1] → UV [0,1]
 
-        // SOURCEPORT: mode 8 = shadow-map depth sampled at this fragment's UV (clamped,
-        // no frustum gate). White=unwritten/far, gray/black=geometry recorded by depth pass.
-        // If the whole screen is white the depth pass produced no data.
+        // SOURCEPORT: mode 8 = receiver depth in light space (proj.z ∈ [0,1]).
+        // White=far from light, dark=close. Shadow map uses sampler2DShadow so
+        // raw texel reads are unavailable; proj.z is the equivalent diagnostic.
         if (uDebugMode == 8) {
-            float d = texture(uShadowMap, clamp(proj.xy, 0.0, 1.0)).r;
+            float d = proj.z;
             FragColor = vec4(d, d, d, 1.0);
             return;
         }
@@ -188,21 +188,22 @@ void main() {
         // passes the gate and spuriously darkens everything in that view.
         if (proj.z >= 0.0 && proj.z < 1.0 && proj.x >= 0.0 && proj.x <= 1.0 &&
                                               proj.y >= 0.0 && proj.y <= 1.0) {
-            // SOURCEPORT: slope-scaled receiver bias.
-            // uShadowBias (≈60 GU, CPU-computed) covers flat terrain.
-            // Sloped surfaces need additional bias proportional to how fast the
-            // shadow depth (proj.z) changes per screen pixel — dFdx/dFdy of proj.z
-            // directly measures that slope-induced error in NDC depth space.
-            // Multiplier 4.0 is empirical; covers the steepest terrain hills without
-            // causing visible Peter-panning at the game's scale (133 GU/m).
-            float slopeBias = max(abs(dFdx(proj.z)), abs(dFdy(proj.z))) * 4.0;
-            float bias = uShadowBias + slopeBias;
+            // SOURCEPORT: hardware-filtered PCF (sampler2DShadow + GL_LEQUAL).
+            // Each texture() call bilinearly blends 4 depth comparisons, giving a
+            // continuous lit factor in [0,1] at shadow boundaries — no staircase.
+            // The 3×3 kernel adds extra softness (total footprint ≈ 5×5 texels).
+            // ref = proj.z - uShadowBias shifts the comparison so the receiver
+            // needs to be ≥60 GU farther than the caster before it reads as shadow,
+            // preventing self-shadowing acne on flat and moderately sloped terrain.
+            float bias   = uShadowBias;
             float shadow = 0.0;
             vec2 ts = 1.0 / vec2(textureSize(uShadowMap, 0));
             for (int ox = -1; ox <= 1; ++ox) {
                 for (int oy = -1; oy <= 1; ++oy) {
-                    float d = texture(uShadowMap, proj.xy + vec2(ox, oy) * ts).r;
-                    shadow += (proj.z - bias > d) ? 1.0 : 0.0;
+                    // texture() on sampler2DShadow with GL_LEQUAL returns 1.0 (lit)
+                    // when ref ≤ stored depth, 0.0 (shadow) when ref > stored depth.
+                    float lit = texture(uShadowMap, vec3(proj.xy + vec2(ox, oy) * ts, proj.z - bias));
+                    shadow += 1.0 - lit;
                 }
             }
             shadow /= 9.0;
