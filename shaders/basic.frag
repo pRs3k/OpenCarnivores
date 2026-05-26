@@ -188,11 +188,15 @@ void main() {
         // passes the gate and spuriously darkens everything in that view.
         if (proj.z >= 0.0 && proj.z < 1.0 && proj.x >= 0.0 && proj.x <= 1.0 &&
                                               proj.y >= 0.0 && proj.y <= 1.0) {
-            // SOURCEPORT: bias = one shadow-map texel in NDC depth space.
-            // Computed CPU-side as (2*range/mapSize) / (far_z - near_z) so it
-            // scales correctly with both view distance and far_z without any
-            // per-fragment approximation.
-            float bias = uShadowBias;
+            // SOURCEPORT: slope-scaled receiver bias.
+            // uShadowBias (≈60 GU, CPU-computed) covers flat terrain.
+            // Sloped surfaces need additional bias proportional to how fast the
+            // shadow depth (proj.z) changes per screen pixel — dFdx/dFdy of proj.z
+            // directly measures that slope-induced error in NDC depth space.
+            // Multiplier 4.0 is empirical; covers the steepest terrain hills without
+            // causing visible Peter-panning at the game's scale (133 GU/m).
+            float slopeBias = max(abs(dFdx(proj.z)), abs(dFdy(proj.z))) * 4.0;
+            float bias = uShadowBias + slopeBias;
             float shadow = 0.0;
             vec2 ts = 1.0 / vec2(textureSize(uShadowMap, 0));
             for (int ox = -1; ox <= 1; ++ox) {
