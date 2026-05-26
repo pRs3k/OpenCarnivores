@@ -2169,11 +2169,13 @@ void RendererGL::BeginWorldShadowPass() {
     // independent of far_z (the far-z scaling cancels in the depth slope formula),
     // so static values are correct here.
     glPolygonOffset(2.f, 4.f);
-    // SOURCEPORT: store NDC bias = one shadow-texel width in depth space.
-    // Texel size in GU = 2*range / WORLD_SHADOW_SIZE; divided by (far_z - near_z)
-    // gives a bias that exactly equals one texel of world-space depth error.
-    // This scales automatically with both range and far_z across all view distances.
-    m_shadowBiasNDC = (2.f * range / (float)WORLD_SHADOW_SIZE) / (far_z - near_z);
+    // SOURCEPORT: shadow bias in NDC depth space.
+    // Target ≈ 60 GU of world-space bias (empirically matches the original working
+    // value of bias=0.003 × old far_z=20000).  60 GU covers steep terrain slopes
+    // without causing visible Peter-panning at the game's scale (133 GU/m).
+    // Expressed as a fraction of (far_z − near_z) so it stays at 60 GU regardless
+    // of how far_z changes with view distance.
+    m_shadowBiasNDC = 60.f / (far_z - near_z);
 
     m_shadowPassActive = true; // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
     // ── Upload uniforms to depth shader ───────────────────────────────────────
