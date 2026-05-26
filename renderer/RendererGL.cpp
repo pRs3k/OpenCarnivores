@@ -2125,12 +2125,17 @@ void RendererGL::BeginWorldShadowPass() {
     // SOURCEPORT: left-handed ortho — Z_view is positive for objects in front
     // (Z_view = dist for camera pos). +2/(far-near) maps [near,far]→NDC[-1,+1].
     // The previous -2/(far-near) mapped Z_view≈10000 to NDC≈-2, clipping everything.
-    // SOURCEPORT: m_shadowRange is set each frame from ctViewR*256*1.5 (Hunt2.cpp)
-    // so the frustum covers the full view circle in any direction.  far_z must grow
-    // with range: max terrain z_light ≈ dist + range * sin(45°) ≈ dist + range*0.7,
-    // so 2*(dist+range) safely covers all terrain depths in the depth pass.
+    //
+    // SOURCEPORT: far_z sizing analysis.
+    // The fragment shader gate (proj.z < 1.0) excludes any fragment whose
+    // z_light > far_z, cutting off shadows short.
+    // For terrain at world distance R from the camera, the maximum z_light
+    // (along the light's forward axis) is:
+    //   z_light_max = dist + R * |fwd_horiz| = dist + R * 0.577   (for K=0.5 sun)
+    // So far_z must satisfy: far_z > dist + range * 0.577.
+    // Use 0.75 (0.577 + 30% margin) to cover all view directions and K values.
     const float range  = m_shadowRange;
-    const float near_z = 1.0f, far_z = 2.0f * (dist + range);
+    const float near_z = 1.0f, far_z = dist + range * 0.75f;
     float proj[16] = {
         1.f/range, 0.f,       0.f,                       0.f,
         0.f,       1.f/range, 0.f,                       0.f,
@@ -2160,11 +2165,15 @@ void RendererGL::BeginWorldShadowPass() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_POLYGON_OFFSET_FILL);
     // SOURCEPORT: polygon offset prevents terrain self-shadow acne in the depth pass.
-    // far_z now scales with range, which compresses the slope in NDC; the slope factor
-    // must scale inversely so the world-space bias stays constant.
-    // Constant units (4) stay fixed — minimum depth step is independent of far_z.
-    float farScale = far_z / 20000.f;  // 20000 was the original fixed far_z
-    glPolygonOffset(2.f * farScale, 4.f);
+    // For orthographic projection the world-space effect of the slope factor is
+    // independent of far_z (the far-z scaling cancels in the depth slope formula),
+    // so static values are correct here.
+    glPolygonOffset(2.f, 4.f);
+    // SOURCEPORT: store NDC bias = one shadow-texel width in depth space.
+    // Texel size in GU = 2*range / WORLD_SHADOW_SIZE; divided by (far_z - near_z)
+    // gives a bias that exactly equals one texel of world-space depth error.
+    // This scales automatically with both range and far_z across all view distances.
+    m_shadowBiasNDC = (2.f * range / (float)WORLD_SHADOW_SIZE) / (far_z - near_z);
 
     m_shadowPassActive = true; // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
     // ── Upload uniforms to depth shader ───────────────────────────────────────
@@ -2211,6 +2220,8 @@ void RendererGL::EndWorldShadowPass() {
     glUniformMatrix4fv(loc, 1, GL_FALSE, m_worldLightMatrix);
     loc = glGetUniformLocation(m_shaderProgram, "uShadowStrength");
     glUniform1f(loc, m_shadowStrength);
+    loc = glGetUniformLocation(m_shaderProgram, "uShadowBias");
+    glUniform1f(loc, m_shadowBiasNDC);
 }
 
 // SOURCEPORT: Post-process overlay — bloom implementation.

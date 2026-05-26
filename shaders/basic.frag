@@ -36,6 +36,7 @@ uniform bool      uWorldShadow;
 uniform sampler2D uShadowMap;
 uniform mat4      uLightSpace;
 uniform float     uShadowStrength;
+uniform float     uShadowBias;      // SOURCEPORT: one texel in NDC depth, computed CPU-side
 
 out vec4 FragColor;
 
@@ -187,13 +188,11 @@ void main() {
         // passes the gate and spuriously darkens everything in that view.
         if (proj.z >= 0.0 && proj.z < 1.0 && proj.x >= 0.0 && proj.x <= 1.0 &&
                                               proj.y >= 0.0 && proj.y <= 1.0) {
-            // SOURCEPORT: slope-based bias via screen-space derivatives.
-            // dFdx/dFdy give the rate of depth change per pixel in shadow space;
-            // their magnitude represents the shadow-map slope at this fragment.
-            // This auto-scales with view distance and terrain steepness, eliminating
-            // banding without Peter-panning. A small floor prevents acne on flat ground.
-            float slopeBias = max(abs(dFdx(proj.z)), abs(dFdy(proj.z))) * 3.0;
-            float bias = max(slopeBias, 0.0002);
+            // SOURCEPORT: bias = one shadow-map texel in NDC depth space.
+            // Computed CPU-side as (2*range/mapSize) / (far_z - near_z) so it
+            // scales correctly with both view distance and far_z without any
+            // per-fragment approximation.
+            float bias = uShadowBias;
             float shadow = 0.0;
             vec2 ts = 1.0 / vec2(textureSize(uShadowMap, 0));
             for (int ox = -1; ox <= 1; ++ox) {

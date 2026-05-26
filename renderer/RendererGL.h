@@ -263,6 +263,7 @@ private:
     int    m_shadowMode       = 0;      // 0=none, 2=full
     float  m_shadowStrength   = 0.5f;
     float  m_shadowRange      = 16000.f; // SOURCEPORT: ortho half-extent (GU); updated from ctViewR
+    float  m_shadowBiasNDC    = 0.001f;  // SOURCEPORT: computed in BeginWorldShadowPass, uploaded in End
     float  m_worldLightMatrix[16] = {}; // combined light view-proj (column-major)
     // Camera-to-world uniforms — filled by SetCameraWorldUniforms each frame
     float  m_camToWorld[9]      = {};   // R^T column-major mat3
