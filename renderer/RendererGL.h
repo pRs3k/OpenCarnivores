@@ -275,8 +275,9 @@ private:
     // SOURCEPORT: true while the depth-only shadow pass owns DrawScene().
     // UnlockAndDraw* re-asserts m_depthShaderProgram before each draw so that
     // BindCustomMaterial(nullptr) / UpdateProjection() etc. cannot stomp it.
-    bool   m_shadowPassActive   = false;
-    GLint  m_depthLocAlphaTest  = -1;  // uAlphaTest location in m_depthShaderProgram
+    bool   m_shadowPassActive      = false;
+    bool   m_shadowGeomSuppressed  = false; // SOURCEPORT: true while zWrite=false (water/blend) during depth pass
+    GLint  m_depthLocAlphaTest     = -1;    // uAlphaTest location in m_depthShaderProgram
 
     // SOURCEPORT: world-space shadow batch (ws_depth.vert path)
     GLuint m_wsDepthProgram  = 0;

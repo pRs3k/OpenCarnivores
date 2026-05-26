@@ -1169,6 +1169,11 @@ void RendererGL::UnlockAndDrawTriangles(int triCount1, int triCount2) {
     int totalVerts = (triCount1 + triCount2) * 3;
     if (totalVerts <= 0) return;
 
+    // SOURCEPORT: skip transparent geometry (water, env-map overlays) during shadow pass.
+    // SetRenderStates(false,...) sets m_shadowGeomSuppressed; those surfaces must not
+    // write to the shadow map or they cast a spurious shadow on the terrain below.
+    if (m_shadowPassActive && m_shadowGeomSuppressed) return;
+
     // SOURCEPORT: re-assert depth program before every draw during the shadow pass.
     // BindCustomMaterial(nullptr) and UpdateProjection() both call glUseProgram(m_shaderProgram),
     // which would stomp the depth program set in BeginWorldShadowPass().
@@ -1202,6 +1207,9 @@ RenderVertex* RendererGL::LockGeometryBuffer() {
 void RendererGL::UnlockAndDrawGeometry(int vertexCount, bool colorKey) {
     if (vertexCount <= 0) return;
 
+    // SOURCEPORT: skip transparent geometry during shadow pass (same guard as UnlockAndDrawTriangles).
+    if (m_shadowPassActive && m_shadowGeomSuppressed) return;
+
     // SOURCEPORT: re-assert depth program before every draw during the shadow pass.
     // BindCustomMaterial(nullptr) and UpdateProjection() both call glUseProgram(m_shaderProgram),
     // which would stomp the depth program set in BeginWorldShadowPass().
@@ -1224,12 +1232,13 @@ void RendererGL::UnlockAndDrawGeometry(int vertexCount, bool colorKey) {
 // --- Render state ---
 
 void RendererGL::SetRenderStates(bool zWrite, int dstBlend) {
-    // SOURCEPORT: during the shadow pass the game calls SetRenderStates(false,...)
-    // for transparent/additive geometry (water, env-map overlays), which would
-    // disable depth writes and leave the shadow FBO empty.  Ignore all state
-    // changes during the depth-only pass except keeping glDepthMask on.
+    // SOURCEPORT: during the shadow depth pass, track whether the game has entered
+    // a transparent-geometry phase (zWrite=false = water, env-map overlays, etc.).
+    // When suppressed, UnlockAndDraw* skip those draw calls so transparent surfaces
+    // don't write to the shadow map and cast spurious shadows on the terrain below.
+    // Depth mask stays on so opaque geometry drawn before/after keeps working.
     if (m_shadowPassActive) {
-        glDepthMask(GL_TRUE);
+        m_shadowGeomSuppressed = !zWrite;
         return;
     }
     m_zWriteEnabled = zWrite;
@@ -2183,7 +2192,8 @@ void RendererGL::BeginWorldShadowPass() {
     // of how far_z changes with view distance.
     m_shadowBiasNDC = 60.f / (far_z - near_z);
 
-    m_shadowPassActive = true; // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
+    m_shadowPassActive     = true;  // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
+    m_shadowGeomSuppressed = false; // SOURCEPORT: reset; SetRenderStates(false,...) sets this for water/blend
     // ── Upload uniforms to depth shader ───────────────────────────────────────
     glUseProgram(m_depthShaderProgram);
     GLint loc;
