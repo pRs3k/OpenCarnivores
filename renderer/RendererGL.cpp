@@ -2125,10 +2125,12 @@ void RendererGL::BeginWorldShadowPass() {
     // SOURCEPORT: left-handed ortho — Z_view is positive for objects in front
     // (Z_view = dist for camera pos). +2/(far-near) maps [near,far]→NDC[-1,+1].
     // The previous -2/(far-near) mapped Z_view≈10000 to NDC≈-2, clipping everything.
-    // SOURCEPORT: m_shadowRange is set each frame from ctViewR*256 so shadow
-    // coverage matches the player's configured view distance exactly.
-    const float range = m_shadowRange;
-    const float near_z = 1.0f, far_z = 2.0f * dist;
+    // SOURCEPORT: m_shadowRange is set each frame from ctViewR*256*1.5 (Hunt2.cpp)
+    // so the frustum covers the full view circle in any direction.  far_z must grow
+    // with range: max terrain z_light ≈ dist + range * sin(45°) ≈ dist + range*0.7,
+    // so 2*(dist+range) safely covers all terrain depths in the depth pass.
+    const float range  = m_shadowRange;
+    const float near_z = 1.0f, far_z = 2.0f * (dist + range);
     float proj[16] = {
         1.f/range, 0.f,       0.f,                       0.f,
         0.f,       1.f/range, 0.f,                       0.f,
@@ -2157,10 +2159,12 @@ void RendererGL::BeginWorldShadowPass() {
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_POLYGON_OFFSET_FILL);
-    // SOURCEPORT: scale constant offset with shadow range to maintain bias across
-    // different view distances. Larger range = less depth precision = need more bias.
-    float offsetScale = m_shadowRange / 16000.f;
-    glPolygonOffset(2.5f, 4.f * offsetScale);  // prevent terrain self-shadow acne
+    // SOURCEPORT: polygon offset prevents terrain self-shadow acne in the depth pass.
+    // far_z now scales with range, which compresses the slope in NDC; the slope factor
+    // must scale inversely so the world-space bias stays constant.
+    // Constant units (4) stay fixed — minimum depth step is independent of far_z.
+    float farScale = far_z / 20000.f;  // 20000 was the original fixed far_z
+    glPolygonOffset(2.f * farScale, 4.f);
 
     m_shadowPassActive = true; // SOURCEPORT: guards UnlockAndDraw* to re-assert depth program
     // ── Upload uniforms to depth shader ───────────────────────────────────────

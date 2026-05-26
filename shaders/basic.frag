@@ -4,6 +4,7 @@ noperspective in float vFog;
 smooth        in vec2  vTexCoord;
 noperspective in vec2  vTexCoordR;
 noperspective in float vRhw;
+noperspective in vec3  vWorldPos;
 
 uniform sampler2D uTexture;
 uniform bool uFogEnabled;
@@ -21,9 +22,20 @@ uniform float     uMetallicFactor;
 uniform float     uRoughnessFactor;
 uniform vec3      uSunDirView;
 
-// SOURCEPORT: debug visualization mode (toggled at runtime with F8).
-// 0 = normal, 1 = PBR disabled (Lambert only), 2 = PBR-active fragments shown as magenta.
+// SOURCEPORT: debug visualization mode (F8 cycles 0-9 in-game).
+// 0 = normal          1 = PBR off         2 = PBR-pixels magenta
+// 3 = vertex color    4 = solid gray       5 = fog factor grayscale
+// 6 = fog disabled    7 = flat magenta     8 = shadow-map depth
+// 9 = shadow factor
 uniform int uDebugMode;
+
+// SOURCEPORT: world shadow mapping.
+// uWorldShadow gates shadow sampling; uShadowMap is bound to unit 4.
+// uLightSpace projects world position to shadow NDC for depth comparison.
+uniform bool      uWorldShadow;
+uniform sampler2D uShadowMap;
+uniform mat4      uLightSpace;
+uniform float     uShadowStrength;
 
 out vec4 FragColor;
 
@@ -68,8 +80,6 @@ void main() {
     // creating a systematic UV bias that manifests as a bright circle in screen-center
     // on some depths. Depth-based LOD (from noperspective vRhw) is unaffected by
     // NVIDIA's rasterizer precision and eliminates the headlamp on all GPUs.
-    // For alpha-tested geometry (foliage): this also eliminates headbob-driven strobe
-    // (derivatives oscillate with vertex Y during headbob, but depth doesn't).
     float lod;
     {
         float camZ = 1.0 / max(vRhw, 1e-6);
@@ -77,86 +87,30 @@ void main() {
     }
     // SOURCEPORT: for alpha-tested geometry (foliage) snap UV to the nearest texel
     // centre and always sample mip level 0.
-    //
     // Two issues prevented faithful leaf rendering:
-    //   1. Bilinear UV blending (smooth vTC) sampled adjacent transparent texels,
-    //      darkening leaf-edge pixels.  Snapping to texel centres (NEAREST equivalent)
-    //      eliminates that cross-texel blending — each fragment maps to exactly one texel,
-    //      matching the original D3D D3DFILTER_NEAREST behaviour for fproc2 faces.
-    //   2. Trilinear mip blending: the alpha test always uses mip 0 (correct), but the
-    //      colour sample with lod > 0 blends in mip 1 which, after majority-voting, has
-    //      compressed leaf clusters into fewer opaque texels.  A pixel that passes the
-    //      alpha test (mip 0: opaque leaf) gets its colour tinted toward black/transparent
-    //      by the mip 1 value, producing the visible checkerboard dark patches at medium
-    //      range.  Forcing both alpha-test and colour to use mip 0 eliminates this
-    //      mip-consistency mismatch, faithfully reproducing the original single-level
-    //      foliage texture behaviour.
-    //
-    // Opaque geometry keeps smooth vTC and depth-based LOD (bilinear terrain is desirable).
+    //   1. Bilinear UV blending sampled adjacent transparent texels, darkening leaf edges.
+    //      Snapping to texel centres eliminates that, matching D3D D3DFILTER_NEAREST.
+    //   2. Trilinear mip blending: alpha test uses mip 0 but colour with lod>0 blends
+    //      in mip 1, producing dark checkerboard patches at medium range.
+    //      Forcing colour to mip 0 eliminates the mip-consistency mismatch.
     vec2 sampleUV = uAlphaTest
         ? (floor(vTC * vec2(tsz)) + 0.5) / vec2(tsz)
         : vTC;
     float sampleLOD = uAlphaTest ? 0.0 : lod;
     vec4 texel = textureLod(uTexture, sampleUV, sampleLOD);
 
-    if (uAlphaTest && uDebugMode != 9) {
-        // sampleUV and sampleLOD already set to mip 0 — reuse directly.
+    if (uAlphaTest) {
         if (texel.a < 0.5) discard;
     }
 
     vec4 color = texel * vColor;
     if (!uAlphaTest) color.a = 1.0; else color.a = vColor.a;
 
-    // SOURCEPORT: debug visualization modes (F8 cycles in-game):
-    //   1 = PBR disabled (Lambert only)
-    //   2 = PBR-active fragments shown as solid magenta
-    //   3 = vertex color only (isolates VMap.Light / baked terrain brightness)
-    //   4 = raw texel only (isolates texture sampling / mip selection)
-    //   5 = solid mid-gray (geometry coverage check — circle persists = geometry artifact)
-    if (uDebugMode == 2 && uPBR) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
-    if (uDebugMode == 3) { FragColor = vec4(vColor.rgb, 1.0); return; }
-    if (uDebugMode == 4) { FragColor = vec4(texel.rgb,  1.0); return; }
-    if (uDebugMode == 5) { FragColor = vec4(0.5, 0.5, 0.5, 1.0); return; }
-    // SOURCEPORT: mode 6 = force mip 0 (LOD=0) regardless of derivatives.
-    // If this eliminates the headlamp, the issue is LOD-related despite textureLod fix.
-    // If the headlamp persists even here, the cause is UV coordinates or something else.
-    if (uDebugMode == 6) { FragColor = vec4(textureLod(uTexture, sampleUV, 0.0).rgb, 1.0); return; }
-    if (uDebugMode == 7) { float l = lod / 4.0; FragColor = vec4(l, 0.0, max(0.0,1.0-l), 1.0); return; }
-    if (uDebugMode == 8) { FragColor = vec4(fract(vTC), 0.0, 1.0); return; }
-    if (uDebugMode == 9) { FragColor = vec4(textureLod(uTexture, sampleUV, sampleLOD).rgb, 1.0); return; }
-    // SOURCEPORT: mode 10 = terrain texture in color, foliage/alpha-test geometry as solid gray.
-    // If headlamp appears here, headlamp is in terrain. If not, headlamp is foliage-only.
-    if (uDebugMode == 10) {
-        if (uAlphaTest) { FragColor = vec4(0.5, 0.5, 0.5, 1.0); return; }
-        FragColor = vec4(texel.rgb, 1.0); return;
-    }
-    // SOURCEPORT: mode 11 = UV fract at 100x magnification. A 0.001 UV drift (invisible at 1x
-    // in mode 8) shows as 0.1 color-unit phase shift here — confirms or rules out sub-texel drift.
-    if (uDebugMode == 11) { FragColor = vec4(fract(vTC * 100.0), 0.0, 1.0); return; }
-    // SOURCEPORT: mode 12 = vFog factor as grayscale.
-    // vFog=1 (white) = no fog; vFog=0 (black) = full fog.
-    if (uDebugMode == 12) { FragColor = vec4(vFog, vFog, vFog, 1.0); return; }
-    // SOURCEPORT: mode 13 = normal render with fog disabled.
-    // SOURCEPORT: mode 22 = flat magenta (verify shader code is running).
-    if (uDebugMode == 22) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }
-    // SOURCEPORT: mode 23 = depth heatmap (blue=near red=far). Shows where circle-visible geometry is.
-    if (uDebugMode == 23) {
-        float camDist = 1.0 / max(vRhw, 1e-6) / 16.0;  // Convert to approximate GU
-        float normalized = clamp(camDist / 1000.0, 0.0, 1.0);  // Normalize 0-1000 GU to 0-1
-        FragColor = vec4(normalized, 0.0, 1.0 - normalized, 1.0);  // Blue (near) to Red (far)
-        return;
-    }
-    // SOURCEPORT: mode 24 = vTC (perspective-corrected) coordinate visualization
-    if (uDebugMode == 24) {
-        FragColor = vec4(fract(vTC * 4.0), 0.0, 1.0);  // Show tiling at 4x magnification
-        return;
-    }
-    // SOURCEPORT: mode 25 = vRhw visualization (should be smooth gradient)
-    if (uDebugMode == 25) {
-        float rhwViz = clamp(vRhw * 20.0, 0.0, 1.0);  // Scale for visibility
-        FragColor = vec4(rhwViz, rhwViz, rhwViz, 1.0);
-        return;
-    }
+    // SOURCEPORT: early-exit debug modes (F8).
+    if (uDebugMode == 2 && uPBR) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; } // PBR magenta
+    if (uDebugMode == 3) { FragColor = vec4(vColor.rgb, 1.0); return; }              // vertex color
+    if (uDebugMode == 4) { FragColor = vec4(0.5, 0.5, 0.5, 1.0); return; }          // solid gray
+    if (uDebugMode == 7) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }          // flat magenta
 
     if (uPBR && uDebugMode != 1) {
         vec3  albedo    = texel.rgb;
@@ -194,14 +148,69 @@ void main() {
     }
 
     // SOURCEPORT: hue-preserving brightness clamp. A naive clamp to [0,1]
-    // clips red and green before blue, turning saturated browns/oranges
-    // (e.g. partGround = #B4824B) into yellow at elevated uBrightness.
+    // clips red and green before blue, turning saturated browns/oranges into yellow.
     // Scaling down uniformly when any channel exceeds 1.0 preserves hue.
     vec3 bright = color.rgb * uBrightness;
     float maxC  = max(max(bright.r, bright.g), bright.b);
     if (maxC > 1.0) bright /= maxC;
     color.rgb = bright;
-    if (uFogEnabled && uDebugMode != 13) color.rgb = mix(uFogColor.rgb, color.rgb, vFog);
+
+    // SOURCEPORT: world shadow map sampling (PCF 3x3).
+    // Only runs when shadow pass was rendered this frame (uWorldShadow=true).
+    // vRhw < 1.0 gates shadow to 3D geometry only: 2D/HUD vertices (aDepth=0)
+    // produce vRhw=1.0 and must not be shadowed — world-origin vWorldPos for a
+    // fullscreen rect would land inside the frustum and darken sun-blind quads.
+    if (uWorldShadow && uShadowStrength > 0.0 && vRhw < 1.0) {
+        vec4 lsPos = uLightSpace * vec4(vWorldPos, 1.0);
+        vec3 proj  = lsPos.xyz / lsPos.w;
+        proj = proj * 0.5 + 0.5;  // NDC [-1,1] → UV [0,1]
+
+        // SOURCEPORT: mode 8 = shadow-map depth sampled at this fragment's UV (clamped,
+        // no frustum gate). White=unwritten/far, gray/black=geometry recorded by depth pass.
+        // If the whole screen is white the depth pass produced no data.
+        if (uDebugMode == 8) {
+            float d = texture(uShadowMap, clamp(proj.xy, 0.0, 1.0)).r;
+            FragColor = vec4(d, d, d, 1.0);
+            return;
+        }
+        // SOURCEPORT: mode 9 = raw shadow UV as RG gradient (no frustum gate).
+        // proj.x→R, proj.y→G. Fully red+green = center of shadow frustum (proj=0.5,0.5).
+        // Uniform colour everywhere = vWorldPos is constant (world-pos reconstruction broken).
+        if (uDebugMode == 9) {
+            FragColor = vec4(proj.x, proj.y, 0.0, 1.0);
+            return;
+        }
+
+        // SOURCEPORT: proj.z >= 0.0 guards against behind-light geometry:
+        // straddling triangles with a behind-camera vertex produce vWorldPos≈0
+        // after interpolation; without this lower bound, proj.z < 0 still
+        // passes the gate and spuriously darkens everything in that view.
+        if (proj.z >= 0.0 && proj.z < 1.0 && proj.x >= 0.0 && proj.x <= 1.0 &&
+                                              proj.y >= 0.0 && proj.y <= 1.0) {
+            // SOURCEPORT: slope-based bias via screen-space derivatives.
+            // dFdx/dFdy give the rate of depth change per pixel in shadow space;
+            // their magnitude represents the shadow-map slope at this fragment.
+            // This auto-scales with view distance and terrain steepness, eliminating
+            // banding without Peter-panning. A small floor prevents acne on flat ground.
+            float slopeBias = max(abs(dFdx(proj.z)), abs(dFdy(proj.z))) * 3.0;
+            float bias = max(slopeBias, 0.0002);
+            float shadow = 0.0;
+            vec2 ts = 1.0 / vec2(textureSize(uShadowMap, 0));
+            for (int ox = -1; ox <= 1; ++ox) {
+                for (int oy = -1; oy <= 1; ++oy) {
+                    float d = texture(uShadowMap, proj.xy + vec2(ox, oy) * ts).r;
+                    shadow += (proj.z - bias > d) ? 1.0 : 0.0;
+                }
+            }
+            shadow /= 9.0;
+            color.rgb *= 1.0 - shadow * uShadowStrength;
+        }
+    }
+
+    // SOURCEPORT: mode 5 = fog factor grayscale (1=no fog, 0=full fog).
+    if (uFogEnabled && uDebugMode == 5) { FragColor = vec4(vFog, vFog, vFog, 1.0); return; }
+
+    if (uFogEnabled && uDebugMode != 6) color.rgb = mix(uFogColor.rgb, color.rgb, vFog);
 
     FragColor = color;
 }

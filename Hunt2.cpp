@@ -2247,8 +2247,10 @@ void ProcessGame()
             // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
             // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
             g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
-            // SOURCEPORT: match shadow frustum half-extent to the player's view distance.
-            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f);
+            // SOURCEPORT: shadow frustum ±range is in light space, not world space.
+            // The light's right axis is ~45° diagonal, so the worst-case view direction
+            // needs range ≥ view_radius * √2.  Use 1.5× for margin.
+            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f * 1.5f);
             g_glRenderer->BeginWorldShadowPass();
             DrawScene();
             g_glRenderer->EndWorldShadowPass();
@@ -2279,8 +2281,10 @@ void ProcessGame()
             // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
             // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
             g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
-            // SOURCEPORT: match shadow frustum half-extent to the player's view distance.
-            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f);
+            // SOURCEPORT: shadow frustum ±range is in light space, not world space.
+            // The light's right axis is ~45° diagonal, so the worst-case view direction
+            // needs range ≥ view_radius * √2.  Use 1.5× for margin.
+            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f * 1.5f);
             g_glRenderer->BeginWorldShadowPass();
             DrawScene();
             g_glRenderer->EndWorldShadowPass();
