@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 extern void PrintLog(const char* msg);
@@ -238,6 +239,63 @@ void PostProcessingPipeline::Resize(int screenWidth, int screenHeight) {
     if (!m_bloomBlurV.Create(bloomW, bloomH, false)) PrintLog("ERROR: Resize failed to create bloomBlurV\n");
 }
 
+void PostProcessingPipeline::ApplySimpleEffect(const char* shaderPath, float intensity) {
+    if (!m_initialized || !m_fsQuadVao) return;
+
+    // Read shader file
+    std::ifstream shaderFile(shaderPath);
+    if (!shaderFile) {
+        fprintf(stderr, "[PostProcessing] Failed to load shader: %s\n", shaderPath);
+        return;
+    }
+    std::stringstream buffer;
+    buffer << shaderFile.rdbuf();
+    std::string fsSource = buffer.str();
+
+    // Compile shaders
+    GLuint vs = CompilePostShader(GL_VERTEX_SHADER,
+        "#version 330 core\n"
+        "layout(location=0)in vec2 aPos;layout(location=1)in vec2 aTexCoord;"
+        "out vec2 vTexCoord;void main(){gl_Position=vec4(aPos,0,1);vTexCoord=aTexCoord;}");
+    GLuint fs = CompilePostShader(GL_FRAGMENT_SHADER, fsSource.c_str());
+
+    if (!vs || !fs) {
+        if (vs) glDeleteShader(vs);
+        if (fs) glDeleteShader(fs);
+        return;
+    }
+
+    GLuint prog = LinkPostProgram(vs, fs);
+    if (!prog) return;
+
+    // Copy back buffer to texture
+    GLuint screenTex;
+    glGenTextures(1, &screenTex);
+    glBindTexture(GL_TEXTURE_2D, screenTex);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, m_width, m_height, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Render fullscreen quad with effect
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glUseProgram(prog);
+    glBindVertexArray(m_fsQuadVao);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, screenTex);
+    glUniform1i(glGetUniformLocation(prog, "uScreenColor"), 0);
+    glUniform1f(glGetUniformLocation(prog, "uIntensity"), intensity);
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDeleteProgram(prog);
+    glDeleteTextures(1, &screenTex);
+}
+
 void PostProcessingPipeline::ApplyEffects() {
     if (!m_initialized || !m_captureActive) return;
     m_captureActive = false;
@@ -269,13 +327,36 @@ void PostProcessingPipeline::ApplyEffects() {
 
     // SOURCEPORT: Phase 2.1 - Apply shadows (must be first to darken base scene)
     static uint32_t shadowProg = 0;
+    static uint32_t shadowDebugProg = 0;
     static bool shadowProgLoaded = false;
     if (!shadowProgLoaded) {
         shadowProg = LoadPostProcessShader("shadows");
+        shadowDebugProg = LoadPostProcessShader("shadows_debug");
         shadowProgLoaded = true;
     }
 
-    if (g_enableShadows && shadowProg && depthTex) {
+    // Debug visualization takes precedence
+    if (m_debugShadowCascade >= 0 && m_debugShadowCascade < 3 && shadowDebugProg) {
+        m_intermediate1.Bind();
+        glUseProgram(shadowDebugProg);
+
+        // Bind 3 shadow map depth textures
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[0].GetDepthTexture());
+        glUniform1i(glGetUniformLocation(shadowDebugProg, "uShadowMap0"), 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[1].GetDepthTexture());
+        glUniform1i(glGetUniformLocation(shadowDebugProg, "uShadowMap1"), 3);
+
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[2].GetDepthTexture());
+        glUniform1i(glGetUniformLocation(shadowDebugProg, "uShadowMap2"), 4);
+
+        glUniform1i(glGetUniformLocation(shadowDebugProg, "uDebugCascade"), m_debugShadowCascade);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        sceneTex = m_intermediate1.GetColorTexture();
+    } else if (g_enableShadows && shadowProg && depthTex) {
         m_intermediate1.Bind();
         glUseProgram(shadowProg);
 
@@ -289,17 +370,17 @@ void PostProcessingPipeline::ApplyEffects() {
         glBindTexture(GL_TEXTURE_2D, depthTex);
         glUniform1i(glGetUniformLocation(shadowProg, "uScreenDepth"), 1);
 
-        // Bind 3 shadow maps as separate 2D textures
+        // Bind 3 shadow map depth textures as separate 2D textures
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[0].GetColorTexture());
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[0].GetDepthTexture());
         glUniform1i(glGetUniformLocation(shadowProg, "uShadowMap0"), 2);
 
         glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[1].GetColorTexture());
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[1].GetDepthTexture());
         glUniform1i(glGetUniformLocation(shadowProg, "uShadowMap1"), 3);
 
         glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[2].GetColorTexture());
+        glBindTexture(GL_TEXTURE_2D, m_shadowMaps[2].GetDepthTexture());
         glUniform1i(glGetUniformLocation(shadowProg, "uShadowMap2"), 4);
 
         // Set shadow uniforms
@@ -521,7 +602,7 @@ void PostProcessingPipeline::UpdateShadowMatrices(const float* cameraPos, const 
 
         // Light view matrix: look along light direction from a point above the scene
         // Position light "behind" the cascade center to get good shadow depth resolution
-        float cascadeCenter = (cascadeNear + cascadeFar) * 0.5f;
+        // SOURCEPORT: cascadeCenter removed (dead store — lightDist derives from cascadeFar only)
         float lightDist = cascadeFar * 2.0f;  // Position light 2x cascade far plane away
 
         float lightPos[3] = { cameraPos[0] - lightDir[0] * lightDist,

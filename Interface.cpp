@@ -47,7 +47,7 @@ void wait_mouse_release()
 }
 
 
-int GetTextW(HDC hdc, LPSTR s)
+int GetTextW(HDC hdc, const char* s)
 {
   SIZE sz;
   GetTextExtentPoint(hdc, s, (int)strlen(s), &sz);
@@ -67,7 +67,7 @@ void PrintText(LPSTR s, int x, int y, int rgb)
   SelectObject(hdcCMain,hbmpOld);		  
 }
 
-void DoHalt(LPSTR Mess)
+[[noreturn]] void DoHalt(const char* Mess)
 {  
   AudioStop();
   Audio_Shutdown();
@@ -82,7 +82,7 @@ void DoHalt(LPSTR Mess)
   }
 
   CloseLog();
-  TerminateProcess(GetCurrentProcess(), 0);
+  ExitProcess(0);   // declared DECLSPEC_NORETURN; silences [[noreturn]] diagnostic
 }
 
 
@@ -163,7 +163,9 @@ void EndLoading()
 
 void PrintLoad(char *t)
 {
-	strcpy(loadtxt, t);
+	// SOURCEPORT: replaced strcpy with strncpy; loadtxt is 128 bytes
+	strncpy(loadtxt, t, sizeof(loadtxt)-1);
+	loadtxt[sizeof(loadtxt)-1] = '\0';
 	LoadCount++;
 	UpdateLoadingWindow();
 

@@ -56,6 +56,13 @@ Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `G
 - **Technical Detail**: Two paths had the fade: `DrawTPlane()` used local alpha variables (`alpha1`, `alpha2`, `alpha3`), while clipped terrain in `DrawTPlaneClip()` used `ev[n].ALPHA` field. Both paths now set alpha to 255 unconditionally.
 - **Architecture Note**: Texture bucketing attempt (`DrawTerrainGL()`) was abandoned due to GL texture binding complexity; the original ring-order ProcessMap path remains the most reliable approach. Ring traversal requires proper initialization of `r` for each code path (D3D: `ctViewR1-1`, GL: `ctViewR`).
 
+## Sky Rendering ✅
+
+**Sky Bilinear Filtering** (smooth like original D3D mode):
+- **Original Issue**: Sky appeared pixelated (large blocky rectangular patches), matching the software-render mode of the original game rather than the smooth D3D mode.
+- **Root Cause**: `d3dStartBufferG()` sets `uAlphaTest=true` for all geometry-buffer draws. The fragment shader's alpha-test path snaps UV coordinates to the nearest texel centre (emulating `D3DFILTER_NEAREST` for foliage). Sky geometry is drawn inside the geometry buffer, so it inherited the foliage nearest-equivalent UV snap even though `SkyPic` was uploaded with `GL_LINEAR_MIPMAP_LINEAR`. Inside `d3dEndBufferG`, the alpha-test state is forcibly re-asserted to `true` before the draw call (to handle BMP sprites and water vertex-alpha), which overrode any pre-call attempt to clear it.
+- **Fix**: Added `noSnapUV` parameter to `d3dEndBufferG(BOOL ColorKey, BOOL noSnapUV = FALSE)`. When `noSnapUV=TRUE`, `SetAlphaTest(false)` is called immediately after the forced `SetAlphaTest(true)`, so the sky draw executes with `uAlphaTest=false` — bypassing the UV snap and sampling the sky texture with genuine bilinear filtering. All other geometry-buffer callers pass `noSnapUV=FALSE` (default) and are unaffected. The sky call in `RenderSkyPlane` is `d3dEndBufferG(FALSE, TRUE)`.
+
 ## Character rendering
 
 **Dead character shadows** (`renderd3d.cpp` `RenderCharacterPost`):

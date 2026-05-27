@@ -7,8 +7,19 @@ layout(location = 4) in vec2 aTexCoord;
 
 uniform mat4 uProjection;
 
+// SOURCEPORT: world-position reconstruction for shadow sampling.
+// Always computed when aDepth > 0 — keeping camera uniforms unconditionally
+// active prevents GLSL compilers from dead-code-eliminating them.
+uniform float uVideoCX;
+uniform float uVideoCY;
+uniform float uCameraW;
+uniform float uCameraH;
+uniform vec3  uCameraPos;
+uniform mat3  uCamToWorld;  // camera-to-world rotation R^T (column-major)
+
 noperspective out vec4  vColor;
 noperspective out float vFog;
+noperspective out vec3  vWorldPos;  // world position (valid when uWorldShadow && aDepth>0)
 // SOURCEPORT: two UV paths.
 // vTexCoord (smooth) is used only for screen-space LOD derivatives.
 // vTexCoordR / vRhw gives perspective-correct UV via explicit fragment-shader
@@ -48,4 +59,18 @@ void main() {
     vColor    = aColor;
     vTexCoord = aTexCoord;
     vFog      = aSpecular.a;
+
+        // SOURCEPORT: reconstruct world position for shadow map lookup.
+    // Computed unconditionally (when aDepth > 0) so that GLSL compilers cannot
+    // dead-code-eliminate uVideoCX / uCameraW / uCamToWorld via the old
+    // "if (uWorldShadow && aDepth > 0)" guard — those uniforms would be
+    // optimised away and SetCameraWorldUniforms silently becomes a no-op.
+    if (aDepth > 0.0) {
+        float neg_cam_z = 16.0 / aDepth;
+        float cam_x = (aPos.x - uVideoCX) * neg_cam_z / uCameraW;
+        float cam_y = (uVideoCY - aPos.y) * neg_cam_z / uCameraH;
+        vWorldPos = uCameraPos + uCamToWorld * vec3(cam_x, cam_y, -neg_cam_z);
+    } else {
+        vWorldPos = vec3(0.0);
+    }
 }

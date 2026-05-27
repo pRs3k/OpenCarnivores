@@ -9,8 +9,7 @@ int      TraceRes;
 //====================================================
 void NormVector(Vector3d& v, float Scale)
 {
-  double n;
-  n=v.x*v.x + v.y*v.y + v.z*v.z;
+  double n = v.x*v.x + v.y*v.y + v.z*v.z;
   if (n<0.000000001) n=0.000000001;
   n=(double)Scale / sqrt(n);
   v.x=(float)(v.x*n);

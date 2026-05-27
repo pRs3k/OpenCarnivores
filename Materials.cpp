@@ -72,7 +72,7 @@ bool RegisterFromStem(void* key, const std::string& stem) {
     e.mat.mrTex           = mr;
     e.mat.aoTex           = ao;
     e.mat.metallicFactor  = mr ? 1.0f : 0.0f;
-    e.mat.roughnessFactor = mr ? 1.0f : 1.0f;
+    e.mat.roughnessFactor = 1.0f; // SOURCEPORT: removed identical ternary branches — roughness is always 1.0 regardless of mr
     return true;
 }
 

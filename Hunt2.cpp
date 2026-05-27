@@ -202,7 +202,7 @@ void PreCashGroundModel()
 		  rv = v[0];
 		  rv.y = WaterList[ WMap[yy][xx] ].wlevel*ctHScale - CameraY;
 
-		  float wdelta = (float)sin(-pi/2 + RandomMap[yy & 31][xx & 31]/128+RealTime/200.f);
+		  float wdelta = (float)sin(-pi/2 + RandomMap[yy & 31][xx & 31]/128.0f+RealTime/200.f); // SOURCEPORT: /128.0f avoids integer division in float expression
 
 		  if ( (FMap[yy][xx] & fmWater) && (r < ctViewR1-4)) {
            rv.x+=(float)sin(xx+yy + RealTime/200.f) * 16.f;
@@ -491,8 +491,8 @@ void DrawOpticCross( int v)
    int sx =  VideoCX + (int)(rVertex[v].x / (-rVertex[v].z) * CameraW);
    int sy =  VideoCY - (int)(rVertex[v].y / (-rVertex[v].z) * CameraH); 
 
-   if (  (fabs(VideoCX - sx) > WinW / 2) ||
-	     (fabs(VideoCY - sy) > WinH / 4) ) return;
+   if (  (fabs(VideoCX - sx) > WinW / 2.0) || // SOURCEPORT: /2.0 and /4.0 avoid integer division in float comparison
+	     (fabs(VideoCY - sy) > WinH / 4.0) ) return;
 
    Render_Cross(sx, sy);
 }
@@ -824,7 +824,7 @@ SKIPWEAPON:
     }
     // Center relative to per-eye principal point (VideoCX) so popup appears centered in VR
     // Position at eye level instead of vertically centered
-    DrawPictureScaled(VideoCX - dw / 2, WinH / 2.75 - dh / 2, dw, dh, ExitPic);
+    DrawPictureScaled(VideoCX - dw / 2, WinH / 2.75 - dh / 2.0, dw, dh, ExitPic); // SOURCEPORT: /2.0 avoids integer division in float expression
   }
 
   if (PAUSE && !g_vrSecondEyePass)
@@ -845,7 +845,7 @@ SKIPWEAPON:
 			dw = dw * 65 / 100;
 			dh = dh * 65 / 100;
 			x0 = VideoCX - dw / 2;
-			y0 = WinH / 2.75 - dh / 2;
+			y0 = WinH / 2.75 - dh / 2.0; // SOURCEPORT: /2.0 avoids integer division in float expression
 		}
 
         DrawPictureScaled(x0, y0, dw, dh, TrophyPic);

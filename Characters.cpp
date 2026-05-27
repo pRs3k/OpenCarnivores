@@ -1288,7 +1288,7 @@ TBEGIN:
 //============================================//   
    if (!MyHealth) cptr->State = 0;
    if (cptr->State) {        	 		
-	   if (pdist > ctViewR*128+OptAgres/4) {
+	   if (pdist > ctViewR*128+OptAgres/4.0f) { // SOURCEPORT: /4.0f avoids integer division in float comparison
 		   	nv.x = playerdx; nv.z = playerdz; nv.y = 0;
 	        NormVector(nv, 2048.f);
             cptr->tgx = cptr->pos.x - nv.x;
@@ -1364,10 +1364,11 @@ NOTHINK:
 
    if (cptr->Phase== RAP_JUMP) goto ENDPSELECT;    
             
-   if (!cptr->State) cptr->Phase=RAP_WALK; else
-        if (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-            fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0) 
-                cptr->Phase = RAP_RUN; else cptr->Phase=RAP_WALK;
+   // SOURCEPORT: consolidated duplicate branch — both non-running paths set RAP_WALK
+   cptr->Phase = (cptr->State &&
+                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                 ? RAP_RUN : RAP_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = RAP_SWIM;
    if (cptr->Slide>40) cptr->Phase = RAP_SLIDE;
@@ -1545,7 +1546,7 @@ TBEGIN:
 //============================================//   
    if (!MyHealth) cptr->State = 0;
    if (cptr->State) {        	 		
-	   if (pdist > ctViewR*160+OptAgres/8) {
+	   if (pdist > ctViewR*160+OptAgres/8.0f) { // SOURCEPORT: /8.0f avoids integer division in float comparison
 		   	nv.x = playerdx; nv.z = playerdz; nv.y = 0;
 	        NormVector(nv, 2048.f);
             cptr->tgx = cptr->pos.x - nv.x;
@@ -1622,10 +1623,11 @@ NOTHINK:
 
    if (cptr->Phase== VEL_JUMP) goto ENDPSELECT;    
             
-   if (!cptr->State) cptr->Phase=VEL_WALK; else
-        if (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-            fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0) 
-                cptr->Phase = VEL_RUN; else cptr->Phase=VEL_WALK;
+   // SOURCEPORT: consolidated duplicate branch — both non-running paths set VEL_WALK
+   cptr->Phase = (cptr->State &&
+                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                 ? VEL_RUN : VEL_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = VEL_SWIM;
    if (cptr->Slide>40) cptr->Phase = VEL_SLIDE;
@@ -1802,7 +1804,7 @@ TBEGIN:
 //============================================//   
    if (!MyHealth) cptr->State = 0;
    if (cptr->State) {        	 		
-	   if (pdist > ctViewR*140+OptAgres/8) {
+	   if (pdist > ctViewR*140+OptAgres/8.0f) { // SOURCEPORT: /8.0f avoids integer division in float comparison
 		   	nv.x = playerdx; nv.z = playerdz; nv.y = 0;
 	        NormVector(nv, 2048.f);
             cptr->tgx = cptr->pos.x - nv.x;
@@ -1886,10 +1888,11 @@ NOTHINK:
 	  } else cptr->Phase = SPN_WALK; else cptr->Phase = SPN_RUN;
             
    if (cptr->Phase!=SPN_IDLE1 && cptr->Phase!=SPN_IDLE2)
-   if (!cptr->State) cptr->Phase=SPN_WALK; else
-        if (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-            fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0) 
-                cptr->Phase = SPN_RUN; else cptr->Phase=SPN_WALK;
+   // SOURCEPORT: consolidated duplicate branch — both non-running paths set SPN_WALK
+   cptr->Phase = (cptr->State &&
+                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                 ? SPN_RUN : SPN_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = SPN_SWIM;
    if (cptr->Slide>40) cptr->Phase = SPN_SLIDE;
@@ -2070,7 +2073,7 @@ TBEGIN:
 //============================================//   
    if (!MyHealth) cptr->State = 0;
    if (cptr->State) {        	 		
-	   if (pdist > ctViewR*200+OptAgres/8) {
+	   if (pdist > ctViewR*200+OptAgres/8.0f) { // SOURCEPORT: /8.0f avoids integer division in float comparison
 		   	nv.x = playerdx; nv.z = playerdz; nv.y = 0;
 	        NormVector(nv, 2048.f);
             cptr->tgx = cptr->pos.x - nv.x;
@@ -2149,10 +2152,11 @@ NOTHINK:
 	  } else cptr->Phase = CER_WALK; else cptr->Phase = CER_RUN;
             
    if (cptr->Phase!=CER_IDLE1 && cptr->Phase!=CER_IDLE2 && cptr->Phase!=CER_IDLE3)
-   if (!cptr->State) cptr->Phase=CER_WALK; else
-        if (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-            fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0) 
-                cptr->Phase = CER_RUN; else cptr->Phase=CER_WALK;
+   // SOURCEPORT: consolidated duplicate branch — both non-running paths set CER_WALK
+   cptr->Phase = (cptr->State &&
+                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                 ? CER_RUN : CER_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = CER_SWIM;
    
@@ -2395,10 +2399,11 @@ NOTHINK:
 	   goto ENDPSELECT;
    }
 
-   if (!cptr->State || cptr->State>1) cptr->Phase=REX_WALK; else
-        if (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-            fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0) 
-                cptr->Phase = REX_RUN; else cptr->Phase=REX_WALK;
+   // SOURCEPORT: consolidated duplicate branch — both non-running paths set REX_WALK
+   cptr->Phase = (cptr->State == 1 &&
+                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                 ? REX_RUN : REX_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = REX_SWIM;
    
@@ -3060,7 +3065,7 @@ TBEGIN:
 		goto TBEGIN; 
 	}
 
-	if (pdist > 256*16+OptAgres/8) {
+	if (pdist > 256*16+OptAgres/8.0f) { // SOURCEPORT: /8.0f avoids integer division in float comparison
 	  nv.x = playerdx; nv.z = playerdz; nv.y = 0;
 	  NormVector(nv, 2048.f);
       cptr->tgx = cptr->pos.x - nv.x;
@@ -4338,9 +4343,9 @@ void AnimateCharacters()
 		    break;
 	case AI_GALL : if (cptr->Health) AnimateGall(cptr); else AnimateGallDead(cptr);
 		    break;
-    case AI_DIMOR: if (cptr->Health) AnimateDimor(cptr); else AnimateDimorDead(cptr);
-		    break;
-    case AI_PTERA: if (cptr->Health) AnimateDimor(cptr); else AnimateDimorDead(cptr);
+    case AI_DIMOR:
+    case AI_PTERA: // SOURCEPORT: consolidated duplicate branch — AI_PTERA reuses AI_DIMOR animations
+                   if (cptr->Health) AnimateDimor(cptr); else AnimateDimorDead(cptr);
 		    break;
 	case AI_DIMET: if (cptr->Health) AnimateDimet(cptr); else AnimateDimetDead(cptr);
 		    break;	
@@ -4430,7 +4435,7 @@ void CheckAfraid()
 	 if (cptr->AfraidTime || cptr->State==1) continue;
 
 	 rlook = SubVectors(ppos, cptr->pos);
-	 kR = VectorLength( rlook ) / 256.f / (32.f + ctViewR/2);
+	 kR = VectorLength( rlook ) / 256.f / (32.f + ctViewR/2.0f); // SOURCEPORT: /2.0f avoids integer division in float expression
 	 NormVector(rlook, 1.0f);
 
 	 kR *= 2.5f / (float)(1.5+OptSens/128.f );

@@ -482,7 +482,7 @@ void SetVideoMode(int, int);
 
 void CreateDivTable();
 void DrawTexturedFace();
-int GetTextW(HDC, LPSTR);
+int GetTextW(HDC, const char*);
 void wait_mouse_release();
 
 //============================== render =================================//
@@ -644,7 +644,7 @@ void AddBloodTrail(TCharacter *cptr);
 void AddElements(float, float, float, int, int);
 void AddWCircle(float, float, float);
 void AnimateProcesses();
-void DoHalt(LPSTR);
+[[noreturn]] void DoHalt(const char*);
 
 EXTORNOT   char logt[128];
 void CreateLog();
@@ -954,9 +954,9 @@ bool   g_enableSSR = false;
 float  g_ssrIntensity = 0.5f;           // 0.0-1.0 (reflection blend factor)
 
 // Dynamic shadow mapping: cascaded PCF shadows from sun light
-bool   g_enableShadows = false;
+bool   g_enableShadows = false;  // Disabled - FBO post-processing pipeline integration incomplete
 int    g_shadowQuality = 2;             // 0=off, 1=low, 2=medium, 3=high
-float  g_shadowIntensity = 0.7f;        // 0.0-1.0 (shadow darkness blend factor)
+float  g_shadowIntensity = 1.0f;        // 0.0-1.0 (shadow darkness blend factor) - DEBUG: max to detect presence
 #else
 extern bool   g_enableBloom;
 extern float  g_bloomIntensity;

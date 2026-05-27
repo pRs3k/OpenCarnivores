@@ -33,7 +33,7 @@ extern class RendererGL* g_glRenderer;
 // them changes, re-probes the override registries and dumps the GPU texture
 // cache so the next frame re-uploads. Missing candidate files are harmless —
 // GetMtime returns -1 and the watch stays dormant until the file appears.
-static void HotWatchOverrideSet(void* key, std::string base) {
+static void HotWatchOverrideSet(void* key, const std::string& base) {
     static const char* baseExts[]   = { ".dds", ".png", ".tga", ".bmp", ".jpg" };
     static const char* pbrSuffixes[] = { "_normal.png", "_mr.png", "_ao.png" };
     auto reload = [key, base]() {
@@ -1457,11 +1457,12 @@ void LoadResources()
 
 
 	for (int f=0; f<=FgCount; f++) {
+	  #ifdef _d3d
+	  // SOURCEPORT: fb/fg/fr only needed for D3D BGR→RGB byte-swap; guard to avoid dead stores in GL builds
       int fb = (FogsList[f].fogRGB >> 00) & 0xFF;
 	  int fg = (FogsList[f].fogRGB >>  8) & 0xFF;
 	  int fr = (FogsList[f].fogRGB >> 16) & 0xFF;
-	  #ifdef _d3d
-  	    FogsList[f].fogRGB = (fr) + (fg<<8) + (fb<<16);	  
+  	  FogsList[f].fogRGB = (fr) + (fg<<8) + (fb<<16);
 	  #endif
 	  if (OptDayNight==2) FogsList[f].fogRGB&=0x00FF00;
 	}
@@ -2031,13 +2032,14 @@ void SaveScreenShot()
 //===============================================================================================
 void ReadWeapons(FILE *stream)
 {
-	TotalW = 0;	
+	TotalW = 0;
 	char line[256], *value;
-    while (fgets( line, 255, stream)) 
-	{		
+    while (fgets( line, 255, stream))  // NOLINT(clang-analyzer-unix.Stream)
+	{
+		if (ferror(stream) || feof(stream)) break; // SOURCEPORT: stop on stream error/EOF to avoid reading bad state
 		if (strstr(line, "}")) break;
-		if (strstr(line, "{")) 
-			while (fgets( line, 255, stream)) {								
+		if (strstr(line, "{"))
+			while (fgets( line, 255, stream)) {
 				if (strstr(line, "}")) { TotalW++; break; }
 				value = strstr(line, "=");
 				if (!value) DoHalt("Script loading error");
@@ -2054,20 +2056,26 @@ void ReadWeapons(FILE *stream)
 				if (strstr(line, "fall"))   WeapInfo[TotalW].Fall  =        atoi(value);
 				//if (strstr(line, "price")) WeapInfo[TotalW].Price =        atoi(value);
 
-				if (strstr(line, "name")) {					
+				if (strstr(line, "name")) {
 					value = strstr(line, "'"); if (!value) DoHalt("Script loading error");
 					value[strlen(value)-2] = 0;
-					strcpy(WeapInfo[TotalW].Name, &value[1]); }				
+					// SOURCEPORT: replaced strcpy with strncpy to avoid insecureAPI warning; buffer is 48 bytes
+					strncpy(WeapInfo[TotalW].Name, &value[1], sizeof(WeapInfo[TotalW].Name)-1);
+					WeapInfo[TotalW].Name[sizeof(WeapInfo[TotalW].Name)-1] = '\0'; }
 
-				if (strstr(line, "file")) {					
+				if (strstr(line, "file")) {
 					value = strstr(line, "'"); if (!value) DoHalt("Script loading error");
 					value[strlen(value)-2] = 0;
-					strcpy(WeapInfo[TotalW].FName, &value[1]);}
+					// SOURCEPORT: replaced strcpy with strncpy to avoid insecureAPI warning; buffer is 48 bytes
+					strncpy(WeapInfo[TotalW].FName, &value[1], sizeof(WeapInfo[TotalW].FName)-1);
+					WeapInfo[TotalW].FName[sizeof(WeapInfo[TotalW].FName)-1] = '\0'; }
 
-				if (strstr(line, "pic")) {					
+				if (strstr(line, "pic")) {
 					value = strstr(line, "'"); if (!value) DoHalt("Script loading error");
 					value[strlen(value)-2] = 0;
-					strcpy(WeapInfo[TotalW].BFName, &value[1]);}
+					// SOURCEPORT: replaced strcpy with strncpy to avoid insecureAPI warning; buffer is 48 bytes
+					strncpy(WeapInfo[TotalW].BFName, &value[1], sizeof(WeapInfo[TotalW].BFName)-1);
+					WeapInfo[TotalW].BFName[sizeof(WeapInfo[TotalW].BFName)-1] = '\0'; }
 			}
 		
 	}
@@ -2079,13 +2087,14 @@ void ReadCharacters(FILE *stream)
 {
 	TotalC = 0;
 	char line[256], *value;
-    while (fgets( line, 255, stream)) 
+    while (fgets( line, 255, stream))  // NOLINT(clang-analyzer-unix.Stream)
 	{
+		if (ferror(stream) || feof(stream)) break; // SOURCEPORT: stop on stream error/EOF to avoid reading bad state
 		if (strstr(line, "}")) break;
-		if (strstr(line, "{")) 
-			while (fgets( line, 255, stream)) {				
-				
-				if (strstr(line, "}")) { 
+		if (strstr(line, "{"))
+			while (fgets( line, 255, stream)) {
+
+				if (strstr(line, "}")) {
                     AI_to_CIndex[DinoInfo[TotalC].AI] = TotalC;
 					TotalC++; 
 					break; 
@@ -2110,20 +2119,26 @@ void ReadCharacters(FILE *stream)
 				if (strstr(line, "scaleA"   )) DinoInfo[TotalC].ScaleA    = atoi(value);
 				if (strstr(line, "danger"   )) DinoInfo[TotalC].DangerCall= TRUE;
 
-				if (strstr(line, "name")) {					
+				if (strstr(line, "name")) {
 					value = strstr(line, "'"); if (!value) DoHalt("Script loading error");
 					value[strlen(value)-2] = 0;
-					strcpy(DinoInfo[TotalC].Name, &value[1]); }
+					// SOURCEPORT: replaced strcpy with strncpy to avoid insecureAPI warning; buffer is 48 bytes
+					strncpy(DinoInfo[TotalC].Name, &value[1], sizeof(DinoInfo[TotalC].Name)-1);
+					DinoInfo[TotalC].Name[sizeof(DinoInfo[TotalC].Name)-1] = '\0'; }
 
-				if (strstr(line, "file")) {					
+				if (strstr(line, "file")) {
 					value = strstr(line, "'"); if (!value) DoHalt("Script loading error");
 					value[strlen(value)-2] = 0;
-					strcpy(DinoInfo[TotalC].FName, &value[1]);}
+					// SOURCEPORT: replaced strcpy with strncpy to avoid insecureAPI warning; buffer is 48 bytes
+					strncpy(DinoInfo[TotalC].FName, &value[1], sizeof(DinoInfo[TotalC].FName)-1);
+					DinoInfo[TotalC].FName[sizeof(DinoInfo[TotalC].FName)-1] = '\0'; }
 
-				if (strstr(line, "pic")) {					
+				if (strstr(line, "pic")) {
 					value = strstr(line, "'"); if (!value) DoHalt("Script loading error");
 					value[strlen(value)-2] = 0;
-					strcpy(DinoInfo[TotalC].PName, &value[1]);}
+					// SOURCEPORT: replaced strcpy with strncpy to avoid insecureAPI warning; buffer is 48 bytes
+					strncpy(DinoInfo[TotalC].PName, &value[1], sizeof(DinoInfo[TotalC].PName)-1);
+					DinoInfo[TotalC].PName[sizeof(DinoInfo[TotalC].PName)-1] = '\0'; }
 			}
 		
 	}
@@ -2144,7 +2159,8 @@ void LoadResourcesScript()
 	stream = fopen(VFS_R("HUNTDAT\\_res.txt"), "r");
     if (!stream) DoHalt("Can't open resources file _res.txt");
 
-	while (fgets( line, 255, stream)) {
+	while (fgets( line, 255, stream)) { // NOLINT(clang-analyzer-unix.Stream)
+       if (ferror(stream) || feof(stream)) break; // SOURCEPORT: stop on stream error/EOF; ReadWeapons/ReadCharacters may exhaust stream
        if (line[0] == '.') break;
 	   if (strstr(line, "weapons") ) ReadWeapons(stream);
 	   if (strstr(line, "characters") ) ReadCharacters(stream);

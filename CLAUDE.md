@@ -20,7 +20,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for core game files and domain-specific g
 
 ## Domain documentation
 - [BUILD_REQUIREMENTS.md](BUILD_REQUIREMENTS.md) — Build system, CMake configuration, runtime dependencies (OpenXR, SDL2, OpenAL).
-- [RENDERING.md](RENDERING.md) — Rendering backends, texture override registry, multi-backend roadmap.
+- [RENDERING.md](RENDERING.md) — Rendering backends, texture override registry, shader packs, multi-backend roadmap.
+- [SHADER_PACKS.md](SHADER_PACKS.md) — Modding guide for creating custom shader effects and materials.
+- [SHADER_DEVELOPMENT_NOTES.md](SHADER_DEVELOPMENT_NOTES.md) — Development history, design decisions, and future roadmap for shader system.
 - [AUDIO.md](AUDIO.md) — Audio backends, OpenAL 3D positional audio, reverb and HRTF.
 - [VR.md](VR.md) — OpenXR pipeline, HMD components, comfort features, head-tracking.
 - [ROADMAP.md](ROADMAP.md) — Gameplay/engine/infrastructure todos.

@@ -451,7 +451,9 @@ void ProcessCommandLine()
      if (strstr(s,"x=")) { PlayerX = (float)atof(&s[2])*256.f; LockLanding = TRUE; }
      if (strstr(s,"y=")) { PlayerZ = (float)atof(&s[2])*256.f; LockLanding = TRUE; }          
 	 if (strstr(s,"reg=")) TrophyRoom.RegNumber = atoi(&s[4]); 
-     if (strstr(s,"prj=")) strcpy(ProjectName, (s+4)); 
+     if (strstr(s,"prj=")) { // SOURCEPORT: replaced strcpy with strncpy; ProjectName is 128 bytes
+         strncpy(ProjectName, (s+4), sizeof(ProjectName)-1);
+         ProjectName[sizeof(ProjectName)-1] = '\0'; }
 	 if (strstr(s,"din=")) TargetDino = (atoi(&s[4])*1024);
 	 if (strstr(s,"wep=")) WeaponPres = atoi(&s[4]);	 
 	 if (strstr(s,"dtm=")) OptDayNight  = atoi(&s[4]);

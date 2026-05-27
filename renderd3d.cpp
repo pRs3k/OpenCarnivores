@@ -452,7 +452,7 @@ void d3dStartBufferGBMP()
 }
 
 
-void d3dEndBufferG(BOOL ColorKey)
+void d3dEndBufferG(BOOL ColorKey, BOOL noSnapUV = FALSE)
 {
    if (!lpVertexG) return;
 
@@ -537,8 +537,8 @@ void d3dEndBufferG(BOOL ColorKey)
            texToBind = (GLuint)hTexture;
        if (texToBind)
            glBindTexture(GL_TEXTURE_2D, texToBind);
-       else if (g_glRenderer)
-           glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture());
+       else
+           glBindTexture(GL_TEXTURE_2D, g_glRenderer->GetWhiteTexture()); // g_glRenderer non-null (outer guard)
        // SOURCEPORT: re-assert alpha test state before drawing.
        // d3dFlushBuffer() (called for nearby 3D models rendered in the same
        // _RenderObject loop as BMP sprites) calls UnlockAndDrawTriangles(fproc1,0)
@@ -551,6 +551,9 @@ void d3dEndBufferG(BOOL ColorKey)
        // rare (BrightenTexture/GenerateMipMap avoid them), and water vertex-alpha
        // transparency relies on uAlphaTest=true (color.a=vColor.a path).
        g_glRenderer->SetAlphaTest(true);
+       // SOURCEPORT: sky needs bilinear UV sampling, not texel-snap (foliage path).
+       // noSnapUV overrides the forced-true above so sky draws with uAlphaTest=false.
+       if (noSnapUV) g_glRenderer->SetAlphaTest(false);
        // SOURCEPORT: custom shader wins over PBR; PBR wins over default Lambert.
        g_glRenderer->BindCustomMaterial(hCustomMaterial);
        if (!hCustomMaterial) g_glRenderer->BindMaterial(hMaterial);
@@ -2200,7 +2203,7 @@ void AddSkySum(WORD C)
   if (VMFORMAT565) {
 	  R = C>>11;  G = (C>>5) & 63; B = C & 31;
   } else {
-	  R = C>>10; G = (C>>5) & 31; B = C & 31; C=C*2;
+	  R = C>>10; G = (C>>5) & 31; B = C & 31; // SOURCEPORT: removed dead store C=C*2; result never read
   }
   
   SkySumR += R*8;
@@ -2568,7 +2571,7 @@ void DrawPictureScaled(int x, int y, int dw, int dh, TPicture &pic)
 
 // SOURCEPORT: measure text using the same font DrawText renders with (scaled to WinH).
 // Replaces GetTextW(hdcMain, s) calls so column positions match rendered text widths.
-static int ddTextW(LPSTR t)
+static int ddTextW(const char* t)
 {
 #ifdef _opengl
     if (g_glRenderer) return g_glRenderer->MeasureText(t);
@@ -2576,7 +2579,7 @@ static int ddTextW(LPSTR t)
     return GetTextW(hdcMain, t);
 }
 
-void ddTextOut(int x, int y, LPSTR t, int color)
+void ddTextOut(int x, int y, const char* t, int color)
 {
 #ifdef _d3d
   lpddBack->GetDC( &ddBackDC );
@@ -2621,9 +2624,10 @@ void DrawTrophyText(int x0, int y0, float textScale, bool isVR)
 	char t[32];
 
 	// SOURCEPORT: for VR, apply original offsets; for flatscreen, use compact spacing inside box
-	const int ls = isVR ? (int)(90 * WinH / 480 * textScale) : (int)(17 * WinH / 480);
-	const int xOffset = isVR ? (int)(60 * WinH / 480 * textScale) : (int)(20 * WinH / 480);
-	const int yOffset = isVR ? (int)(100 * WinH / 480 * textScale) : 0;
+	// SOURCEPORT: use 480.0f to avoid integer division before float multiply
+	const int ls = isVR ? (int)(90 * WinH / 480.0f * textScale) : (int)(17 * WinH / 480.0f);
+	const int xOffset = isVR ? (int)(60 * WinH / 480.0f * textScale) : (int)(20 * WinH / 480.0f);
+	const int yOffset = isVR ? (int)(100 * WinH / 480.0f * textScale) : 0;
 	x0 += xOffset;
 	y0 += yOffset;
     x = x0;
@@ -3077,8 +3081,9 @@ void DrawTPlaneClip(BOOL SECONT)
 
 void DrawTPlane(BOOL SECONT)
 {
-   int n;   
-   
+   int n;
+
+
    //if (!WATERREVERSE) {
 #ifndef _opengl
    // SOURCEPORT: skip software backface test in GL path. The dot-product is near zero
@@ -3090,9 +3095,9 @@ void DrawTPlane(BOOL SECONT)
 #endif
    //}
 
-   Mask1=0x007F;   
-   for (n=0; n<3; n++) {     
-	 if (ev[n].DFlags & 128) return;     
+   Mask1=0x007F;
+   for (n=0; n<3; n++) {
+	 if (ev[n].DFlags & 128) return;
      Mask1=Mask1 & ev[n].DFlags;  }
    if (Mask1>0) return;
 
@@ -3539,7 +3544,10 @@ void _RenderObject(int x, int y)
 
 	  
 
+#ifndef _opengl
+	  // SOURCEPORT: guard ofNOBMP zs reset — in OpenGL the unconditional zs=0 below makes this a dead store
 	  if (MObjects[ob].info.flags & ofNOBMP) zs = 0;
+#endif
 #ifdef _opengl
 	  // SOURCEPORT: disable BMP sprite LOD in GL path — the hard switch from 3D model to
 	  // a flat pre-rendered billboard at ctViewRM*256 units causes a jarring visual change
@@ -3548,12 +3556,46 @@ void _RenderObject(int x, int y)
 #endif
 	  if (zs>ctViewRM*256)
 		  RenderBMPModel(&MObjects[ob].bmpmodel, v[0].x, v[0].y, v[0].z, mlight-16);
-	  else
+	  else {
+#ifdef _opengl
+      // SOURCEPORT: shadow pass — submit model geometry in world-space coordinates
+      // directly to the depth map, bypassing camera-space screen reconstruction.
+      // This correctly handles geometry behind the camera (e.g. tree canopy when
+      // the player turns away) which screen-space depth.vert cannot reconstruct.
+      // Object world rotation = fi - CameraAlpha (FI * pi/2); no camera pitch applied.
+      extern RendererGL* g_glRenderer;
+      if (g_glRenderer && g_glRenderer->IsShadowPassActive()) {
+          TModel* model = MObjects[ob].model;
+          // Flush any pending world-space tris before binding this model's texture,
+          // so previous alpha-test faces are drawn with the correct texture.
+          g_glRenderer->FlushWorldSpaceShadow();
+          d3dSetTexture(model->lpTexture, 256, 256);
+          float obj_al = fi - CameraAlpha;  // object world-space yaw (camera-independent)
+          float ca = cosf(obj_al), sa = sinf(obj_al);
+          float wx = (float)(x * 256 + 128);
+          float wy = (float)(HMapO[y][x]) * ctHScale;
+          float wz_ = (float)(y * 256 + 128);
+          for (int ff = 0; ff < model->FCount; ff++) {
+              TFace* fp = &model->gFace[ff];
+              bool at = (fp->Flags & (sfOpacity | sfTransparent)) != 0;
+              TPoint3d& p0 = model->gVertex[fp->v1];
+              TPoint3d& p1 = model->gVertex[fp->v2];
+              TPoint3d& p2 = model->gVertex[fp->v3];
+              g_glRenderer->SubmitWorldSpaceShadowTriangle(
+                  p0.x*ca+p0.z*sa+wx, p0.y+wy, p0.z*ca-p0.x*sa+wz_,
+                  p1.x*ca+p1.z*sa+wx, p1.y+wy, p1.z*ca-p1.x*sa+wz_,
+                  p2.x*ca+p2.z*sa+wx, p2.y+wy, p2.z*ca-p2.x*sa+wz_,
+                  fp->tax, fp->tay, fp->tbx, fp->tby, fp->tcx, fp->tcy, at);
+          }
+          return;
+      }
+#endif
       if (v[0].z<-256*8)
        RenderModel(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);
       else
-       RenderModelClip(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);       
-	   
+       RenderModelClip(MObjects[ob].model, v[0].x, v[0].y, v[0].z, mlight, FI, fi, CameraBeta);
+	  }
+
 }
 
 void RenderObject(int x, int y)
@@ -3632,7 +3674,7 @@ static void DrawTerrainGL() {
             if ((tl.DFlags & tr.DFlags & bl.DFlags & br.DFlags) & 0x7F) continue;
 
             int ti = TMap1[my][mx];
-            if (ti >= 1024 || !Textures[ti] || !Textures[ti]->DataA) continue;
+            if (ti >= 1024 || !Textures[ti]) continue;
 
             // Texture switch: flush and rebind
             if (currentTex != ti) {
@@ -3702,30 +3744,80 @@ void ProcessMap(int x, int y, int r)
    if (OMap[y][x]!=255) BackR+=MObjects[OMap[y][x]].info.BoundR;
 
    ev[0] = VMap[y-CCY+VMAP_CENTER][x-CCX+VMAP_CENTER];
-   if (ev[0].v.z>BackR) return;
-   
-   int t1 = TMap1[y][x];   
-   ReverseOn = (FMap[y][x] & fmReverse);   
+#ifdef _opengl
+   // SOURCEPORT: shadow pass — skip camera-space culls so objects on tiles
+   // behind or beside the player still enter the ORList for world-space shadow submission.
+   { extern RendererGL* g_glRenderer;
+     if (!g_glRenderer || !g_glRenderer->IsShadowPassActive())
+#endif
+         if (ev[0].v.z>BackR) return;
+#ifdef _opengl
+   }
+#endif
+
+   int t1 = TMap1[y][x];
+   ReverseOn = (FMap[y][x] & fmReverse);
    TDirection = (FMap[y][x] & 3);
-             
+
    x = x - CCX + VMAP_CENTER;
    y = y - CCY + VMAP_CENTER;
 
-   ev[1] = VMap[y][x+1];            
-   if (ReverseOn) ev[2] = VMap[y+1][x];          
-             else ev[2] = VMap[y+1][x+1];          
-           
+   ev[1] = VMap[y][x+1];
+   if (ReverseOn) ev[2] = VMap[y+1][x];
+             else ev[2] = VMap[y+1][x+1];
+
    float xx = (ev[0].v.x + VMap[y+1][x+1].v.x) / 2;
    float yy = (ev[0].v.y + VMap[y+1][x+1].v.y) / 2;
-   float zz = (ev[0].v.z + VMap[y+1][x+1].v.z) / 2;   
+   float zz = (ev[0].v.z + VMap[y+1][x+1].v.z) / 2;
 
-   if ( fabs(xx*FOVK) > -zz + BackR) return;
+#ifdef _opengl
+   { extern RendererGL* g_glRenderer;
+     if (!g_glRenderer || !g_glRenderer->IsShadowPassActive())
+#endif
+         if ( fabs(xx*FOVK) > -zz + BackR) return;
+#ifdef _opengl
+   }
+#endif
    
 
    zs = (int)sqrt( xx*xx + zz*zz + yy*yy);
    if (MIPMAP && (zs > 256 * 10 && t1 || LOWRESTX)) d3dSetTexture(Textures[t1]->DataB, 64, 64);
                                                else d3dSetTexture(Textures[t1]->DataA, 128, 128);
 
+#ifdef _opengl
+   { extern RendererGL* g_glRenderer;
+     bool _sp = g_glRenderer && g_glRenderer->IsShadowPassActive();
+     if (_sp) {
+         // SOURCEPORT: shadow pass — world positions from HMap directly, bypassing
+         // camera-space VMap.  Camera-space ev[i].v is unreliable when pitched up
+         // past the sun elevation: tiles behind the camera have rv.z > 0 and the
+         // R^T round-trip accumulates cancellation error for large world coords.
+         // Reading HMap is exact and view-direction-independent.
+         int tx = x + CCX - VMAP_CENTER;
+         int ty = y + CCY - VMAP_CENTER;
+         float c0x=(float)(tx  )*256.f, c0y=(float)HMap[ty  ][tx  ]*ctHScale, c0z=(float)(ty  )*256.f;
+         float c1x=(float)(tx+1)*256.f, c1y=(float)HMap[ty  ][tx+1]*ctHScale, c1z=(float)(ty  )*256.f;
+         float c2x=(float)(tx  )*256.f, c2y=(float)HMap[ty+1][tx  ]*ctHScale, c2z=(float)(ty+1)*256.f;
+         float c3x=(float)(tx+1)*256.f, c3y=(float)HMap[ty+1][tx+1]*ctHScale, c3z=(float)(ty+1)*256.f;
+         if (!ReverseOn) {
+             g_glRenderer->SubmitWorldSpaceShadowTriangle(
+                 c0x,c0y,c0z, c1x,c1y,c1z, c3x,c3y,c3z, 0.f,0.f,0.f,0.f,0.f,0.f, false);
+             g_glRenderer->SubmitWorldSpaceShadowTriangle(
+                 c0x,c0y,c0z, c3x,c3y,c3z, c2x,c2y,c2z, 0.f,0.f,0.f,0.f,0.f,0.f, false);
+         } else {
+             g_glRenderer->SubmitWorldSpaceShadowTriangle(
+                 c0x,c0y,c0z, c1x,c1y,c1z, c2x,c2y,c2z, 0.f,0.f,0.f,0.f,0.f,0.f, false);
+             g_glRenderer->SubmitWorldSpaceShadowTriangle(
+                 c2x,c2y,c2z, c1x,c1y,c1z, c3x,c3y,c3z, 0.f,0.f,0.f,0.f,0.f,0.f, false);
+         }
+     } else {
+         if (r>8) DrawTPlane(FALSE); else DrawTPlaneClip(FALSE);
+         if (ReverseOn) { ev[0] = ev[2]; ev[2] = VMap[y+1][x+1]; }
+                   else { ev[1] = ev[2]; ev[2] = VMap[y+1][x];   }
+         if (r>8) DrawTPlane(TRUE);  else DrawTPlaneClip(TRUE);
+     }
+   }
+#else
    if (r>8) DrawTPlane(FALSE);
        else DrawTPlaneClip(FALSE);
 
@@ -3734,14 +3826,22 @@ void ProcessMap(int x, int y, int r)
 
    if (r>8) DrawTPlane(TRUE);
        else DrawTPlaneClip(TRUE);
+#endif
      
    x = x + CCX - VMAP_CENTER;
    y = y + CCY - VMAP_CENTER;
 
-   if (OMap[y][x]==255) return;   
-   
-   if (zz<BackR)
-      RenderObject(x, y);
+   if (OMap[y][x]==255) return;
+
+#ifdef _opengl
+   { extern RendererGL* g_glRenderer;
+     // SOURCEPORT: consolidated duplicate branch — shadow pass skips distance culling; normal pass applies it
+     if ((g_glRenderer && g_glRenderer->IsShadowPassActive()) || zz<BackR)
+         RenderObject(x, y);
+   }
+#else
+         if (zz<BackR) RenderObject(x, y);
+#endif
 
 }
 
@@ -4232,10 +4332,13 @@ void BuildTreeNoSort()
            if (sg<0) continue;
         }        
 					
-		fptr->Next=-1;
-        if (Current==-1) { Current=f; LastFace = f; } else 
-        { mptr->gFace[LastFace].Next=f; LastFace=f; }
-		
+		fptr->Next = -1;
+        if (Current == -1) {
+            Current = f;
+        } else {
+            mptr->gFace[LastFace].Next = f; // LastFace valid: set in first iteration
+        }
+        LastFace = f;
 	}
 }
 
@@ -4258,10 +4361,15 @@ int  BuildTreeClipNoSort()
         }
 
         fc++;
-        fptr->Next=-1;
-        if (Current==-1) { Current=f; LastFace = f; } else 
-        { mptr->gFace[LastFace].Next=f; LastFace=f; }
-                		
+        fptr->Next = -1;
+        // SOURCEPORT: restructured to clarify LastFace invariant (clang-analyzer OOB false-positive).
+        // LastFace is always a valid index here when Current != -1 (set in the first iteration).
+        if (Current == -1) {
+            Current = f;
+        } else {
+            mptr->gFace[LastFace].Next = f;
+        }
+        LastFace = f;
 	}
     return fc;
 }
@@ -4308,7 +4416,7 @@ void RenderBMPModel(TBMPModel* mptr, float x0, float y0, float z0, int light)
 
    int argb = light * 0x00010101 + ((255-GlassL)<<24);
          
-   float d = (float) sqrt(x0*x0 + y0*y0 + z0*z0);   
+   // SOURCEPORT: removed dead variable d = sqrt(x0^2+y0^2+z0^2); computed but never read
    d3dSetTexture(mptr->lpTexture, 128, 128);
 
  
@@ -4513,10 +4621,19 @@ void RenderModel(TModel* _mptr, float x0, float y0, float z0, int light, int VT,
    }   
 
    if (minx == 10241024) return;
+#ifdef _opengl
+   // SOURCEPORT: shadow pass — skip screen-bounds cull so canopy geometry that
+   // projects entirely above the screen top (player under tree) still writes to
+   // the depth map.  Vertices behind camera keep their 0xFFFFFF sentinel and are
+   // skipped per-face below; depth.vert also discards any with aDepth<=0 via NDC push.
+   {   extern RendererGL* g_glRenderer;
+       if (!g_glRenderer || !g_glRenderer->IsShadowPassActive())
+           if (minx>WinW || maxx<0 || miny>WinH || maxy<0) return; }
+#else
    if (minx>WinW || maxx<0 || miny>WinH || maxy<0) return;
-   
-   
-   BuildTreeNoSort(); 
+#endif
+
+   BuildTreeNoSort();
    
    float d = (float) sqrt(x0*x0 + y0*y0 + z0*z0);
    if (LOWRESTX) d = 14*256;
@@ -4941,10 +5058,8 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
    float cb = (float)cos(bt);
    float sb = (float)sin(bt);   
    
-   DWORD PHCOLOR = 0xFFFFFFFF;   
-   
-   BOOL BL = FALSE;
-
+   DWORD PHCOLOR = 0xFFFFFFFF;
+   // SOURCEPORT: removed dead BL flag — set inside loop but never read after it (EnvMap path)
 
    for (int s=0; s<mptr->VCount; s++) {
     { float dx = mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa;
@@ -4955,7 +5070,6 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
       rVertex[s].x = (dx * cg + dy * sg) + x0;
       rVertex[s].y = (dy * cg - dx * sg) + y0;
       rVertex[s].z = dz + z0; }
-    if (rVertex[s].z<0) BL=TRUE;
 
     if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
     else {
@@ -5090,8 +5204,7 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
    int   gv = SkyG +64; if (gv>255) gv = 255;
    int   bv = SkyB +64; if (bv>255) bv = 255;
    DWORD PHCOLOR = 0xFF000000 + (rv<<16) + (gv<<8) + bv;
-
-   BOOL BL = FALSE;
+   // SOURCEPORT: removed dead BL flag — set inside loop but never read after it (PhongMap path)
 
    for (int s=0; s<mptr->VCount; s++) {
     { float dx = mptr->gVertex[s].x * ca + mptr->gVertex[s].z * sa;
@@ -5102,7 +5215,6 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
       rVertex[s].x = (dx * cg + dy * sg) + x0;
       rVertex[s].y = (dy * cg - dx * sg) + y0;
       rVertex[s].z = dz + z0; }
-    if (rVertex[s].z<0) BL=TRUE;
 
     if (rVertex[s].z > -256.0f) { gScrp[s].x = 0xFFFFFF; gScrp[s].y = 0xFF; }
     else {   
@@ -5609,9 +5721,11 @@ void RenderShipPost()
 
 void Render3DHardwarePosts()
 {
-	   
-
-   
+  // SOURCEPORT: skip during the depth-only shadow pass.  Dinosaurs/creatures
+  // already have flat shadows via RenderShadowClip; rendering them in the depth
+  // pass would produce a second (world-space) shadow on top of the original.
+  extern RendererGL* g_glRenderer;
+  if (g_glRenderer && g_glRenderer->IsShadowPassActive()) return;
 
    TCharacter *cptr;
    for (int c=0; c<ChCount; c++) {
@@ -5622,7 +5736,7 @@ void Render3DHardwarePosts()
 
 	        
       float r = (float)max( fabs(cptr->rpos.x), fabs(cptr->rpos.z) );
-      int ri = -1 + (int)(r / 256.f + 0.5f);
+      int ri = -1 + (int)lroundf(r / 256.f); // SOURCEPORT: lroundf for correct rounding on negatives
       if (ri < 0) ri = 0;
       if (ri > ctViewR) continue;
 
@@ -5941,6 +6055,13 @@ void RenderSkyPlane()
    float lastdt = 0.f;
 
 #ifdef _opengl
+   // SOURCEPORT: sky uses sz=0.0001 (not 0) so depth.vert reconstructs a world position
+   // ~160 000 GU in the camera-forward direction.  When looking up past the sun elevation
+   // that position lands behind the light's near plane; GL_DEPTH_CLAMP clamps its shadow
+   // depth to 0, blackening a growing triangular region of the shadow map.  Skip the sky
+   // plane entirely during the shadow pass — it casts no useful shadow.
+   { extern RendererGL* g_glRenderer;
+     if (g_glRenderer && g_glRenderer->IsShadowPassActive()) return; }
    // SOURCEPORT: In VR use head-centre position so the sky has no IPD-offset parallax.
    float saveX = CameraX, saveZ = CameraZ;
    if (XR::StereoActive()) {
@@ -5958,9 +6079,10 @@ void RenderSkyPlane()
    sb = (float)sin(CameraBeta);
    SKYDTime = RealTime & ((1<<17) - 1);   
 
-   float sh = - CameraY;
+   // SOURCEPORT: removed dead initial value -CameraY; sh is always overwritten before use
+   float sh;
 
-   if (MapMinY==10241024) 
+   if (MapMinY==10241024)
 	   MapMinY=0;
    sh = (float)((int)MapMinY)*ctHScale - CameraY;
 
@@ -6029,9 +6151,11 @@ void RenderSkyPlane()
    float _zb = fabs(zb) - 100200.f; if (_zb<0) _zb=0.f;
    float _zc = fabs(zc) - 100200.f; if (_zc<0) _zc=0.f;
    
-   int alpha = (int)(255*40240 / (40240+_za));
-   int alphb = (int)(255*40240 / (40240+_zb));
-   int alphc = (int)(255*40240 / (40240+_zc));
+   // SOURCEPORT: alpha/alphb/alphc are used in the #ifdef _d3d path below; the GL path
+   // jumps past them via goto sky_done, making them appear dead to the analyzer — suppress.
+   int alpha = (int)(255*40240 / (40240+_za)); // NOLINT(clang-analyzer-deadcode.DeadStores)
+   int alphb = (int)(255*40240 / (40240+_zb)); // NOLINT(clang-analyzer-deadcode.DeadStores)
+   int alphc = (int)(255*40240 / (40240+_zc)); // NOLINT(clang-analyzer-deadcode.DeadStores)
    
    int sx1 = - VideoCX;
    int sx2 = + (WinW - VideoCX);  // SOURCEPORT: use actual right-edge offset from principal point for asymmetric VR FOV
@@ -6098,11 +6222,12 @@ void RenderSkyPlane()
            tu0l = tu1l; tv0l = tv1l; tu0r = tu1r; tv0r = tv1r;
        }
        if (g_glRenderer) g_glRenderer->SetZBufferEnabled(false);
-       d3dEndBufferG(FALSE);
+       d3dEndBufferG(FALSE, TRUE);  // SOURCEPORT: noSnapUV=TRUE — sky uses bilinear filtering, not foliage texel-snap
        if (g_glRenderer) g_glRenderer->SetZBufferEnabled(true);
        goto sky_done;
    }
 #endif
+#ifdef _d3d
 
    float dtt = (float)(SKYDTime) / 512.f;
 
@@ -6298,7 +6423,8 @@ void RenderSkyPlane()
    lpd3dExecuteBufferG->Unlock( );
 
    hRes = lpd3dDevice->Execute(lpd3dExecuteBufferG, lpd3dViewport, D3DEXECUTE_UNCLIPPED);
-#endif
+#endif  // inner _d3d
+#endif  // outer _d3d (guards declarations jumped over by goto sky_done in _opengl path)
 
 sky_done:
    LINEARFILTER = TRUE;

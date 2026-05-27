@@ -55,3 +55,6 @@ Debug/
 mods/
 mods.cfg
 OpenCarnivores/
+
+# Runtime renderer debug log
+debug_renderer.txt

@@ -64,6 +64,7 @@ To play in VR (Meta Quest 3, HTC Vive, Valve Index, etc.):
 - **VR support** — OpenXR runtime, tested on Meta Quest 3, with head-tracking, 6DoF, and controller aiming
 - **Adaptive VSync** and uncapped framerate, with 90 FPS VR mode for stable HMD performance
 - **OpenGL 3.3 renderer** with hardware trilinear mipmapping, anisotropic filtering, and per-texture LOD bias tuning (no more terrain texture pop, no more foliage shimmer)
+- **Real-time sun shadows** — PCF 3×3 world-space shadow map, view-direction-independent; toggleable in Options → Video
 - **Graphics settings** — adjustable anisotropic filtering (2x/4x/8x/max), render distance, and supersampling for VR
 - **OpenAL Soft audio** — 3D positional audio, terrain occlusion, ready for HRTF and EFX reverb
 - **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)

@@ -33,6 +33,20 @@ endif()
 # Suppress the warning about redefining builtin functions.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-Wno-builtin-macro-redefined)
+    # Suppress warning categories endemic to the 1999-era C source base.
+    add_compile_options(
+        -Wno-writable-strings          # string literals passed to char* params
+        -Wno-microsoft-goto            # goto jumping over variable inits (D3D fallback paths)
+        -Wno-dangling-else             # pre-existing unbraced if/else chains
+        -Wno-logical-not-parentheses   # !x & y patterns in original code
+        -Wno-pointer-bool-conversion   # address-of-array always-true checks
+        -Wno-nonportable-include-path  # Hunt.h case mismatch on Windows
+    )
+    if(WIN32)
+        # SDL2main.lib exports both wmain and main; use mainCRTStartup so lld
+        # picks main explicitly and does not emit the "found both wmain and main" warning.
+        add_link_options(-Wl,/ENTRY:mainCRTStartup)
+    endif()
 endif()
 
 # ─── Renderer-specific setup ────────────────────────────────────────────────
@@ -56,6 +70,7 @@ if(RENDERER STREQUAL "opengl")
     set(RENDERER_SOURCES
         renderer/RendererGL.cpp
         renderer/PostProcessing.cpp
+        renderer/ShaderPack.cpp
         ${GLAD_DIR}/src/gl.c
         ${LUA_SOURCES}
     )
@@ -169,6 +184,12 @@ if(RENDERER STREQUAL "opengl")
             "${CMAKE_SOURCE_DIR}/shaders"
             "$<TARGET_FILE_DIR:OpenCarnivores>/shaders"
         COMMENT "Copying shaders"
+    )
+    add_custom_command(TARGET OpenCarnivores POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/shaderpacks"
+            "$<TARGET_FILE_DIR:OpenCarnivores>/shaderpacks"
+        COMMENT "Copying shaderpacks"
     )
 
     # SOURCEPORT: openxr_loader.dll — required for VR runtime support.

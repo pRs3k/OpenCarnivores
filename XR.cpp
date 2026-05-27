@@ -1199,7 +1199,7 @@ namespace {
             XR_REFERENCE_SPACE_TYPE_LOCAL
         };
         for (int i = 0; i < 2; ++i) {
-            XrReferenceSpaceCreateInfo rsci = {};
+            XrReferenceSpaceCreateInfo rsci = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
             rsci.type                 = XR_TYPE_REFERENCE_SPACE_CREATE_INFO;
             rsci.referenceSpaceType   = types[i];
             rsci.poseInReferenceSpace = identity;
@@ -1258,7 +1258,7 @@ namespace {
         g_handPath[1] = StrPath("/user/hand/right");
 
         // Aim pose action (both hands)
-        XrActionCreateInfo aci = {};
+        XrActionCreateInfo aci = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
         aci.type = XR_TYPE_ACTION_CREATE_INFO;
         strncpy(aci.actionName,          "aim_pose", XR_MAX_ACTION_NAME_SIZE-1);
         strncpy(aci.localizedActionName, "Aim Pose", XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1271,7 +1271,7 @@ namespace {
         }
 
         // Select (trigger) action — boolean (both hands)
-        XrActionCreateInfo sci2 = {};
+        XrActionCreateInfo sci2 = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
         sci2.type = XR_TYPE_ACTION_CREATE_INFO;
         strncpy(sci2.actionName,          "select", XR_MAX_ACTION_NAME_SIZE-1);
         strncpy(sci2.localizedActionName, "Select", XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1285,7 +1285,7 @@ namespace {
 
         // Grip / squeeze — boolean (both hands)
         {
-            XrActionCreateInfo ai = {};
+            XrActionCreateInfo ai = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
             ai.type = XR_TYPE_ACTION_CREATE_INFO;
             strncpy(ai.actionName,          "grip",  XR_MAX_ACTION_NAME_SIZE-1);
             strncpy(ai.localizedActionName, "Grip",  XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1296,7 +1296,7 @@ namespace {
         }
         // Thumbstick click — boolean (both hands)
         {
-            XrActionCreateInfo ai = {};
+            XrActionCreateInfo ai = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
             ai.type = XR_TYPE_ACTION_CREATE_INFO;
             strncpy(ai.actionName,          "thumbstick_click",  XR_MAX_ACTION_NAME_SIZE-1);
             strncpy(ai.localizedActionName, "Thumbstick Click",  XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1307,7 +1307,7 @@ namespace {
         }
         // Face buttons — boolean (no subaction paths; each is on a fixed hand)
         auto MakeFaceBtn = [&](const char* name, const char* locName, XrActionHandle& out) {
-            XrActionCreateInfo ai = {};
+            XrActionCreateInfo ai = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
             ai.type = XR_TYPE_ACTION_CREATE_INFO;
             strncpy(ai.actionName,          name,    XR_MAX_ACTION_NAME_SIZE-1);
             strncpy(ai.localizedActionName, locName, XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1321,7 +1321,7 @@ namespace {
 
         // Thumbstick axes — vector2f, one action per hand (no subaction needed)
         {
-            XrActionCreateInfo ai = {};
+            XrActionCreateInfo ai = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
             ai.type = XR_TYPE_ACTION_CREATE_INFO;
             strncpy(ai.actionName,          "left_stick",   XR_MAX_ACTION_NAME_SIZE-1);
             strncpy(ai.localizedActionName, "Left Stick",   XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1329,7 +1329,7 @@ namespace {
             g_xrCreateAction(g_menuActionSet, &ai, &g_leftStickAction);
         }
         {
-            XrActionCreateInfo ai = {};
+            XrActionCreateInfo ai = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
             ai.type = XR_TYPE_ACTION_CREATE_INFO;
             strncpy(ai.actionName,          "right_stick",  XR_MAX_ACTION_NAME_SIZE-1);
             strncpy(ai.localizedActionName, "Right Stick",  XR_MAX_LOCALIZED_ACTION_NAME_SIZE-1);
@@ -1744,7 +1744,7 @@ bool Init()
 
     // Create action set immediately after instance creation — must happen
     if (g_xrGetSystem) {
-        XrSystemGetInfo si = {};
+        XrSystemGetInfo si = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
         si.type       = XR_TYPE_SYSTEM_GET_INFO;
         si.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
         r = g_xrGetSystem(g_instance, &si, &g_systemId);
@@ -1811,7 +1811,7 @@ void PollEvents()
                     if (g_refSpace == XR_NULL_HANDLE)     CreateReferenceSpace();
                     if (!g_actionsReady)                  SetupActions();
 
-                    XrSessionBeginInfo bi = {};
+                    XrSessionBeginInfo bi = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
                     bi.type = XR_TYPE_SESSION_BEGIN_INFO;
                     bi.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
                     XrResult br = g_xrBeginSession(g_session, &bi);
@@ -1831,9 +1831,9 @@ void PollEvents()
                 break;
             case XR_SESSION_STATE_EXITING:
             case XR_SESSION_STATE_LOSS_PENDING:
-                // Step 6 will add graceful mid-game teardown.
+            default:
+                // SOURCEPORT: consolidated duplicate branch — default has identical body; Step 6 will add teardown
                 break;
-            default: break;
             }
         }
     }
@@ -1886,13 +1886,13 @@ bool BeginFrame()
     // xrLocateViews — per-eye pose + FOV for this predicted display time.
     g_viewsValid = false;
     if (g_xrLocateViews && g_refSpace != XR_NULL_HANDLE && fst.shouldRender) {
-        XrViewLocateInfo vli = {};
+        XrViewLocateInfo vli = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
         vli.type                  = XR_TYPE_VIEW_LOCATE_INFO;
         vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
         vli.displayTime           = g_predictedTime;
         vli.space                 = g_refSpace;
 
-        XrViewState vs = {};
+        XrViewState vs = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
         vs.type = XR_TYPE_VIEW_STATE;
 
         g_views[0].type = XR_TYPE_VIEW;
@@ -1916,7 +1916,7 @@ void EndFrame()
     g_frameBegun = false;
     g_viewsValid = false;
 
-    XrFrameEndInfo fei = {};
+    XrFrameEndInfo fei = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
     fei.type                 = XR_TYPE_FRAME_END_INFO;
     fei.displayTime          = g_predictedTime;
     fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -2015,7 +2015,7 @@ void Shutdown()
 {
     // End any in-flight frame cleanly before tearing down.
     if (g_frameBegun && g_xrEndFrame) {
-        XrFrameEndInfo fei = {};
+        XrFrameEndInfo fei = {}; // NOLINT(bugprone-invalid-enum-default-initialization) — .type assigned immediately below
         fei.type                 = XR_TYPE_FRAME_END_INFO;
         fei.displayTime          = g_predictedTime;
         fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -2310,7 +2310,7 @@ void GetEyeCameraSetup(int eye,
     float fy =  2.f*(qw*qx - qy*qz);
     float fz =  2.f*(qx*qx + qy*qy) - 1.f;
 
-    float rx = 1.f - 2.f*(qy*qy + qz*qz);
+    // SOURCEPORT: removed dead rx = 1-2*(qy²+qz²); only ry is needed for roll
     float ry =  2.f*(qx*qy + qw*qz);
 
     alpha = atan2f(fx, -fz);                                    // yaw
@@ -2428,7 +2428,7 @@ bool GetHeadOrientation(float& yaw, float& pitch, float& roll)
     float fy =  2.f*(qw*qx - qy*qz);
     float fz =  2.f*(qx*qx + qy*qy) - 1.f;
 
-    float rx = 1.f - 2.f*(qy*qy + qz*qz);
+    // SOURCEPORT: removed dead rx = 1-2*(qy²+qz²); only ry is needed for roll
     float ry =  2.f*(qx*qy + qw*qz);
 
     yaw   = atan2f(fx, -fz);                                    // game yaw (matches GetEyeCameraSetup)

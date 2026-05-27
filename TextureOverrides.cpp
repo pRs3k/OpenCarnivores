@@ -147,7 +147,7 @@ bool RegisterFromFile(void* key, const char* imagePath)
     stbi_uc* data = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
     if (!data) return false;
 
-    uint32_t* buf = new uint32_t[w * h];
+    uint32_t* buf = new uint32_t[(size_t)w * h]; // SOURCEPORT: widen before multiply to avoid int overflow for large textures
     std::memcpy(buf, data, (size_t)w * h * 4);
     stbi_image_free(data);
 

@@ -1,0 +1,78 @@
+{
+  "name": "Example Shader Pack",
+  "version": "1.0.0",
+  "author": "OpenCarnivores",
+  "description": "Example shader pack demonstrating tone mapping and color adjustments",
+  "target_game_version": "1.0.0",
+  "effects": [
+    {
+      "id": "tonemap_reinhard",
+      "name": "Tone Mapping (Reinhard)",
+      "type": "post_process",
+      "shader": "effects/tonemap_reinhard.frag",
+      "enabled": false,
+      "parameters": {
+        "exposure": {
+          "type": "float",
+          "min": 0.5,
+          "max": 2.0,
+          "default": 1.0
+        },
+        "white": {
+          "type": "float",
+          "min": 1.0,
+          "max": 8.0,
+          "default": 2.0
+        }
+      }
+    },
+    {
+      "id": "bloom",
+      "name": "Bloom Glow",
+      "type": "post_process",
+      "shader": "effects/bloom_simple.frag",
+      "enabled": false,
+      "parameters": {
+        "intensity": {
+          "type": "float",
+          "min": 0.0,
+          "max": 3.0,
+          "default": 0.8
+        },
+        "threshold": {
+          "type": "float",
+          "min": 0.3,
+          "max": 2.0,
+          "default": 0.8
+        }
+      }
+    },
+    {
+      "id": "color_grading",
+      "name": "Color Grading",
+      "type": "post_process",
+      "shader": "effects/color_grade.frag",
+      "enabled": false,
+      "parameters": {
+        "saturation": {
+          "type": "float",
+          "min": 0.0,
+          "max": 2.0,
+          "default": 1.0
+        },
+        "brightness": {
+          "type": "float",
+          "min": 0.5,
+          "max": 2.0,
+          "default": 1.0
+        },
+        "contrast": {
+          "type": "float",
+          "min": 0.5,
+          "max": 2.0,
+          "default": 1.0
+        }
+      }
+    }
+  ]
+}

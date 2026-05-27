@@ -58,6 +58,10 @@ public:
     // Call after the full frame (scene + HUD) is rendered.
     void ApplyEffects();
 
+    // SOURCEPORT: Simple post-process effect - renders fullscreen quad with shader
+    // Copies current back buffer to temp texture, applies shader, renders to screen
+    void ApplySimpleEffect(const char* shaderPath, float intensity = 1.0f);
+
     bool IsInitialized() const { return m_initialized; }
 
     // Load/reload post-processing shaders from disk
@@ -82,6 +86,10 @@ public:
     const float* GetLightViewMatrix(int cascade) const { return cascade >= 0 && cascade < SHADOW_CASCADES ? m_lightViewMatrix[cascade] : nullptr; }
     const float* GetLightProjMatrix(int cascade) const { return cascade >= 0 && cascade < SHADOW_CASCADES ? m_lightProjMatrix[cascade] : nullptr; }
     void UpdateShadowMatrices(const float* cameraPos, const float* cameraDir, float fovY, float aspect);
+
+    // Debug visualization of shadow maps
+    void SetDebugShadowVisualization(int cascade) { m_debugShadowCascade = cascade; }
+    int GetDebugShadowVisualization() const { return m_debugShadowCascade; }
 
 private:
     struct EffectShader {
@@ -108,6 +116,7 @@ private:
     float m_lightDirection[3] = {0.6f, 0.6f, 0.2f};   // Directional light direction (world space)
     float m_lightViewMatrix[SHADOW_CASCADES][16];     // Light view matrix per cascade
     float m_lightProjMatrix[SHADOW_CASCADES][16];     // Light projection matrix per cascade
+    int m_debugShadowCascade = -1;                    // -1 = disabled, 0-2 = visualize cascade
 
     std::vector<EffectShader> m_effects;
     uint32_t m_fsQuadVao, m_fsQuadVbo;   // Full-screen quad for post-processing
