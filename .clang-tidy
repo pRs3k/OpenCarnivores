@@ -1,0 +1,32 @@
+---
+# Non-stylistic checks only: bugs, UB, performance, real correctness issues.
+# Naming/formatting/style checks excluded to avoid noise from 1999-era source.
+Checks: >
+  bugprone-*,
+  performance-*,
+  misc-unused-parameters,
+  misc-redundant-expression,
+  misc-static-assert,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-avoid-bind,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-integer-division,
+  -bugprone-signed-char-misuse,
+  -performance-avoid-endl,
+  -modernize-avoid-bind
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '^((?!deps/).)*$'
+FormatStyle: none
+
+CheckOptions:
+  - key: bugprone-assert-side-effect.AssertMacros
+    value: 'assert'

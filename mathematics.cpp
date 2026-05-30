@@ -83,7 +83,7 @@ Vector3d AddVectors( Vector3d& v1, Vector3d& v2 )
 
 float VectorLength(Vector3d v)
 {
-  return (float)sqrt(v.x*v.x + v.y*v.y + v.z*v.z);
+  return sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
 }
 
 
@@ -112,7 +112,7 @@ void CalcHitPoint(CLIPPLANE& C, Vector3d& a, Vector3d& b, Vector3d& hp)
   MulVectorsScal(a, C.nv, SCLN);
   MulVectorsScal(lv,C.nv, SCVN);
                   
-  SCLN/=SCVN; SCLN=(float)fabs(SCLN);
+  SCLN/=SCVN; SCLN=fabsf(SCLN);
   hp.x = a.x + lv.x * SCLN;
   hp.y = a.y + lv.y * SCLN;
   hp.z = a.z + lv.z * SCLN;  
@@ -138,14 +138,14 @@ float FindVectorAlpha(float vx, float vy)
 {
  float adx, ady, alpha, dalpha;
 
- adx=(float)fabs(vx); 
- ady=(float)fabs(vy); 
+ adx=fabsf(vx);
+ ady=fabsf(vy);
 
  alpha = pi / 4.f;
  dalpha = pi / 8.f;
 
  for (int i=1; i<=10; i++) {
-   alpha=alpha-dalpha*SGN(Mul2dVectors(adx,ady, (float)cos(alpha), (float)sin(alpha)));
+   alpha=alpha-dalpha*SGN(Mul2dVectors(adx,ady, cosf(alpha), sinf(alpha)));
    dalpha/=2;
  }
 
@@ -161,8 +161,8 @@ void CheckBoundCollision(float &px, float &py, float cx, float cy, float oy, TBo
 	float ppx=px-cx;
 	float ppy=py-cy; 
 	
-	float ca = (float) cos(angle*pi / 2.f);
-	float sa = (float) sin(angle*pi / 2.f);	
+	float ca = cosf(angle*pi / 2.f);
+	float sa = sinf(angle*pi / 2.f);
 	float w,h;
 
 	for (int o=0; o<8; o++) {
@@ -229,14 +229,14 @@ void CheckCollision(float &cx, float &cz)
 		} 
 		  else
 		if (MObjects[ob].info.flags & ofCIRCLE) {
-         float r = (float) sqrt( (ox-cx)*(ox-cx) + (oz-cz)*(oz-cz) );
+         float r = sqrtf( (ox-cx)*(ox-cx) + (oz-cz)*(oz-cz) );
          if (r<CR) {
            cx = cx - (ox - cx) * (CR-r)/r;
            cz = cz - (oz - cz) * (CR-r)/r; }
 		} else {
-		   float r = (float) max( fabs(ox-cx) , fabs(oz-cz) );
+		   float r = (float) max( fabsf(ox-cx) , fabsf(oz-cz) );
            if (r<CR) {
-		    if (fabs(ox-cx) > fabs(oz-cz) )
+		    if (fabsf(ox-cx) > fabsf(oz-cz) )
              cx = cx - (ox - cx) * (CR-r)/r;
 		    else
              cz = cz - (oz - cz) * (CR-r)/r; 
@@ -262,7 +262,7 @@ void CheckCollision(float &cx, float &cz)
 	   float pz = Characters[c].pos.z;
 	   if (fabsf(py - PlayerY) > 384.f) continue;  // head-height-ish window
        float CR = DinoInfo[ Characters[c].CType ].Radius;
-	   float r = (float) sqrt( (px-cx)*(px-cx) + (pz-cz)*(pz-cz) );
+	   float r = sqrtf( (px-cx)*(px-cx) + (pz-cz)*(pz-cz) );
          if (r < CR && r > 0.001f) {
            cx = cx - (px - cx) * (CR-r)/r;
            cz = cz - (pz - cz) * (CR-r)/r;
@@ -290,8 +290,9 @@ int TraceCheckPlane(Vector3d a, Vector3d b, Vector3d c)
   MulVectorsScal(SubVectors(TraceA,a), pnv, SCLN);
   MulVectorsScal(TraceNv, pnv, SCVN);
                   
-  SCLN/=SCVN; SCLN=(float)fabs(SCLN);
+  SCLN/=SCVN; SCLN=fabsf(SCLN);
   hp.x = TraceA.x + TraceNv.x * SCLN;
+
   hp.y = TraceA.y + TraceNv.y * SCLN;
   hp.z = TraceA.z + TraceNv.z * SCLN;  
 
@@ -328,8 +329,8 @@ void TraceModel(int xx, int zz, int o)
 
     float malp = (float)((FMap[zz][xx] >> 2) & 7) * 2.f*pi / 8.f;
 
-    float ca = (float)cos(malp);
-    float sa = (float)sin(malp);
+    float ca = cosf(malp);
+    float sa = sinf(malp);
 
     for (int vv=0; vv<mptr->VCount; vv++) {
       rVertex[vv].x = mptr->gVertex[vv].x * ca + mptr->gVertex[vv].z * sa  + v[0].x;
@@ -359,8 +360,8 @@ void TraceCharacter(int c)
   
   TModel *mptr = cptr->pinfo->mptr;
   CreateChMorphedModel(cptr);   
-  float ca = (float)cos(-cptr->alpha + pi / 2.f);
-  float sa = (float)sin(-cptr->alpha + pi / 2.f);
+  float ca = cosf(-cptr->alpha + pi / 2.f);
+  float sa = sinf(-cptr->alpha + pi / 2.f);
   for (int vv=0; vv<mptr->VCount; vv++) {
       rVertex[vv].x = mptr->gVertex[vv].x * ca + mptr->gVertex[vv].z * sa  + cptr->pos.x;
       rVertex[vv].y = mptr->gVertex[vv].y + cptr->pos.y;
@@ -696,8 +697,8 @@ void CalcLights(TModel* mptr)
 	}
 
 	for (int VT=0; VT<4; VT++) {
-		float ca = (float)cos (VT * pi / 2);
-		float sa = (float)sin (VT * pi / 2);
+		float ca = cosf(VT * pi / 2);
+		float sa = sinf(VT * pi / 2);
 	for (int v=0; v<VCount; v++) {
 		FUsed = 0;
 		nv.x=0; nv.y=0; nv.z=0;

@@ -115,11 +115,14 @@ public:
     void SetCameraWorldUniforms(float vcx, float vcy, float cw, float ch,
                                 float wx, float wy, float wz,
                                 float ca, float sa, float cb, float sb, float cg, float sg);
-    void BeginWorldShadowPass();
-    void EndWorldShadowPass();
+    void BeginWorldShadowPass(int cascade = 0);
+    void EndWorldShadowPass(int cascade = 0);
     // SOURCEPORT: must be called before BeginWorldShadowPass each frame so the
     // light matrix matches the game sun (derived from SunShadowK in renderd3d).
     void SetSunDirection(float x, float y, float z);
+
+    // SOURCEPORT: CSM — public so Hunt2.cpp loop can use RendererGL::NUM_SHADOW_CASCADES.
+    static constexpr int NUM_SHADOW_CASCADES_PUB = 3;
 
     // Shadow mode: 0=none, 1=dinos_only (future), 2=full
     void  SetShadowMode(int mode)     { m_shadowMode = mode; }
@@ -149,6 +152,9 @@ public:
     bool m_postOverlayEnabled = false;
     void RunPostOverlay();
 
+    // SOURCEPORT: apply post-process effects (bloom, tone mapping, color grading) to the
+    // current back-buffer.  Call after DrawScene() but before any HUD/UI rendering.
+    void ApplyPostProcess();
     void EnablePostOverlay(bool enable)   { m_postOverlayEnabled = enable; }
     bool IsPostOverlayEnabled() const     { return m_postOverlayEnabled; }
     void SetBloomThreshold(float t)       { m_bloomThreshold = t; }
@@ -201,7 +207,8 @@ private:
     GLint  m_locPBR             = -1;
     GLint  m_locMetallicFactor  = -1;
     GLint  m_locRoughnessFactor = -1;
-    GLint  m_locSunDirView      = -1;
+    GLint  m_locSunDirWorld     = -1;  // SOURCEPORT: world-space sun direction for PBR
+    GLint  m_locParallaxScale   = -1;  // SOURCEPORT: parallax height scale (0=off)
     GLint  m_locDebugMode       = -1;
     bool   m_pbrActive          = false;
     // SOURCEPORT: screen-space fog uniform locations
@@ -213,6 +220,32 @@ private:
     GLint  m_locFogVideoCY      = -1;
     GLint  m_locFogWinH         = -1;
     GLint  m_locFogCameraH      = -1;
+
+    // SOURCEPORT: cached per-frame uniform locations — world-pos reconstruction
+    // and shadow sampling.  Populated once in CompileShaders; used every frame.
+    GLint  m_locVideoCX         = -1;
+    GLint  m_locVideoCY         = -1;
+    GLint  m_locCameraW         = -1;
+    GLint  m_locCameraH         = -1;
+    GLint  m_locCameraPos       = -1;
+    GLint  m_locCamToWorld      = -1;
+    GLint  m_locShadowMapArray  = -1;
+    GLint  m_locLightSpaceArr   = -1;  // uLightSpaceArr[0] (upload 3 matrices)
+    GLint  m_locShadowStrength  = -1;
+    GLint  m_locCascadeBias     = -1;
+    GLint  m_locCascadeSplits   = -1;
+    // SOURCEPORT: cached depth-shader locations (m_depthShaderProgram), per cascade
+    GLint  m_depthLocLightSpace = -1;
+    GLint  m_depthLocVideoCX    = -1;
+    GLint  m_depthLocVideoCY    = -1;
+    GLint  m_depthLocCameraW    = -1;
+    GLint  m_depthLocCameraH    = -1;
+    GLint  m_depthLocCameraPos  = -1;
+    GLint  m_depthLocCamToWorld = -1;
+    GLint  m_depthLocTexture    = -1;
+    // SOURCEPORT: cached world-space depth-shader locations (m_wsDepthProgram)
+    GLint  m_wsLocLightSpace    = -1;
+    GLint  m_wsLocAlphaTest     = -1;
 
     // SOURCEPORT: cached projection matrix for CustomMaterials::Apply. Updated
     // every BeginFrame alongside the default-program uProjection uniform.
@@ -252,19 +285,31 @@ private:
     // Vertex staging buffers
     static constexpr int MAX_MAIN_VERTICES = 4096 * 3;
     static constexpr int MAX_GEOM_VERTICES = 4096 * 3;  // SOURCEPORT: expanded for DrawTerrainGL bucketed batches
+    // SOURCEPORT: CSM — 3 cascades replace the single shadow map.
+    static constexpr int   NUM_SHADOW_CASCADES = 3;
+    static constexpr int   CASCADE_SHADOW_SIZE = 2048;  // per-cascade depth map resolution
+    // Ortho half-extents as fractions of m_shadowRange.  C0=10%, C1=35%, C2=100%.
+    // 1:3.5:2.9 quality ratios (vs old 1:4:4) — gentler jumps reduce visible seams.
+    static constexpr float CASCADE_RANGE_FRACS[3] = {0.10f, 0.35f, 1.0f};
     RenderVertex m_mainBuffer[MAX_MAIN_VERTICES];
     RenderVertex m_geomBuffer[MAX_GEOM_VERTICES];
 
 
-    // SOURCEPORT: Path B world shadow map FBO (depth-only, standard convention)
-    GLuint m_worldShadowFBO      = 0;
-    GLuint m_worldShadowDepthTex = 0;
-    static constexpr int WORLD_SHADOW_SIZE = 2048;
+    // SOURCEPORT: CSM — 3-cascade shadow map.
+    GLuint m_cascadeFBO[NUM_SHADOW_CASCADES] = {};  // one FBO per cascade
+    GLuint m_cascadeDepthTex = 0;                   // GL_TEXTURE_2D_ARRAY, NUM_SHADOW_CASCADES layers × CASCADE_SHADOW_SIZE²
+    float  m_cascadeLightMatrix[NUM_SHADOW_CASCADES][16] = {}; // light view-proj per cascade
+    float  m_cascadeBiasNDC[NUM_SHADOW_CASCADES] = {};          // per-cascade NDC bias
+    float  m_cascadeRanges[NUM_SHADOW_CASCADES] = {};            // ortho half-extents in GU
+    int    m_currentCascade = 0;                                 // cascade being rendered
     int    m_shadowMode       = 0;      // 0=none, 2=full
     float  m_shadowStrength   = 0.5f;
-    float  m_shadowRange      = 16000.f; // SOURCEPORT: ortho half-extent (GU); updated from ctViewR
-    float  m_shadowBiasNDC    = 0.001f;  // SOURCEPORT: computed in BeginWorldShadowPass, uploaded in End
-    float  m_worldLightMatrix[16] = {}; // combined light view-proj (column-major)
+    // SOURCEPORT: fixed shadow range (GU). Covers ctViewR up to 250 (max = (250+2)*256 = 64512).
+    // Previously set dynamically from ctViewR each frame; that caused the ortho projection
+    // scale to change continuously, which reshuffled which world region each shadow texel
+    // covers and made shadows visibly resize/flicker. A fixed value keeps the projection
+    // matrix identical every frame (only translation changes) so the texel-snapping fix works.
+    float  m_shadowRange      = 65536.f;
     // Camera-to-world uniforms — filled by SetCameraWorldUniforms each frame
     float  m_camToWorld[9]      = {};   // R^T column-major mat3
     float  m_cameraWorldPos[3]  = {};
@@ -278,6 +323,8 @@ private:
     bool   m_shadowPassActive      = false;
     bool   m_shadowGeomSuppressed  = false; // SOURCEPORT: true while zWrite=false (water/blend) during depth pass
     GLint  m_depthLocAlphaTest     = -1;    // uAlphaTest location in m_depthShaderProgram
+    GLint  m_locWorldShadow        = -1;    // SOURCEPORT: uWorldShadow in m_shaderProgram — cached to avoid per-frame lookups
+    bool   m_shadowsRendered       = false; // SOURCEPORT: true after EndWorldShadowPass(); cleared by BeginFrame()
 
     // SOURCEPORT: world-space shadow batch (ws_depth.vert path)
     GLuint m_wsDepthProgram  = 0;

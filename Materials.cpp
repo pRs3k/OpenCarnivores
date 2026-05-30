@@ -40,13 +40,25 @@ bool FileExists(const char* p) {
     return true;
 }
 
-GLuint LoadMapFile(const char* path, bool srgb) {
+// SOURCEPORT: detect whether a normal map's alpha channel encodes height data
+// by checking whether any alpha value differs from 255 (fully opaque).
+// Standard normal maps saved without height data have uniform alpha=255.
+static bool DetectHeightInAlpha(const unsigned char* px, int w, int h) {
+    int total = w * h;
+    for (int i = 0; i < total; ++i) {
+        if (px[i * 4 + 3] != 255) return true;
+    }
+    return false;
+}
+
+GLuint LoadMapFile(const char* path, bool srgb, bool* outHasHeight = nullptr) {
     // SOURCEPORT: resolve through VFS so mod folder PBR maps take priority.
     std::string resolved = VFS::ResolveRead(path);
     if (!FileExists(resolved.c_str())) return 0;
     int w = 0, h = 0, comp = 0;
     unsigned char* px = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
     if (!px) return 0;
+    if (outHasHeight) *outHasHeight = DetectHeightInAlpha(px, w, h);
     GLuint id = UploadRGBA(px, w, h, srgb);
     stbi_image_free(px);
     char msg[512];
@@ -60,7 +72,9 @@ bool RegisterFromStem(void* key, const std::string& stem) {
     std::string mrp = stem + "_mr.png";
     std::string aop = stem + "_ao.png";
 
-    GLuint n  = LoadMapFile(nrm.c_str(), /*srgb=*/false);
+    // SOURCEPORT: detect height-in-alpha while loading normal map.
+    bool hasHeight = false;
+    GLuint n  = LoadMapFile(nrm.c_str(), /*srgb=*/false, &hasHeight);
     GLuint mr = LoadMapFile(mrp.c_str(), /*srgb=*/false);
     GLuint ao = LoadMapFile(aop.c_str(), /*srgb=*/false);
 
@@ -73,6 +87,11 @@ bool RegisterFromStem(void* key, const std::string& stem) {
     e.mat.aoTex           = ao;
     e.mat.metallicFactor  = mr ? 1.0f : 0.0f;
     e.mat.roughnessFactor = 1.0f; // SOURCEPORT: removed identical ternary branches — roughness is always 1.0 regardless of mr
+    // SOURCEPORT: enable parallax only when height data detected in normal map alpha.
+    // 0.05 GU gives subtle depth on rock/terrain without swimming artefacts at oblique angles.
+    e.mat.parallaxScale   = (n && hasHeight) ? 0.05f : 0.0f;
+    if (n && hasHeight)
+        std::fputs("PBR parallax enabled (height detected in normal map alpha)\n", stdout);
     return true;
 }
 

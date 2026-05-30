@@ -274,3 +274,17 @@ vec3 proj  = lsPos.xyz / lsPos.w * 0.5 + 0.5;
 ### Runtime Toggle
 
 `Shift+S` cycles shadow mode 0 (off) ↔ 2 (full).
+
+---
+
+## Shadow / UI Coupling Bug (fixed)
+
+**Symptom**: Shadows on terrain changed appearance whenever UI text popped up, the weapon was drawn or holstered, the map was displayed, or Escape was pressed.
+
+**Root cause 1 — PhongMap/EnvMap sampling shadow with wrong world position** (`Hunt2.cpp` `DrawPostObjects`):
+
+`RenderModelClipPhongMap` and `RenderModelClipEnvMap` have non-zero `sz` values, so `vRhw < 1.0` and the fragment shadow gate fires. They were rendered AFTER `d3dSetHUDMode(FALSE)` at the original line 746, meaning `uWorldShadow=1` was active. PhongMap/EnvMap use additive blend (`BLEND_ONE`) and sample the shadow map with the weapon's reconstructed world position (near camera). The result was additively composited onto terrain, and its brightness changed depending on whether the weapon position was in shadow — coupling weapon shadow state to terrain appearance. **Fix**: moved `d3dSetHUDMode(FALSE)` to after both PhongMap and EnvMap passes so `uWorldShadow=0` is maintained through them.
+
+**Root cause 2 — stale GL_TEXTURE0 binding from HUD/UI draws corrupting foliage shadow alpha** (`RendererGL.cpp`, `renderd3d.cpp`):
+
+`DrawTextWithFont` and `DrawBitmap` bind `m_bitmapTexture` to `GL_TEXTURE0` and did not restore the previous binding. `FlushWorldSpaceShadow` (called at `EndWorldShadowPass`) reads `GL_TEXTURE0` for alpha-testing foliage geometry in the world-space shadow batch. The frame after any text or HUD draw, the foliage in the shadow pass was alpha-tested against the text/bitmap texture instead of its own foliage texture — changing which tree pixels wrote shadow depth, and therefore changing tree shadow patterns on the terrain. **Fix**: save/restore `GL_TEXTURE0` in `DrawTextWithFont` and `DrawBitmap` (`glGetIntegerv(GL_TEXTURE_BINDING_2D)` + restore after draw). Additionally, the object render loop in `renderd3d.cpp` now explicitly calls `glBindTexture` on unit 0 immediately after each `d3dSetTexture`, so `FlushWorldSpaceShadow` always uses the correct model texture even before the first HUD draw of the session.

@@ -63,6 +63,31 @@ Applied to every uploaded texture when `GL_ARB_texture_filter_anisotropic` or `G
 - **Root Cause**: `d3dStartBufferG()` sets `uAlphaTest=true` for all geometry-buffer draws. The fragment shader's alpha-test path snaps UV coordinates to the nearest texel centre (emulating `D3DFILTER_NEAREST` for foliage). Sky geometry is drawn inside the geometry buffer, so it inherited the foliage nearest-equivalent UV snap even though `SkyPic` was uploaded with `GL_LINEAR_MIPMAP_LINEAR`. Inside `d3dEndBufferG`, the alpha-test state is forcibly re-asserted to `true` before the draw call (to handle BMP sprites and water vertex-alpha), which overrode any pre-call attempt to clear it.
 - **Fix**: Added `noSnapUV` parameter to `d3dEndBufferG(BOOL ColorKey, BOOL noSnapUV = FALSE)`. When `noSnapUV=TRUE`, `SetAlphaTest(false)` is called immediately after the forced `SetAlphaTest(true)`, so the sky draw executes with `uAlphaTest=false` — bypassing the UV snap and sampling the sky texture with genuine bilinear filtering. All other geometry-buffer callers pass `noSnapUV=FALSE` (default) and are unaffected. The sky call in `RenderSkyPlane` is `d3dEndBufferG(FALSE, TRUE)`.
 
+## Normal Mapping, Parallax, and PBR ✅
+
+Full physically-based rendering pipeline for modder-supplied PBR assets. Purely additive — textures without PBR sidecar maps render unchanged through the original Lambert+vertex-light path.
+
+**Activating PBR for a texture:**
+Place sibling PNG files next to the asset (or in `<map>/override/`):
+- `<stem>_normal.png` — tangent-space normal map (RGB). **Required** to enable PBR.
+- `<stem>_mr.png` — metallic (R) + roughness (G), glTF convention.
+- `<stem>_ao.png` — ambient occlusion (R channel).
+
+**Parallax mapping (auto-detected):**
+- Encode surface height in the **alpha channel** of `_normal.png` (255=raised, 0=flat).
+- `Materials.cpp` scans the alpha channel at load time: if any alpha ≠ 255, parallax is enabled with `parallaxScale=0.05`.
+- Standard normal maps (all alpha=255) have parallax disabled automatically — no artefacts.
+
+**Lighting (world-space):**
+- All PBR vectors (N, V, L) computed in **world space** — correct at all camera angles.
+- Geometric surface normal derived from `dFdx/dFdy` of the interpolated world position (`vWorldPos`), eliminating the need for per-vertex normals in the `.CAR`/`.3DF` format.
+- Sun direction (`uSunDirWorld`) updated each frame from `SunShadowK` via `SetSunDirection`, matching the shadow map's light direction exactly.
+- Cook-Torrance GGX BRDF: NDF (GGX distribution) + Smith geometry + Fresnel-Schlick.
+
+**Tangent frame:**
+- Christian Schüler screen-space derivative technique (`cotangentFrame`) applied to `vWorldPos` + UV — no per-vertex tangents required.
+- Geometric normal corrected for back-faces via `dot(geoN, V) < 0` sign flip.
+
 ## Character rendering
 
 **Dead character shadows** (`renderd3d.cpp` `RenderCharacterPost`):
@@ -116,6 +141,7 @@ Real-time sun shadow mapping implemented in `RendererGL.cpp` / `renderd3d.cpp`.
 **Object/character shadow depth**:
 - 3D objects submit via `SubmitWorldSpaceShadowTriangle` → `ws_depth.vert` (takes world XYZ directly, applies `uLightSpace`).
 - Accumulated into `m_wsShadowBuffer` (up to `MAX_WS_SHADOW_VERTS`) and flushed in batches.
+- **Critical**: the object render loop (`renderd3d.cpp`) calls `glBindTexture(GL_TEXTURE_2D, hTexture)` on unit 0 immediately after each `d3dSetTexture` call. `FlushWorldSpaceShadow` uses unit 0 for foliage alpha-test; without the explicit bind, stale textures from previous renders (or HUD/UI draws) corrupt the alpha pattern and produce wrong tree shadows.
 
 **Sky plane exclusion**:
 - `RenderSkyPlane` uses `sz = 0.0001f` (not 0), so `depth.vert` reconstructs a world position ~160 000 GU in the camera-forward direction. Looking up past the sun elevation, that position lands behind the light's near plane and `GL_DEPTH_CLAMP` writes depth=0, blackening the shadow map. Fix: `RenderSkyPlane` returns immediately when `IsShadowPassActive()`.
@@ -124,10 +150,21 @@ Real-time sun shadow mapping implemented in `RendererGL.cpp` / `renderd3d.cpp`.
 - `vWorldPos` reconstructed in `basic.vert` from screen-space `aPos`/`aDepth` via `uCamToWorld` (R^T, column-major mat3 uploaded by `SetCameraWorldUniforms`).
 - Shadow block gated on `vRhw < 1.0` (sky/HUD vertices have `aDepth=0` → `vRhw=1.0` → skipped).
 - `proj.z >= 0` lower bound prevents behind-light geometry (straddling triangles with a behind-camera vertex produce `vWorldPos ≈ 0`) from spuriously shadowing the view.
+- **HUD isolation**: `uWorldShadow=0` must be held through all of `DrawPostObjects` (weapon base + PhongMap + EnvMap overlays). `d3dSetHUDMode(TRUE)` is called before the weapon section and `d3dSetHUDMode(FALSE)` only after PhongMap/EnvMap finish. PhongMap and EnvMap vertices have non-zero `sz` (→ `vRhw<1.0`), so they would incorrectly shadow-sample if `uWorldShadow=1` during those passes.
+
+**Night mode exclusion**:
+- Hardware shadow pass is skipped entirely when `OptDayNight == 2` (night hunt). `uWorldShadow` is reset to 0 each `BeginFrame()`; since `EndWorldShadowPass()` is never called at night, the shader's shadow-sampling block (`if (uWorldShadow && ...)`) never fires.
+- Flat projected character shadows (`RenderShadowClip` in `RenderCharShadow`) are also skipped when `OptDayNight == 2`.
+- `RenderSun()` is skipped at night, suppressing the sun disc, lens flare, and fullscreen glare rect (`SunLight` stays 0).
+- Post-processing (bloom, tone mapping, color grading) is skipped at night — night-vision is already a stylised green overlay that would be degraded by ACES contrast compression creating artificial dark halos.
 
 **Debug modes** (F8 cycles):
 - Mode 8: raw shadow-map depth at fragment's shadow UV (white=far/unwritten, black=near/geometry).
 - Mode 9: shadow UV as RG gradient — uniform colour means world-pos reconstruction is broken.
+
+## GL_TEXTURE0 unit discipline
+
+Any function that binds to `GL_TEXTURE0` must save and restore the previous binding (`glGetIntegerv(GL_TEXTURE_BINDING_2D)` + `glBindTexture` after). The world-space shadow batch (`FlushWorldSpaceShadow`) reads unit 0 for foliage alpha-test. A stale texture from a HUD/UI draw (e.g. `DrawTextWithFont`) will corrupt tree shadow alpha on the frame following the draw — manifesting as shadows changing whenever text, the map, or the weapon appears on screen. Functions that currently save/restore unit 0: `DrawBitmap`, `DrawTextWithFont`.
 
 ## Future Enhancements
 

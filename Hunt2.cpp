@@ -743,8 +743,12 @@ SKIPWIND:
 #ifdef _opengl
    if (g_glRenderer) g_glRenderer->SetStencilMode(0); // stop marking
 #endif
-   d3dSetHUDMode(FALSE);
-
+   // SOURCEPORT: keep HUD mode active through PhongMap/EnvMap passes so that
+   // uWorldShadow=0 during weapon specular overlays. These vertices have non-zero
+   // sz (aDepth>0 → vRhw<1.0), so the fragment shadow gate fires if uWorldShadow=1,
+   // incorrectly shadow-sampling weapon highlights and making shadow appearance
+   // change whenever the weapon or UI text appears. HUD mode is cleared after both
+   // passes so world shadows resume for everything rendered after.
 
 #ifdef _soft
 #else
@@ -758,6 +762,7 @@ SKIPWIND:
 	   RenderModelClipEnvMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
    }
 #endif
+   d3dSetHUDMode(FALSE);
   
    Sun3dPos = v;
    
@@ -1522,7 +1527,7 @@ void ProcessDemoMovement()
 
 void ProcessControls()
 {      
-   int _KeyFlags = KeyFlags;
+   int prevKeyFlags = KeyFlags;
    KeyFlags = 0;
 #ifdef _d3d
    GetKeyboardState(KeyboardState);
@@ -1553,10 +1558,10 @@ void ProcessControls()
 
    // SOURCEPORT: rising-edge only — prevents multi-jump when button is held
    if (KeyboardState [KeyMap.fkJump] & 128)
-	   if (!(_KeyFlags & kfJump)) KeyFlags+=kfJump;
-   
-   if (KeyboardState [KeyMap.fkCall] & 128) 
-	 if (!(_KeyFlags & kfCall)) KeyFlags+=kfCall;
+	   if (!(prevKeyFlags & kfJump)) KeyFlags+=kfJump;
+
+   if (KeyboardState [KeyMap.fkCall] & 128)
+	 if (!(prevKeyFlags & kfCall)) KeyFlags+=kfCall;
 
    DeltaT = (float)TimeDt / 1000.f;
 
@@ -1707,7 +1712,7 @@ SKIPYMOVE:
 	  MyHealth-=TimeDt*12;
 	  //if ( !(Takt & 31)) AddElements(CameraX + sa*64*cb, CameraY - 32 - sb*64, CameraZ - ca*64*cb, 4);
 	  if (MyHealth<=0)
-	      AddDeadBody(NULL, HUNT_BREATH);
+	      AddDeadBody(nullptr, HUNT_BREATH);
   }
  
   if (UNDERWATER)
@@ -1782,7 +1787,7 @@ SKIPYMOVE:
 		  if (MyHealth>100000) MyHealth = 100000;
 		  MyHealth-=TimeDt*64;
 		  if (MyHealth<=0)
-			  AddDeadBody(NULL, HUNT_EAT); 			  		  
+			  AddDeadBody(nullptr, HUNT_EAT); 			  		  
 	  }
 
   int CameraAmb = AmbMap [((int)CameraZ)>>9][((int)CameraX)>>9];
@@ -2235,7 +2240,7 @@ void ProcessGame()
         }
         // SOURCEPORT: Path B world shadow pass — reconstruct world pos in depth shader.
         extern RendererGL* g_glRenderer;
-        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0) {
+        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0 && OptDayNight != 2) {
             // Compute fresh trig from current camera angles (don't rely on stale globals).
             float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
             float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
@@ -2247,14 +2252,14 @@ void ProcessGame()
             // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
             // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
             g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
-            // SOURCEPORT: shadow frustum ±range in light space.
-            // Max light-space X for any world point at radius R = R exactly
-            // (the light right-vector is 45° diagonal; worst direction gives X=R).
-            // +2 tile margin; far_z is sized separately in BeginWorldShadowPass.
-            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f);
-            g_glRenderer->BeginWorldShadowPass();
-            DrawScene();
-            g_glRenderer->EndWorldShadowPass();
+            // SOURCEPORT: CSM — render once per cascade (near→far), each with its own
+            // tight ortho frustum.  EndWorldShadowPass on the last cascade restores GL state
+            // and uploads all matrices to the main shader.
+            for (int _c = 0; _c < RendererGL::NUM_SHADOW_CASCADES_PUB; ++_c) {
+                g_glRenderer->BeginWorldShadowPass(_c);
+                DrawScene();
+                g_glRenderer->EndWorldShadowPass(_c);
+            }
         }
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -2271,7 +2276,7 @@ void ProcessGame()
     {
         // SOURCEPORT: Path B world shadow pass (flatscreen) — reconstruct world pos in depth shader.
         extern RendererGL* g_glRenderer;
-        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0) {
+        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0 && OptDayNight != 2) {
             float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
             float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
             float _cg = cosf(CameraGamma), _sg = sinf(CameraGamma);
@@ -2282,14 +2287,14 @@ void ProcessGame()
             // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
             // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
             g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
-            // SOURCEPORT: shadow frustum ±range in light space.
-            // Max light-space X for any world point at radius R = R exactly
-            // (the light right-vector is 45° diagonal; worst direction gives X=R).
-            // +2 tile margin; far_z is sized separately in BeginWorldShadowPass.
-            g_glRenderer->SetShadowRange((ctViewR + 2) * 256.f);
-            g_glRenderer->BeginWorldShadowPass();
-            DrawScene();
-            g_glRenderer->EndWorldShadowPass();
+            // SOURCEPORT: CSM — render once per cascade (near→far), each with its own
+            // tight ortho frustum.  EndWorldShadowPass on the last cascade restores GL state
+            // and uploads all matrices to the main shader.
+            for (int _c = 0; _c < RendererGL::NUM_SHADOW_CASCADES_PUB; ++_c) {
+                g_glRenderer->BeginWorldShadowPass(_c);
+                DrawScene();
+                g_glRenderer->EndWorldShadowPass(_c);
+            }
         }
 
         DrawScene();
@@ -2299,6 +2304,16 @@ void ProcessGame()
     // physics tick starts from the un-interpolated pose.
     CameraX = saveX; CameraY = saveY; CameraZ = saveZ;
     CameraAlpha = saveA; CameraBeta = saveB; CameraGamma = saveG;  // SOURCEPORT: include head tilt
+
+    // SOURCEPORT: apply bloom + tone mapping to the 3D scene before any UI is drawn.
+    // UI elements (compass, wind meter, health bar, weapon sprite) are rendered on
+    // top of the post-processed image and are intentionally unaffected.
+    // Skipped in VR — each eye is composited by the XR runtime independently.
+    // Skipped at night — night-vision is already a stylised green overlay effect;
+    // bloom/tone-mapping would create artificial dark halos and contrast artefacts
+    // on top of it, making terrain look shadow-patched.
+    { extern RendererGL* g_glRenderer;
+      if (!XR::StereoActive() && g_glRenderer && OptDayNight != 2) g_glRenderer->ApplyPostProcess(); }
 
     // SOURCEPORT: in VR, DrawHMap/DrawPostObjects/ShowControlElements already ran
     // per-eye inside the eye loop and are captured in the eye 1 companion blit.
@@ -2328,12 +2343,12 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ep) {
         ep->ExceptionRecord->ExceptionCode,
         ep->ExceptionRecord->ExceptionAddress,
         drawSceneStage ? drawSceneStage : "NULL");
-    HANDLE hf = CreateFileA("crash.log", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    HANDLE hf = CreateFileA("crash.log", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
     if (hf != INVALID_HANDLE_VALUE) {
-        DWORD w; WriteFile(hf, buf, lstrlenA(buf), &w, NULL); CloseHandle(hf);
+        DWORD w; WriteFile(hf, buf, lstrlenA(buf), &w, nullptr); CloseHandle(hf);
     }
     OutputDebugStringA(buf);
-    MessageBoxA(NULL, buf, "OpenCarnivores Crash", MB_OK | MB_ICONERROR);
+    MessageBoxA(nullptr, buf, "OpenCarnivores Crash", MB_OK | MB_ICONERROR);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
@@ -2438,7 +2453,7 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 // SOURCEPORT: SDL2 entry point for the OpenGL backend.
 // SDL_main.h redirects WinMain → main on Windows.
-int main(int argc, char* argv[])
+int main(int  /*argc*/, char*  /*argv*/[])
 {
     // SOURCEPORT: must be set before SDL_Init so SDL uses physical pixels on DPI-scaled
     // displays (e.g. 150% scaling: 2560x1440 physical vs 1707x960 logical).
@@ -2458,7 +2473,7 @@ int main(int argc, char* argv[])
     // SOURCEPORT: audio is OpenAL Soft; SDL audio subsystem not used.
     // GAMECONTROLLER pulled in so SDL emits CONTROLLERDEVICE/BUTTON events.
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
-        MessageBoxA(NULL, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
+        MessageBoxA(nullptr, SDL_GetError(), "SDL_Init failed", MB_OK | MB_ICONERROR);
         return 1;
     }
 

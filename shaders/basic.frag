@@ -14,13 +14,18 @@ uniform float uBrightness;
 
 // PBR override path. When uPBR is set, units 1/2/3 supply tangent-space
 // normal, metallic+roughness (glTF: metallic=R, roughness=G), and AO.
+// SOURCEPORT: normal map alpha encodes height for parallax mapping (1=raised, 0=flat).
 uniform bool      uPBR;
 uniform sampler2D uNormalMap;
 uniform sampler2D uMRMap;
 uniform sampler2D uAOMap;
 uniform float     uMetallicFactor;
 uniform float     uRoughnessFactor;
-uniform vec3      uSunDirView;
+// SOURCEPORT: world-space sun direction (normalised). Replaces screen-space approximation.
+uniform vec3      uSunDirWorld;
+// SOURCEPORT: parallax height scale. 0 = disabled (default). ~0.05 for visible relief.
+// Height is encoded in the alpha channel of uNormalMap (1=raised, 0=flat).
+uniform float     uParallaxScale;
 
 // SOURCEPORT: debug visualization mode (F8 cycles 0-9 in-game).
 // 0 = normal          1 = PBR off         2 = PBR-pixels magenta
@@ -29,16 +34,43 @@ uniform vec3      uSunDirView;
 // 9 = shadow factor
 uniform int uDebugMode;
 
+// SOURCEPORT: camera world position (shared with vertex shader reconstruction path).
+// Used here for the PBR view direction: V = normalize(uCameraPos - vWorldPos).
+uniform vec3 uCameraPos;
+
 // SOURCEPORT: world shadow mapping.
-// uWorldShadow gates shadow sampling; uShadowMap is bound to unit 4.
-// uLightSpace projects world position to shadow NDC for depth comparison.
+// uWorldShadow gates shadow sampling; uShadowMapArray is bound to unit 4.
 uniform bool            uWorldShadow;
-uniform sampler2DShadow uShadowMap;  // SOURCEPORT: hardware PCF — GL_COMPARE_REF_TO_TEXTURE
-uniform mat4            uLightSpace;
+uniform sampler2DArrayShadow uShadowMapArray;   // SOURCEPORT: CSM — 3-layer depth array
+uniform mat4                 uLightSpaceArr[3]; // SOURCEPORT: CSM — one matrix per cascade
+uniform vec3                 uCascadeSplits;    // SOURCEPORT: CSM — x=C0 far, y=C1 far, z=unused (GU)
+uniform vec3                 uCascadeBias;      // SOURCEPORT: CSM — per-cascade NDC bias x/y/z
 uniform float     uShadowStrength;
-uniform float     uShadowBias;      // SOURCEPORT: one texel in NDC depth, computed CPU-side
 
 out vec4 FragColor;
+
+// SOURCEPORT: CSM — PCF 3×3 shadow sample for one cascade layer.
+// Accesses global uniforms directly (legal in GLSL 330 for non-sampler parameters).
+// Returns [0,1]: 0=fully lit, 1=fully in shadow. Fragments outside the cascade
+// ortho frustum (proj outside [0,1]³) return 0 so they appear lit.
+float sampleCascade(int cas, vec3 worldPos) {
+    float bias = (cas == 0) ? uCascadeBias.x
+               : (cas == 1) ? uCascadeBias.y : uCascadeBias.z;
+    vec4 lsPos = uLightSpaceArr[cas] * vec4(worldPos, 1.0);
+    vec3 proj  = lsPos.xyz / lsPos.w * 0.5 + 0.5;
+    if (proj.z < 0.0 || proj.z >= 1.0 ||
+        proj.x < 0.0 || proj.x >  1.0 ||
+        proj.y < 0.0 || proj.y >  1.0) return 0.0;
+    vec2 ts = 1.0 / vec2(textureSize(uShadowMapArray, 0).xy);
+    float shadow = 0.0;
+    for (int ox = -1; ox <= 1; ++ox)
+        for (int oy = -1; oy <= 1; ++oy)
+            shadow += 1.0 - texture(uShadowMapArray,
+                vec4(proj.x + float(ox)*ts.x,
+                     proj.y + float(oy)*ts.y,
+                     float(cas), proj.z - bias));
+    return shadow / 9.0;
+}
 
 mat3 cotangentFrame(vec3 N, vec3 p, vec2 uv) {
     vec3 dp1  = dFdx(p);
@@ -105,7 +137,10 @@ void main() {
     }
 
     vec4 color = texel * vColor;
-    if (!uAlphaTest) color.a = 1.0; else color.a = vColor.a;
+    // SOURCEPORT: always use vertex alpha — opaque geometry has vColor.a=1.0 so this is
+    // a no-op for terrain/models.  Dino shadow polygons carry vColor.a = Al/255 (≈0.376)
+    // so they blend semi-transparently rather than being stamped at full opacity.
+    color.a = vColor.a;
 
     // SOURCEPORT: early-exit debug modes (F8).
     if (uDebugMode == 2 && uPBR) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; } // PBR magenta
@@ -114,20 +149,49 @@ void main() {
     if (uDebugMode == 7) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }          // flat magenta
 
     if (uPBR && uDebugMode != 1) {
-        vec3  albedo    = texel.rgb;
-        vec2  mr        = texture(uMRMap, vTC).rg;
+        // SOURCEPORT: world-space PBR. All vectors computed in world space so that
+        // lighting is correct regardless of camera orientation.
+        vec3 albedo = texel.rgb;
+
+        // SOURCEPORT: view direction in world space.
+        // uCameraPos is already available from the shadow reconstruction uniforms.
+        vec3 V = normalize(uCameraPos - vWorldPos);
+
+        // SOURCEPORT: geometric surface normal from world-space position derivatives.
+        // dFdx/dFdy of vWorldPos give world-space tangent directions along the screen axes.
+        // Their cross product is the geometric normal; gl_FrontFacing corrects the sign
+        // for back-face scenarios (transparent or double-sided surfaces).
+        vec3 geoN = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+        if (dot(geoN, V) < 0.0) geoN = -geoN;
+
+        // SOURCEPORT: build TBN in world space using position+UV derivatives.
+        // cotangentFrame derives tangent/bitangent from dFdx/dFdy of p and uv,
+        // so passing vWorldPos gives a world-space basis aligned with texture UVs.
+        mat3 TBN = cotangentFrame(geoN, vWorldPos, vTC);
+
+        // SOURCEPORT: parallax mapping from normal map alpha (1=raised, 0=flat).
+        // Project view direction onto tangent/bitangent to get UV offset direction.
+        // Skip when uParallaxScale==0 (standard normal maps with flat alpha).
+        vec2 pUV = vTC;
+        if (uParallaxScale > 0.0) {
+            float h   = texture(uNormalMap, vTC).a;  // 1=surface level, 0=recessed
+            float vTx = dot(TBN[0], V);              // V projected onto tangent
+            float vTy = dot(TBN[1], V);              // V projected onto bitangent
+            float vTz = max(dot(TBN[2], V), 0.1);   // V projected onto normal (clamp near 0°)
+            pUV = vTC + vec2(vTx, vTy) / vTz * (h - 0.5) * uParallaxScale;
+        }
+
+        vec3 nTS    = texture(uNormalMap, pUV).xyz * 2.0 - 1.0;
+        vec2 mr     = texture(uMRMap,     pUV).rg;
+        float ao    = texture(uAOMap,     pUV).r;
+
         float metallic  = mr.r * uMetallicFactor;
         float roughness = max(mr.g * uRoughnessFactor, 0.04);
-        float ao        = texture(uAOMap, vTC).r;
 
-        vec3 nTS = texture(uNormalMap, vTC).xyz * 2.0 - 1.0;
-        vec3 N0  = vec3(0.0, 0.0, 1.0);
-        vec3 p   = vec3(gl_FragCoord.xy, gl_FragCoord.z * 1000.0);
-        mat3 TBN = cotangentFrame(N0, p, vTC);
-        vec3 N   = normalize(TBN * nTS);
+        // SOURCEPORT: perturb geometric normal by normal map sample (world space).
+        vec3 N = normalize(TBN * nTS);
 
-        vec3 V = vec3(0.0, 0.0, 1.0);
-        vec3 L = normalize(uSunDirView);
+        vec3 L = normalize(uSunDirWorld);
         vec3 H = normalize(V + L);
         float NdotL = max(dot(N, L), 0.0);
         float NdotV = max(dot(N, V), 1e-4);
@@ -162,53 +226,33 @@ void main() {
     // produce vRhw=1.0 and must not be shadowed — world-origin vWorldPos for a
     // fullscreen rect would land inside the frustum and darken sun-blind quads.
     if (uWorldShadow && uShadowStrength > 0.0 && vRhw < 1.0) {
-        vec4 lsPos = uLightSpace * vec4(vWorldPos, 1.0);
-        vec3 proj  = lsPos.xyz / lsPos.w;
-        proj = proj * 0.5 + 0.5;  // NDC [-1,1] → UV [0,1]
+        // SOURCEPORT: CSM — select cascade by horizontal world-space distance from camera.
+        float distXZ = length(vWorldPos.xz - uCameraPos.xz);
+        int cascade = (distXZ < uCascadeSplits.x) ? 0 : (distXZ < uCascadeSplits.y) ? 1 : 2;
 
-        // SOURCEPORT: mode 8 = receiver depth in light space (proj.z ∈ [0,1]).
-        // White=far from light, dark=close. Shadow map uses sampler2DShadow so
-        // raw texel reads are unavailable; proj.z is the equivalent diagnostic.
-        if (uDebugMode == 8) {
-            float d = proj.z;
-            FragColor = vec4(d, d, d, 1.0);
-            return;
-        }
-        // SOURCEPORT: mode 9 = raw shadow UV as RG gradient (no frustum gate).
-        // proj.x→R, proj.y→G. Fully red+green = center of shadow frustum (proj=0.5,0.5).
-        // Uniform colour everywhere = vWorldPos is constant (world-pos reconstruction broken).
-        if (uDebugMode == 9) {
-            FragColor = vec4(proj.x, proj.y, 0.0, 1.0);
-            return;
+        // SOURCEPORT: debug mode 8/9 — show depth/UV for the selected cascade.
+        if (uDebugMode == 8 || uDebugMode == 9) {
+            vec4 _lsPos = uLightSpaceArr[cascade] * vec4(vWorldPos, 1.0);
+            vec3 _proj  = _lsPos.xyz / _lsPos.w * 0.5 + 0.5;
+            if (uDebugMode == 8) { FragColor = vec4(_proj.zzz, 1.0); return; }
+            if (uDebugMode == 9) { FragColor = vec4(_proj.xy, 0.0, 1.0); return; }
         }
 
-        // SOURCEPORT: proj.z >= 0.0 guards against behind-light geometry:
-        // straddling triangles with a behind-camera vertex produce vWorldPos≈0
-        // after interpolation; without this lower bound, proj.z < 0 still
-        // passes the gate and spuriously darkens everything in that view.
-        if (proj.z >= 0.0 && proj.z < 1.0 && proj.x >= 0.0 && proj.x <= 1.0 &&
-                                              proj.y >= 0.0 && proj.y <= 1.0) {
-            // SOURCEPORT: hardware-filtered PCF (sampler2DShadow + GL_LEQUAL).
-            // Each texture() call bilinearly blends 4 depth comparisons, giving a
-            // continuous lit factor in [0,1] at shadow boundaries — no staircase.
-            // The 3×3 kernel adds extra softness (total footprint ≈ 5×5 texels).
-            // ref = proj.z - uShadowBias shifts the comparison so the receiver
-            // needs to be ≥60 GU farther than the caster before it reads as shadow,
-            // preventing self-shadowing acne on flat and moderately sloped terrain.
-            float bias   = uShadowBias;
-            float shadow = 0.0;
-            vec2 ts = 1.0 / vec2(textureSize(uShadowMap, 0));
-            for (int ox = -1; ox <= 1; ++ox) {
-                for (int oy = -1; oy <= 1; ++oy) {
-                    // texture() on sampler2DShadow with GL_LEQUAL returns 1.0 (lit)
-                    // when ref ≤ stored depth, 0.0 (shadow) when ref > stored depth.
-                    float lit = texture(uShadowMap, vec3(proj.xy + vec2(ox, oy) * ts, proj.z - bias));
-                    shadow += 1.0 - lit;
-                }
-            }
-            shadow /= 9.0;
-            color.rgb *= 1.0 - shadow * uShadowStrength;
+        float shadow = sampleCascade(cascade, vWorldPos);
+
+        // SOURCEPORT: CSM blend zone — cross-fade the last 30% of each cascade
+        // into the next to hide the hard seam at the split boundary.
+        float blend0Start = uCascadeSplits.x * 0.7;
+        float blend1Start = uCascadeSplits.y * 0.7;
+        if (cascade == 0 && distXZ >= blend0Start) {
+            float t = clamp((distXZ - blend0Start) / (uCascadeSplits.x - blend0Start), 0.0, 1.0);
+            shadow = mix(shadow, sampleCascade(1, vWorldPos), t);
+        } else if (cascade == 1 && distXZ >= blend1Start) {
+            float t = clamp((distXZ - blend1Start) / (uCascadeSplits.y - blend1Start), 0.0, 1.0);
+            shadow = mix(shadow, sampleCascade(2, vWorldPos), t);
         }
+
+        color.rgb *= 1.0 - shadow * uShadowStrength;
     }
 
     // SOURCEPORT: mode 5 = fog factor grayscale (1=no fog, 0=full fog).

@@ -130,7 +130,7 @@ static bool SafeLoadTGA(TPicture& pic, const char* path) {
     // SOURCEPORT: resolve through the mod VFS so modded menu TGAs win.
     std::string resolved = VFS::ResolveRead(path);
     HANDLE hf = CreateFileA(resolved.c_str(), GENERIC_READ, FILE_SHARE_READ,
-                            NULL, OPEN_EXISTING, 0, NULL);
+                            nullptr, OPEN_EXISTING, 0, nullptr);
     if (hf == INVALID_HANDLE_VALUE) return false;
     CloseHandle(hf);
     LoadPictureTGA(pic, (LPSTR)resolved.c_str());
@@ -526,10 +526,10 @@ static PlayerSlot ReadSlot(int n) {
     PlayerSlot ps = {};
     char fname[64]; wsprintf(fname, "trophy0%d.sav", n);
     HANDLE hf = CreateFileA(fname, GENERIC_READ, FILE_SHARE_READ,
-                            NULL, OPEN_EXISTING, 0, NULL);
+                            nullptr, OPEN_EXISTING, 0, nullptr);
     if (hf == INVALID_HANDLE_VALUE) return ps;
     TTrophyRoom tr = {}; DWORD l;
-    ReadFile(hf, &tr, sizeof(tr), &l, NULL);
+    ReadFile(hf, &tr, sizeof(tr), &l, nullptr);
     CloseHandle(hf);
     ps.exists = true;
     strncpy(ps.name, tr.PlayerName, 127); ps.name[127] = 0;
@@ -1625,7 +1625,7 @@ static bool RunHuntSetup(bool& appQuit) {
 
     // ── Right-align a number within a panel ───────────────────────────────
     // fnt_Small average char width ≈ 6px in screen coords
-    auto drawRight = [&](int val, int pLeft, int pRight, int iy, uint32_t col) {
+    auto drawRight = [&](int val, int /*pLeft*/, int pRight, int iy, uint32_t col) {
         char nb[12]; wsprintf(nb, "%d", val);
         int nx = pRight - (int)strlen(nb) * 6 - 70;
         MT(nb, nx, iy, col);
@@ -1830,7 +1830,7 @@ static bool RunHuntSetup(bool& appQuit) {
         Tranq       = tranqOn  ? TRUE : FALSE;
         ObservMode  = observOn ? TRUE : FALSE;
         if (curArea < kNumAreas)
-            strcpy(ProjectName, kAreaFiles[curArea]);
+            snprintf(ProjectName, sizeof(ProjectName), "%s", kAreaFiles[curArea]);
     }
     return confirmed;
 }

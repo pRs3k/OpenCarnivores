@@ -64,7 +64,7 @@ To play in VR (Meta Quest 3, HTC Vive, Valve Index, etc.):
 - **VR support** — OpenXR runtime, tested on Meta Quest 3, with head-tracking, 6DoF, and controller aiming
 - **Adaptive VSync** and uncapped framerate, with 90 FPS VR mode for stable HMD performance
 - **OpenGL 3.3 renderer** with hardware trilinear mipmapping, anisotropic filtering, and per-texture LOD bias tuning (no more terrain texture pop, no more foliage shimmer)
-- **Real-time sun shadows** — PCF 3×3 world-space shadow map, view-direction-independent; toggleable in Options → Video
+- **Cascaded Shadow Maps** — 3-cascade PCF world-space shadow mapping (8× sharper shadows near the player, seamless cross-fade between cascades); semi-transparent dinosaur flat shadows blend naturally with terrain; toggleable in Options → Video
 - **Graphics settings** — adjustable anisotropic filtering (2x/4x/8x/max), render distance, and supersampling for VR
 - **OpenAL Soft audio** — 3D positional audio, terrain occlusion, ready for HRTF and EFX reverb
 - **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)
@@ -74,6 +74,7 @@ To play in VR (Meta Quest 3, HTC Vive, Valve Index, etc.):
 - **Hot reload** for textures, shaders, `.material` files, and `_RES.txt` — edit & save, no restart
 - **Lua 5.4 scripting** with `OnSpawn` / `OnDamage` / `OnFire` hooks for gameplay mods
 - **Modern input** — raw mouse, Xbox / DualShock / Switch Pro gamepad support (hot-plug, analog look), and fully rebindable keyboard + gamepad bindings persisted to `controls.cfg`
+- **Significant performance pass** — GPU texture preload at area load, shader ISA pre-warm at startup, bloom pipeline pre-warm, eliminated ~55 per-frame GL driver hash-map lookups, removed O(n²) CPU work from shadow passes
 - Many subtle rendering and AI fixes
 
 All original game assets (`.CAR`, `.3DF`, `.RSC`, `.MAP`, `.TGA`, `.WAV`) load **unchanged**.
@@ -308,6 +309,21 @@ Full stereoscopic 6-degree-of-freedom VR rendering with per-eye asymmetric FOV c
 - **Supersampling** — adjust VR eye FBO resolution (100–200%) at runtime; lower GPU load at 100%, sharper visuals at 150%+
 
 Comfort features include 6DoF roomscale locomotion (physical movement in play space), configurable snap-turn options, and world-space UI scaling for convergence comfort. World scale tuned for perceived detail without excessive motion-to-world mapping.
+
+---
+
+## Bundled content
+
+### Default shader pack (`shaderpacks/default/`)
+Ships enabled by default. Provides cinematic enhancement without changing the game's character:
+- ACES filmic tone mapping (lifts shadows, compresses highlights)
+- Additive bloom on bright surfaces (sun, water, sky)
+- Subtle colour grading (saturation +20%, contrast +10%)
+- Unsharp-mask sharpening (strength 0.6)
+- Full cascade shadow mapping at strength 0.45
+
+### pbr-auto mod (`mods/pbr-auto/`)
+Auto-generated normal maps for all five playable areas and all dinosaurs — adds depth and surface detail to every piece of game geometry without touching original textures. Enable in the MODS menu. Works with or without the default shader pack.
 
 ---
 

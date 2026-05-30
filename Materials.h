@@ -22,11 +22,15 @@
 namespace Materials {
 
 struct Material {
-    uint32_t normalTex;   // GL texture ID; 0 if absent
-    uint32_t mrTex;       // metallic (R) + roughness (G); 0 if absent
-    uint32_t aoTex;       // 0 if absent
+    uint32_t normalTex;     // GL texture ID; 0 if absent
+    uint32_t mrTex;         // metallic (R) + roughness (G); 0 if absent
+    uint32_t aoTex;         // 0 if absent
     float    metallicFactor;
     float    roughnessFactor;
+    // SOURCEPORT: parallax height scale. Auto-detected from normal map alpha:
+    //   0.0 when all alpha=255 (standard normal map, no height data).
+    //   0.05 when alpha varies (height encoded in alpha: 255=raised, 0=flat).
+    float    parallaxScale;
 };
 
 // Probe for PBR siblings next to sourcePath (e.g. "HUNTDAT\\TREX.CAR" →

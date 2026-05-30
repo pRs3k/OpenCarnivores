@@ -20,10 +20,10 @@
 - **Phase 1 — Post-processing Infrastructure ✅ Complete**
 
 - **Phase 2 — Visual Enhancement Effects** (In Progress)
-  - Dynamic Shadow Mapping ✅ — hardware PCF (sampler2DShadow + GL_LINEAR) 3×3 kernel; 60 GU NDC bias; dynamic frustum range tied to ctViewR; minor acne on near-vertical slopes is a known low-priority issue
-  - Bloom + Tone Mapping — bright-pixel bloom, HDR→SDR Reinhard curve
+  - Cascaded Shadow Maps ✅ — 3-cascade PCF (2048² per cascade); texel-proportional per-cascade bias; 30% cross-fade blend zones at cascade boundaries; semi-transparent dinosaur flat shadows (vertex alpha restored); cascade splits {10%, 35%, 100%} of shadow range
+  - Bloom + Tone Mapping ✅ — bright-pass threshold, 2-iteration separable Gaussian blur (half-res ping-pong), additive composite; ACES filmic + Reinhard tone mapping; color grading (contrast/saturation/lift/gain); unsharp-mask sharpening; toggle Shift+P
   - Screen-Space Reflections — ray-marched reflections on shiny surfaces
-  - Normal Mapping Quality — parallax mapping, PBR parameters
+  - Normal Mapping / Parallax / PBR ✅ — world-space Cook-Torrance GGX; parallax from normal-map alpha; auto-detected at load time
   - See [RENDERING.md](RENDERING.md) Phase 2 roadmap
 
 ## VR Enhancements
@@ -38,4 +38,5 @@
 - GitHub Actions CI for Windows + Linux + macOS builds per commit.
 - Unit tests for `mathematics.cpp` (pure functions, easy win).
 - SDL3 migration when stable (better HiDPI, gamepad, dialog APIs).
-- clang-tidy / ASan pass over the 1999 code for undefined-behavior issues.
+- clang-tidy pass ✅ — float promotion, dead stores, NULL→nullptr, uncached glGetUniformLocation (55+/frame eliminated), shadow shader macro→function refactor.
+- ASan pass over the 1999 code for remaining undefined-behavior issues.

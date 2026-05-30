@@ -6,6 +6,9 @@ namespace XR { bool StereoActive(); }
 #include "TextureOverrides.h"
 #include "Materials.h"
 #include "CustomMaterials.h"
+// SOURCEPORT: forward declaration — d3dSetTexture is defined in renderd3d.cpp.
+// Used here only for the texture preload at the end of LoadResources().
+void d3dSetTexture(LPVOID tptr, int w, int h);
 #endif
 #include "ModelOverrides.h"
 #include "HotReload.h"
@@ -214,7 +217,7 @@ void CreateVideoDIB()
 	BITMAPINFO binfo;
 	binfo.bmiHeader = bmih;
 	hbmpVideoBuf = 
-     CreateDIBSection(hdcMain, &binfo, DIB_RGB_COLORS, &lpVideoBuf, NULL, 0);   
+     CreateDIBSection(hdcMain, &binfo, DIB_RGB_COLORS, &lpVideoBuf, nullptr, 0);   
 }
 
 
@@ -574,7 +577,7 @@ void LoadTexture(TEXTURE* &T)
 {
     T = (TEXTURE*) HeapAlloc_(Heap, 0, sizeof(TEXTURE));     	
     DWORD L;        	    
-    ReadFile(hfile, T->DataA, 128*128*2, &L, NULL);
+    ReadFile(hfile, T->DataA, 128*128*2, &L, nullptr);
 	for (int y=0; y<128; y++)
 	    for (int x=0; x<128; x++)
 			if (!T->DataA[y*128+x]) T->DataA[y*128+x]=1;
@@ -606,9 +609,9 @@ void LoadTexture(TEXTURE* &T)
 
 void LoadSky()
 {	        
-	SetFilePointer(hfile, 256*512*OptDayNight, NULL, FILE_CURRENT);
-    ReadFile(hfile, SkyPic, 256*256*2, &l, NULL);
-	SetFilePointer(hfile, 256*512*(2-OptDayNight), NULL, FILE_CURRENT);
+	SetFilePointer(hfile, 256*512*OptDayNight, nullptr, FILE_CURRENT);
+    ReadFile(hfile, SkyPic, 256*256*2, &l, nullptr);
+	SetFilePointer(hfile, 256*512*(2-OptDayNight), nullptr, FILE_CURRENT);
 
     BrightenTexture(SkyPic, 256*256);
 
@@ -626,7 +629,7 @@ void LoadSky()
 
 void LoadSkyMap()
 {	        
-    ReadFile(hfile, SkyMap, 128*128, &l, NULL);
+    ReadFile(hfile, SkyMap, 128*128, &l, nullptr);
 }
 
 
@@ -704,13 +707,13 @@ void LoadModel(TModel* &mptr)
 {         
     mptr = (TModel*) HeapAlloc_(Heap, 0, sizeof(TModel));
 
-    ReadFile( hfile, &mptr->VCount,      4,         &l, NULL );
-	ReadFile( hfile, &mptr->FCount,      4,         &l, NULL );
-    ReadFile( hfile, &OCount,            4,         &l, NULL );
-	ReadFile( hfile, &mptr->TextureSize, 4,         &l, NULL );
-	ReadFile( hfile, mptr->gFace,        mptr->FCount<<6, &l, NULL );
-	ReadFile( hfile, mptr->gVertex,      mptr->VCount<<4, &l, NULL );
-	ReadFile( hfile, gObj,               OCount*48, &l, NULL );
+    ReadFile( hfile, &mptr->VCount,      4,         &l, nullptr );
+	ReadFile( hfile, &mptr->FCount,      4,         &l, nullptr );
+    ReadFile( hfile, &OCount,            4,         &l, nullptr );
+	ReadFile( hfile, &mptr->TextureSize, 4,         &l, nullptr );
+	ReadFile( hfile, mptr->gFace,        mptr->FCount<<6, &l, nullptr );
+	ReadFile( hfile, mptr->gVertex,      mptr->VCount<<4, &l, nullptr );
+	ReadFile( hfile, gObj,               OCount*48, &l, nullptr );
 
 	if (HARD3D) CalcLights(mptr);
 
@@ -723,7 +726,7 @@ void LoadModel(TModel* &mptr)
 
     mptr->lpTexture = (WORD*) HeapAlloc_(Heap, 0, mptr->TextureSize);
 
-    ReadFile(hfile, mptr->lpTexture, ts, &l, NULL);
+    ReadFile(hfile, mptr->lpTexture, ts, &l, nullptr);
 	BrightenTexture(mptr->lpTexture, ts/2);
 
     for (int v=0; v<mptr->VCount; v++) {
@@ -744,16 +747,16 @@ void LoadAnimation(TVTL &vtl)
    int vc;
    DWORD l;
 
-   ReadFile( hfile, &vc,          4,    &l, NULL );
-   ReadFile( hfile, &vc,          4,    &l, NULL );
-   ReadFile( hfile, &vtl.aniKPS,  4,    &l, NULL );
-   ReadFile( hfile, &vtl.FramesCount,  4,    &l, NULL );
+   ReadFile( hfile, &vc,          4,    &l, nullptr );
+   ReadFile( hfile, &vc,          4,    &l, nullptr );
+   ReadFile( hfile, &vtl.aniKPS,  4,    &l, nullptr );
+   ReadFile( hfile, &vtl.FramesCount,  4,    &l, nullptr );
    vtl.FramesCount++;
 
    vtl.AniTime = (vtl.FramesCount * 1000) / vtl.aniKPS;
    vtl.aniData = (short int*) 
     HeapAlloc_(Heap, 0, (vc*vtl.FramesCount*6) );
-   ReadFile( hfile, vtl.aniData, (vc*vtl.FramesCount*6), &l, NULL);
+   ReadFile( hfile, vtl.aniData, (vc*vtl.FramesCount*6), &l, nullptr);
 
 }
 
@@ -764,7 +767,7 @@ void LoadModelEx(TModel* &mptr, char* FName)
     
     hfile = CreateFile(VFS_R(FName),
         GENERIC_READ, FILE_SHARE_READ,
-		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
     if (hfile==INVALID_HANDLE_VALUE) {
         char sz[512];
@@ -774,13 +777,13 @@ void LoadModelEx(TModel* &mptr, char* FName)
 
     mptr = (TModel*) HeapAlloc_(Heap, 0, sizeof(TModel));
 
-    ReadFile( hfile, &mptr->VCount,      4,         &l, NULL );
-	ReadFile( hfile, &mptr->FCount,      4,         &l, NULL );
-    ReadFile( hfile, &OCount,            4,         &l, NULL );
-	ReadFile( hfile, &mptr->TextureSize, 4,         &l, NULL );
-	ReadFile( hfile, mptr->gFace,        mptr->FCount<<6, &l, NULL );
-	ReadFile( hfile, mptr->gVertex,      mptr->VCount<<4, &l, NULL );
-	ReadFile( hfile, gObj,               OCount*48, &l, NULL );
+    ReadFile( hfile, &mptr->VCount,      4,         &l, nullptr );
+	ReadFile( hfile, &mptr->FCount,      4,         &l, nullptr );
+    ReadFile( hfile, &OCount,            4,         &l, nullptr );
+	ReadFile( hfile, &mptr->TextureSize, 4,         &l, nullptr );
+	ReadFile( hfile, mptr->gFace,        mptr->FCount<<6, &l, nullptr );
+	ReadFile( hfile, mptr->gVertex,      mptr->VCount<<4, &l, nullptr );
+	ReadFile( hfile, gObj,               OCount*48, &l, nullptr );
 
     int ts = mptr->TextureSize;
 	if (HARD3D) mptr->TextureHeight = 256;
@@ -789,7 +792,7 @@ void LoadModelEx(TModel* &mptr, char* FName)
 
     mptr->lpTexture = (WORD*) HeapAlloc_(Heap, 0, mptr->TextureSize);
 
-    ReadFile(hfile, mptr->lpTexture, ts, &l, NULL);
+    ReadFile(hfile, mptr->lpTexture, ts, &l, nullptr);
 	BrightenTexture(mptr->lpTexture, ts/2);
 
     for (int v=0; v<mptr->VCount; v++) {
@@ -847,7 +850,7 @@ void LoadWav(char* FName, TSFX &sfx)
 {
   DWORD l;  
 
-  HANDLE hfile = CreateFile(VFS_R(FName), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  HANDLE hfile = CreateFile(VFS_R(FName), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
   if( hfile==INVALID_HANDLE_VALUE ) {		
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", FName );
@@ -855,27 +858,27 @@ void LoadWav(char* FName, TSFX &sfx)
     }
   
    HeapFree_(Heap, 0, (void*)sfx.lpData);
-   sfx.lpData = NULL;
+   sfx.lpData = nullptr;
 
-   SetFilePointer( hfile, 36, NULL, FILE_BEGIN );
+   SetFilePointer( hfile, 36, nullptr, FILE_BEGIN );
 
    char c[5]; c[4] = 0;
 
    for ( ; ; ) {
-      ReadFile( hfile, c, 1, &l, NULL );
+      ReadFile( hfile, c, 1, &l, nullptr );
       if( c[0] == 'd' ) {
-         ReadFile( hfile, &c[1], 3, &l, NULL );
+         ReadFile( hfile, &c[1], 3, &l, nullptr );
          if( !lstrcmp( c, "data" ) ) break;
-          else SetFilePointer( hfile, -3, NULL, FILE_CURRENT );
+          else SetFilePointer( hfile, -3, nullptr, FILE_CURRENT );
       }
    }
 
-   ReadFile( hfile, &sfx.length, 4, &l, NULL );
+   ReadFile( hfile, &sfx.length, 4, &l, nullptr );
 
    sfx.lpData = (short int*) 
     HeapAlloc_( Heap, 0, sfx.length );
    
-   ReadFile( hfile, sfx.lpData, sfx.length, &l, NULL );  
+   ReadFile( hfile, sfx.lpData, sfx.length, &l, nullptr );  
    CloseHandle(hfile);    
 }
 
@@ -917,19 +920,19 @@ void LoadPicture(TPicture &pic, LPSTR pname)
     DWORD l;
     HANDLE hfile;
 
-    hfile = CreateFile(VFS_R(pname), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+    hfile = CreateFile(VFS_R(pname), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
     if( hfile==INVALID_HANDLE_VALUE ) {
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", pname );
 		DoHalt(sz);
     }
 
-    ReadFile( hfile, &bmpFH, sizeof( BITMAPFILEHEADER ), &l, NULL );
-    ReadFile( hfile, &bmpIH, sizeof( BITMAPINFOHEADER ), &l, NULL );
+    ReadFile( hfile, &bmpFH, sizeof( BITMAPFILEHEADER ), &l, nullptr );
+    ReadFile( hfile, &bmpIH, sizeof( BITMAPINFOHEADER ), &l, nullptr );
 
 	
 	HeapFree_(Heap, 0, (void*)pic.lpImage);
-	pic.lpImage = NULL;
+	pic.lpImage = nullptr;
 	
 	pic.W = bmpIH.biWidth;
     pic.H = bmpIH.biHeight;
@@ -938,7 +941,7 @@ void LoadPicture(TPicture &pic, LPSTR pname)
 
 
     for (int y=0; y<pic.H; y++) {      
-      ReadFile( hfile, fRGB, 3*pic.W, &l, NULL );
+      ReadFile( hfile, fRGB, 3*pic.W, &l, nullptr );
       for (int x=0; x<pic.W; x++) {     
        C = ((int)fRGB[x][2]/8<<10) + ((int)fRGB[x][1]/8<< 5) + ((int)fRGB[x][0]/8) ;
        *(pic.lpImage + (pic.H-y-1)*pic.W+x) = C;
@@ -957,29 +960,29 @@ void LoadPictureTGA(TPicture &pic, LPSTR pname)
     HANDLE hfile;
 
 	
-    hfile = CreateFile(VFS_R(pname), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+    hfile = CreateFile(VFS_R(pname), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr );
     if( hfile==INVALID_HANDLE_VALUE ) {
         char sz[512];
         wsprintf( sz, "Error opening file\n%s.", pname );
 		DoHalt(sz);
     }
 
-	SetFilePointer(hfile, 12, 0, FILE_BEGIN);
+	SetFilePointer(hfile, 12, nullptr, FILE_BEGIN);
 
-    ReadFile( hfile, &w, 2, &l, NULL );
-    ReadFile( hfile, &h, 2, &l, NULL );
+    ReadFile( hfile, &w, 2, &l, nullptr );
+    ReadFile( hfile, &h, 2, &l, nullptr );
 
-	SetFilePointer(hfile, 18, 0, FILE_BEGIN);
+	SetFilePointer(hfile, 18, nullptr, FILE_BEGIN);
 	
 	HeapFree_(Heap, 0, (void*)pic.lpImage);
-	pic.lpImage = NULL;
+	pic.lpImage = nullptr;
 
 	pic.W = w;
     pic.H = h;
 	pic.lpImage = (WORD*) HeapAlloc_(Heap, 0, pic.W * pic.H * 2);
 
     for (int y=0; y<pic.H; y++)
-      ReadFile( hfile, (void*)(pic.lpImage + (pic.H-y-1)*pic.W), 2*pic.W, &l, NULL );
+      ReadFile( hfile, (void*)(pic.lpImage + (pic.H-y-1)*pic.W), 2*pic.W, &l, nullptr );
 
     CloseHandle( hfile );
 
@@ -1182,7 +1185,7 @@ void ReleaseResources()
     for (int t=0; t<1024; t++)
 	 if (Textures[t]) {
       HeapFree_(Heap, 0, (void*)Textures[t]);
-	  Textures[t] = NULL;
+	  Textures[t] = nullptr;
 	 } else break;
 
 	
@@ -1190,18 +1193,18 @@ void ReleaseResources()
      TModel *mptr = MObjects[m].model;	 
      if (mptr) {
 		HeapFree_(Heap,0,MObjects[m].bmpmodel.lpTexture);  
-		MObjects[m].bmpmodel.lpTexture = NULL;
+		MObjects[m].bmpmodel.lpTexture = nullptr;
 
 		if (MObjects[m].vtl.FramesCount>0) {
 		 HeapFree_(Heap, 0, MObjects[m].vtl.aniData);
-		 MObjects[m].vtl.aniData = NULL;
+		 MObjects[m].vtl.aniData = nullptr;
 		 }
 		
-        HeapFree_(Heap,0,mptr->lpTexture);   mptr->lpTexture  = NULL;
-        HeapFree_(Heap,0,mptr->lpTexture2);  mptr->lpTexture2 = NULL;
-        HeapFree_(Heap,0,mptr->lpTexture3);  mptr->lpTexture3 = NULL;
+        HeapFree_(Heap,0,mptr->lpTexture);   mptr->lpTexture  = nullptr;
+        HeapFree_(Heap,0,mptr->lpTexture2);  mptr->lpTexture2 = nullptr;
+        HeapFree_(Heap,0,mptr->lpTexture3);  mptr->lpTexture3 = nullptr;
         HeapFree_(Heap,0,MObjects[m].model);              
-        MObjects[m].model = NULL;
+        MObjects[m].model = nullptr;
 		MObjects[m].vtl.FramesCount = 0;
      } else break;
     }
@@ -1209,13 +1212,13 @@ void ReleaseResources()
 	for (int a=0; a<255; a++) {
 	  if (!Ambient[a].sfx.lpData) break;
 	  HeapFree_(Heap, 0, Ambient[a].sfx.lpData);	  
-	  Ambient[a].sfx.lpData = NULL;
+	  Ambient[a].sfx.lpData = nullptr;
 	}
 
 	for (int r=0; r<255; r++) {
 		if (!RandSound[r].lpData) break;	  
 		HeapFree_(Heap, 0, RandSound[r].lpData);
-		RandSound[r].lpData = NULL;	  
+		RandSound[r].lpData = nullptr;	  
 		RandSound[r].length = 0;
 	}	
 }
@@ -1228,7 +1231,7 @@ void LoadBMPModel(TObject &obj)
     //ReadFile(hfile, lpT, 256*256*2, &l, NULL);
     //DATASHIFT(obj.bmpmodel.lpTexture, 128*128*2);
 	//BrightenTexture(lpT, 256*256);
-	ReadFile(hfile, obj.bmpmodel.lpTexture, 128*128*2, &l, NULL);	
+	ReadFile(hfile, obj.bmpmodel.lpTexture, 128*128*2, &l, nullptr);	
 	BrightenTexture(obj.bmpmodel.lpTexture, 128*128);
 	DATASHIFT(obj.bmpmodel.lpTexture, 128*128*2);
     //CreateMipMapMT(obj.bmpmodel.lpTexture, lpT, 128);    
@@ -1317,7 +1320,7 @@ void LoadResources()
 
     hfile = CreateFile(VFS_R(RscName),
         GENERIC_READ, FILE_SHARE_READ,
-        NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
     if (hfile==INVALID_HANDLE_VALUE) {
         char sz[512];
@@ -1325,12 +1328,12 @@ void LoadResources()
 		DoHalt(sz);                
         return;   }
     
-    ReadFile(hfile, &tc, 4, &l, NULL);
-    ReadFile(hfile, &mc, 4, &l, NULL);
+    ReadFile(hfile, &tc, 4, &l, nullptr);
+    ReadFile(hfile, &mc, 4, &l, nullptr);
 
 	
-	ReadFile(hfile,  FadeRGB, 4*3*3, &l, NULL); 
-	ReadFile(hfile, TransRGB, 4*3*3, &l, NULL); 
+	ReadFile(hfile,  FadeRGB, 4*3*3, &l, nullptr); 
+	ReadFile(hfile, TransRGB, 4*3*3, &l, nullptr); 
 
     SkyR  =  FadeRGB[OptDayNight][0];
 	SkyG  =  FadeRGB[OptDayNight][1];
@@ -1381,7 +1384,7 @@ void LoadResources()
 	PrintLog("Loading models:");
 	PrintLoad("Loading models...");
     for (int mm=0; mm<mc; mm++) {
-        ReadFile(hfile, &MObjects[mm].info, 64, &l, NULL);
+        ReadFile(hfile, &MObjects[mm].info, 64, &l, nullptr);
         // SOURCEPORT: YLo/YHi are terrain-height-scale values (each file unit = 2 GU)
         // and need *=2.  Radius is a lateral game-unit distance stored at 1:1 scale —
         // doubling it (as YLo/YHi are) made the collision sphere twice the intended
@@ -1452,8 +1455,8 @@ void LoadResources()
 #endif
 	
 	int FgCount;
-	ReadFile(hfile, &FgCount, 4, &l, NULL); 
-    ReadFile(hfile, &FogsList[1], FgCount * sizeof(TFogEntity), &l, NULL);
+	ReadFile(hfile, &FgCount, 4, &l, nullptr); 
+    ReadFile(hfile, &FogsList[1], FgCount * sizeof(TFogEntity), &l, nullptr);
 
 
 	for (int f=0; f<=FgCount; f++) {
@@ -1470,22 +1473,22 @@ void LoadResources()
 	
 	int RdCount, AmbCount, WtrCount;
 
-	ReadFile(hfile, &RdCount, 4, &l, NULL); 
+	ReadFile(hfile, &RdCount, 4, &l, nullptr); 
    	for (int r=0; r<RdCount; r++) {
-	  ReadFile(hfile, &RandSound[r].length, 4, &l, NULL); 
+	  ReadFile(hfile, &RandSound[r].length, 4, &l, nullptr); 
 	  RandSound[r].lpData = (short int*) HeapAlloc_(Heap,0,RandSound[r].length);	  
-	  ReadFile(hfile, RandSound[r].lpData, RandSound[r].length, &l, NULL); 
+	  ReadFile(hfile, RandSound[r].lpData, RandSound[r].length, &l, nullptr); 
 	}
 
-	ReadFile(hfile, &AmbCount, 4, &l, NULL); 
+	ReadFile(hfile, &AmbCount, 4, &l, nullptr); 
 	for (int a=0; a<AmbCount; a++) {
-	  ReadFile(hfile, &Ambient[a].sfx.length, 4, &l, NULL); 
+	  ReadFile(hfile, &Ambient[a].sfx.length, 4, &l, nullptr); 
 	  Ambient[a].sfx.lpData = (short int*) HeapAlloc_(Heap,0,Ambient[a].sfx.length);	  
-	  ReadFile(hfile, Ambient[a].sfx.lpData, Ambient[a].sfx.length, &l, NULL); 
+	  ReadFile(hfile, Ambient[a].sfx.lpData, Ambient[a].sfx.length, &l, nullptr); 
 
-	  ReadFile(hfile, Ambient[a].rdata, sizeof(Ambient[a].rdata), &l, NULL); 
-	  ReadFile(hfile, &Ambient[a].RSFXCount, 4, &l, NULL); 
-	  ReadFile(hfile, &Ambient[a].AVolume, 4, &l, NULL); 
+	  ReadFile(hfile, Ambient[a].rdata, sizeof(Ambient[a].rdata), &l, nullptr); 
+	  ReadFile(hfile, &Ambient[a].RSFXCount, 4, &l, nullptr); 
+	  ReadFile(hfile, &Ambient[a].AVolume, 4, &l, nullptr); 
 	  
 	  if (Ambient[a].RSFXCount)
 		  Ambient[a].RndTime = (Ambient[a].rdata[0].RFreq / 2 + rRand(Ambient[a].rdata[0].RFreq)) * 1000;
@@ -1512,8 +1515,8 @@ void LoadResources()
 	  
 	}
 
-	ReadFile(hfile, &WtrCount, 4, &l, NULL); 	
-	ReadFile(hfile, WaterList, 16*WtrCount, &l, NULL); 
+	ReadFile(hfile, &WtrCount, 4, &l, nullptr); 	
+	ReadFile(hfile, WaterList, 16*WtrCount, &l, nullptr); 
 
 	WaterList[255].wlevel = 0;
 	for (int w=0; w<WtrCount; w++) {
@@ -1538,7 +1541,7 @@ void LoadResources()
 	PrintLog("Loading .map:");
     hfile = CreateFile(VFS_R(MapName),
         GENERIC_READ, FILE_SHARE_READ,
-		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
     if (hfile==INVALID_HANDLE_VALUE)
       DoHalt("Error opening map file.");
@@ -1549,18 +1552,18 @@ void LoadResources()
     gMapMask = gMapSize - 1;
     const int mapBytes = gMapSize * gMapSize;
 
-    ReadFile(hfile, HMap,    mapBytes,   &l, NULL);
-    ReadFile(hfile, TMap1,   mapBytes*2, &l, NULL);
-    ReadFile(hfile, TMap2,   mapBytes*2, &l, NULL);
-    ReadFile(hfile, OMap,    mapBytes,   &l, NULL);
-    ReadFile(hfile, FMap,    mapBytes*2, &l, NULL);
-     SetFilePointer(hfile, mapBytes*OptDayNight, NULL, FILE_CURRENT);
-	ReadFile(hfile, LMap,    mapBytes,   &l, NULL);
-	 SetFilePointer(hfile, mapBytes*(2-OptDayNight), NULL, FILE_CURRENT);
-    ReadFile(hfile, WMap ,   mapBytes,   &l, NULL);
-    ReadFile(hfile, HMapO,   mapBytes,   &l, NULL);
-	ReadFile(hfile, FogsMap, 512*512, &l, NULL);
-	ReadFile(hfile, AmbMap,  512*512, &l, NULL);
+    ReadFile(hfile, HMap,    mapBytes,   &l, nullptr);
+    ReadFile(hfile, TMap1,   mapBytes*2, &l, nullptr);
+    ReadFile(hfile, TMap2,   mapBytes*2, &l, nullptr);
+    ReadFile(hfile, OMap,    mapBytes,   &l, nullptr);
+    ReadFile(hfile, FMap,    mapBytes*2, &l, nullptr);
+     SetFilePointer(hfile, mapBytes*OptDayNight, nullptr, FILE_CURRENT);
+	ReadFile(hfile, LMap,    mapBytes,   &l, nullptr);
+	 SetFilePointer(hfile, mapBytes*(2-OptDayNight), nullptr, FILE_CURRENT);
+    ReadFile(hfile, WMap ,   mapBytes,   &l, nullptr);
+    ReadFile(hfile, HMapO,   mapBytes,   &l, nullptr);
+	ReadFile(hfile, FogsMap, 512*512, &l, nullptr);
+	ReadFile(hfile, AmbMap,  512*512, &l, nullptr);
 
 	if (FogsList[1].YBegin>1.f)
      for (int x=0; x<510; x++)
@@ -1590,6 +1593,35 @@ void LoadResources()
 	if (TrophyMode) LoadPictureTGA(TrophyPic, "HUNTDAT\\MENU\\trophy.tga");
 	           else LoadPictureTGA(TrophyPic, "HUNTDAT\\MENU\\trophy_g.tga");
 	conv_pic(TrophyPic);
+
+#ifdef _opengl
+    // SOURCEPORT: pre-upload all terrain and object textures to the GPU while the
+    // player is still on the loading screen.  Without this, each texture causes a
+    // glGenTextures + glTexImage2D + mipmap-generation stall on its first gameplay
+    // frame, spreading ~100 ms of GPU upload cost across the first 30 seconds of play.
+    //
+    // Terrain textures: DataA (128×128 full-res) + DataB (64×64 mip).
+    // Object textures:  model lpTexture (256×256).  Billboard lpTexture skipped —
+    //   only used at long range, and keeping them out reserves cache slots for
+    //   closer geometry.  Typical area: ~30 terrain (×2) + ~30 objects ≈ 90 entries,
+    //   well inside the 128-slot d3dMemMap LRU cap.
+    if (g_glRenderer) {
+        PrintLog("Pre-uploading textures to GPU...");
+        PrintLoad("Pre-uploading textures to GPU...");
+        for (int tt = 0; tt < tc; tt++) {
+            if (!Textures[tt]) continue;
+            d3dSetTexture(Textures[tt]->DataA, 128, 128);
+            d3dSetTexture(Textures[tt]->DataB,  64,  64);
+        }
+        for (int mm = 0; mm < mc; mm++) {
+            if (MObjects[mm].model && MObjects[mm].model->lpTexture)
+                d3dSetTexture(MObjects[mm].model->lpTexture, 256, 256);
+        }
+        // Flush so the driver finishes uploads before the first draw call.
+        glFlush();
+        PrintLog(" Done.\n");
+    }
+#endif
 
 //    ReInitGame();
 }
@@ -1728,19 +1760,19 @@ void ReleaseCharacterInfo(TCharacterInfo &chinfo)
 	if (!chinfo.mptr) return;
 	
 	HeapFree_(Heap, 0, chinfo.mptr);
-	chinfo.mptr = NULL;
+	chinfo.mptr = nullptr;
 
 	int c; // SOURCEPORT: moved from for-loop to function scope (MSVC6 scoping)
 	for (c = 0; c<64; c++) {
      if (!chinfo.Animation[c].aniData) break;
 	 HeapFree_(Heap, 0, chinfo.Animation[c].aniData);
-     chinfo.Animation[c].aniData = NULL;
+     chinfo.Animation[c].aniData = nullptr;
 	}
 
 	for (c = 0; c<64; c++) {
      if (!chinfo.SoundFX[c].lpData) break;
 	 HeapFree_(Heap, 0, chinfo.SoundFX[c].lpData);
-     chinfo.SoundFX[c].lpData = NULL;
+     chinfo.SoundFX[c].lpData = nullptr;
 	}
 
 	chinfo.AniCount = 0;
@@ -1756,7 +1788,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 
    HANDLE hfile = CreateFile(VFS_R(FName),
       GENERIC_READ, FILE_SHARE_READ,
-	  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	  nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 
    if (hfile==INVALID_HANDLE_VALUE) {
       char sz[512];
@@ -1764,19 +1796,19 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
       DoHalt(sz);
     }
 
-    ReadFile(hfile, chinfo.ModelName, 32, &l, NULL);
-    ReadFile(hfile, &chinfo.AniCount,  4, &l, NULL);
-    ReadFile(hfile, &chinfo.SfxCount,  4, &l, NULL);
+    ReadFile(hfile, chinfo.ModelName, 32, &l, nullptr);
+    ReadFile(hfile, &chinfo.AniCount,  4, &l, nullptr);
+    ReadFile(hfile, &chinfo.SfxCount,  4, &l, nullptr);
 
 //============= read model =================//
 
     chinfo.mptr = (TModel*) HeapAlloc_(Heap, 0, sizeof(TModel));
 
-    ReadFile( hfile, &chinfo.mptr->VCount,      4,         &l, NULL );
-    ReadFile( hfile, &chinfo.mptr->FCount,      4,         &l, NULL );
-    ReadFile( hfile, &chinfo.mptr->TextureSize, 4,         &l, NULL );
-    ReadFile( hfile, chinfo.mptr->gFace,        chinfo.mptr->FCount<<6, &l, NULL );
-    ReadFile( hfile, chinfo.mptr->gVertex,      chinfo.mptr->VCount<<4, &l, NULL );
+    ReadFile( hfile, &chinfo.mptr->VCount,      4,         &l, nullptr );
+    ReadFile( hfile, &chinfo.mptr->FCount,      4,         &l, nullptr );
+    ReadFile( hfile, &chinfo.mptr->TextureSize, 4,         &l, nullptr );
+    ReadFile( hfile, chinfo.mptr->gFace,        chinfo.mptr->FCount<<6, &l, nullptr );
+    ReadFile( hfile, chinfo.mptr->gVertex,      chinfo.mptr->VCount<<4, &l, nullptr );
 
     int ts = chinfo.mptr->TextureSize;
 	if (HARD3D) chinfo.mptr->TextureHeight = 256;
@@ -1785,7 +1817,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 
     chinfo.mptr->lpTexture = (WORD*) HeapAlloc_(Heap, 0, chinfo.mptr->TextureSize);    
 
-    ReadFile(hfile, chinfo.mptr->lpTexture, ts, &l, NULL);
+    ReadFile(hfile, chinfo.mptr->lpTexture, ts, &l, nullptr);
 	BrightenTexture(chinfo.mptr->lpTexture, ts/2);
     
     DATASHIFT(chinfo.mptr->lpTexture, chinfo.mptr->TextureSize);
@@ -1805,23 +1837,23 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 	//ApplyAlphaFlags(chinfo.mptr->lpTexture2, 128*128);
 //============= read animations =============//
     for (int a=0; a<chinfo.AniCount; a++) {
-      ReadFile(hfile, chinfo.Animation[a].aniName, 32, &l, NULL);
-      ReadFile(hfile, &chinfo.Animation[a].aniKPS, 4, &l, NULL);
-      ReadFile(hfile, &chinfo.Animation[a].FramesCount, 4, &l, NULL);
+      ReadFile(hfile, chinfo.Animation[a].aniName, 32, &l, nullptr);
+      ReadFile(hfile, &chinfo.Animation[a].aniKPS, 4, &l, nullptr);
+      ReadFile(hfile, &chinfo.Animation[a].FramesCount, 4, &l, nullptr);
       chinfo.Animation[a].AniTime = (chinfo.Animation[a].FramesCount * 1000) / chinfo.Animation[a].aniKPS;
       chinfo.Animation[a].aniData = (short int*) 
           HeapAlloc_(Heap, 0, (chinfo.mptr->VCount*chinfo.Animation[a].FramesCount*6) );
 
-      ReadFile(hfile, chinfo.Animation[a].aniData, (chinfo.mptr->VCount*chinfo.Animation[a].FramesCount*6), &l, NULL);
+      ReadFile(hfile, chinfo.Animation[a].aniData, (chinfo.mptr->VCount*chinfo.Animation[a].FramesCount*6), &l, nullptr);
     }
 
 //============= read sound fx ==============//
 	BYTE tmp[32];
     for (int s=0; s<chinfo.SfxCount; s++) {
-      ReadFile(hfile, tmp, 32, &l, NULL);
-      ReadFile(hfile, &chinfo.SoundFX[s].length, 4, &l, NULL);
+      ReadFile(hfile, tmp, 32, &l, nullptr);
+      ReadFile(hfile, &chinfo.SoundFX[s].length, 4, &l, nullptr);
        chinfo.SoundFX[s].lpData = (short int*) HeapAlloc_(Heap, 0, chinfo.SoundFX[s].length);
-      ReadFile(hfile, chinfo.SoundFX[s].lpData, chinfo.SoundFX[s].length, &l, NULL);
+      ReadFile(hfile, chinfo.SoundFX[s].lpData, chinfo.SoundFX[s].length, &l, nullptr);
     }
 
    for (int v=0; v<chinfo.mptr->VCount; v++) {
@@ -1833,7 +1865,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
    CorrectModel(chinfo.mptr);
    
    
-   ReadFile(hfile, chinfo.Anifx, 64*4, &l, NULL);
+   ReadFile(hfile, chinfo.Anifx, 64*4, &l, nullptr);
    if (l!=256)
 	   for (l=0; l<64; l++) chinfo.Anifx[l] = -1;
    CloseHandle(hfile);
@@ -1986,16 +2018,16 @@ void SaveScreenShot()
     hf = CreateFile(t,
                    GENERIC_READ | GENERIC_WRITE, 
                    (DWORD) 0, 
-                   (LPSECURITY_ATTRIBUTES) NULL, 
+                   (LPSECURITY_ATTRIBUTES) nullptr, 
                    CREATE_ALWAYS, 
                    FILE_ATTRIBUTE_NORMAL, 
-                   (HANDLE) NULL); 
+                   (HANDLE) nullptr); 
       
     
       
-    WriteFile(hf, (LPVOID) &hdr, sizeof(BITMAPFILEHEADER), (LPDWORD) &dwTmp, (LPOVERLAPPED) NULL);
+    WriteFile(hf, (LPVOID) &hdr, sizeof(BITMAPFILEHEADER), (LPDWORD) &dwTmp, (LPOVERLAPPED) nullptr);
              
-    WriteFile(hf, &bmi, sizeof(BITMAPINFOHEADER), (LPDWORD) &dwTmp, (LPOVERLAPPED) NULL);    
+    WriteFile(hf, &bmi, sizeof(BITMAPINFOHEADER), (LPDWORD) &dwTmp, (LPOVERLAPPED) nullptr);    
  
     byte fRGB[1024][3];
 
@@ -2011,7 +2043,7 @@ void SaveScreenShot()
        fRGB[x][2] = ((C>>10) & 31)<<3; 
       }
      }
-     WriteFile( hf, fRGB, 3*WinW, &dwTmp, NULL );     
+     WriteFile( hf, fRGB, 3*WinW, &dwTmp, nullptr );     
     }    
  
     CloseHandle(hf);    
@@ -2207,8 +2239,8 @@ void CreateLog()
 	
 	hlog = CreateFile("render.log", 
 		               GENERIC_WRITE, 
-					   FILE_SHARE_READ, NULL, 
-					   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+					   FILE_SHARE_READ, nullptr, 
+					   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 
 #ifdef _d3d
 	PrintLog("CarnivoresII  D3D video driver.");
@@ -2231,12 +2263,12 @@ void PrintLog(const char* l)
 
 	if (l[strlen(l)-1]==0x0A) {
 		BYTE b = 0x0D;
-		WriteFile(hlog, l, strlen(l)-1, &w, NULL);
-		WriteFile(hlog, &b, 1, &w, NULL);
+		WriteFile(hlog, l, strlen(l)-1, &w, nullptr);
+		WriteFile(hlog, &b, 1, &w, nullptr);
 		b = 0x0A;
-		WriteFile(hlog, &b, 1, &w, NULL);
+		WriteFile(hlog, &b, 1, &w, nullptr);
 	} else
-		WriteFile(hlog, l, strlen(l), &w, NULL);
+		WriteFile(hlog, l, strlen(l), &w, nullptr);
 
 }
 

@@ -195,7 +195,7 @@ bool PostProcessingPipeline::Initialize(int screenWidth, int screenHeight) {
     glBindVertexArray(m_fsQuadVao);
     glBindBuffer(GL_ARRAY_BUFFER, m_fsQuadVbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
     glEnableVertexAttribArray(0);
     glEnableVertexAttribArray(1);
@@ -572,8 +572,8 @@ void PostProcessingPipeline::Compose(FramebufferObject* src, FramebufferObject* 
     }
 }
 
-void PostProcessingPipeline::UpdateShadowMatrices(const float* cameraPos, const float* cameraDir,
-                                                   float fovY, float aspect) {
+void PostProcessingPipeline::UpdateShadowMatrices(const float* cameraPos, const float* /*cameraDir*/,
+                                                   float /*fovY*/, float /*aspect*/) {
     // SOURCEPORT: Compute light view/projection matrices for each shadow cascade.
     // Uses logarithmic cascade splitting: split camera frustum into N cascades
     // where cascade i covers depths [nearPlane * split^i, nearPlane * split^(i+1)]
@@ -595,8 +595,6 @@ void PostProcessingPipeline::UpdateShadowMatrices(const float* cameraPos, const 
         // Compute cascade distance split using logarithmic split
         float linearSplit = nearPlane + (farPlane - nearPlane) * (float)(i+1) / SHADOW_CASCADES;
         float logSplit = nearPlane * std::pow(farPlane / nearPlane, (float)(i+1) / SHADOW_CASCADES);
-        float cascadeNear = (i == 0) ? nearPlane :
-                           nearPlane * std::pow(farPlane / nearPlane, (float)i / SHADOW_CASCADES);
         float cascadeFar = linearSplit * (1.0f - splitLambda) + logSplit * splitLambda;
         m_cascadeDistances[i] = cascadeFar;
 

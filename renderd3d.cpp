@@ -562,7 +562,7 @@ void d3dEndBufferG(BOOL ColorKey, BOOL noSnapUV = FALSE)
        g_glRenderer->BindCustomMaterial(nullptr);
    }
    dFacesCount += GVCnt / 3;
-   lpVertexG = NULL;
+   lpVertexG = nullptr;
    GVCnt = 0;
    g_geomLocked = false;
    LINEARFILTER = TRUE;
@@ -1523,7 +1523,7 @@ void Activate3DHardware()
     if (!g_glRenderer) {
         g_glRenderer = new RendererGL();
     }
-    if (!g_glRenderer->Init(NULL, WinW, WinH)) {
+    if (!g_glRenderer->Init(nullptr, WinW, WinH)) {
         DoHalt("OpenGL renderer initialization failed.\n");
     }
     VMFORMAT565 = TRUE;
@@ -1649,7 +1649,7 @@ void ShutDown3DHardware()
   lpDD->SetCooperativeLevel( hwndMain, DDSCL_NORMAL);
 #elif defined(_opengl)
   ResetTextureMap();
-  lpVertexG = NULL;
+  lpVertexG = nullptr;
   if (g_glRenderer) {
       g_glRenderer->Shutdown();
       delete g_glRenderer;
@@ -2046,7 +2046,7 @@ static GLuint gl_UploadCompressed(const TextureOverrides::CompressedTex& ct)
     return tex;
 }
 
-BOOL d3dAllocTexture(int i, int w, int h) { return TRUE; }
+BOOL d3dAllocTexture(int /*i*/, int /*w*/, int /*h*/) { return TRUE; }
 void d3dDownLoadTexture(int i, int w, int h, LPVOID tptr)
 {
     if (d3dMemMap[i].glTexId) glDeleteTextures(1, &d3dMemMap[i].glTexId);
@@ -3570,6 +3570,12 @@ void _RenderObject(int x, int y)
           // so previous alpha-test faces are drawn with the correct texture.
           g_glRenderer->FlushWorldSpaceShadow();
           d3dSetTexture(model->lpTexture, 256, 256);
+          // SOURCEPORT: bind the model texture to unit 0 immediately.
+          // FlushWorldSpaceShadow samples unit 0 for alpha-test.  Without an explicit
+          // bind here, stale textures (e.g. the bitmap left by DrawTextWithFont) would
+          // be used, producing wrong tree-shadow alpha patterns whenever UI text appears.
+          glActiveTexture(GL_TEXTURE0);
+          if (hTexture) glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
           float obj_al = fi - CameraAlpha;  // object world-space yaw (camera-independent)
           float ca = cosf(obj_al), sa = sinf(obj_al);
           float wx = (float)(x * 256 + 128);
@@ -3617,10 +3623,13 @@ void RenderModelsList()
   // SOURCEPORT: sort objects by grid coordinates for stable rendering order.
   // Without sorting, objects at similar distances might render in variable order
   // between frames, causing them to pop back/forth at overlapping edges.
-  std::sort(ORList, ORList + ORLCount, [](const Vector2di& a, const Vector2di& b) {
-    if (a.y != b.y) return a.y < b.y;
-    return a.x < b.x;
-  });
+  // Skip during shadow pass — draw order is irrelevant for a depth-only render.
+  if (!g_glRenderer || !g_glRenderer->IsShadowPassActive()) {
+    std::sort(ORList, ORList + ORLCount, [](const Vector2di& a, const Vector2di& b) {
+      if (a.y != b.y) return a.y < b.y;
+      return a.x < b.x;
+    });
+  }
 
 #ifdef _opengl
   // SOURCEPORT: enable polygon offset and increment per-model so overlapping
@@ -3847,8 +3856,8 @@ void ProcessMap(int x, int y, int r)
 
 
 
-void ProcessMap2(int x, int y, int r)
-{ 
+void ProcessMap2(int x, int y, int /*r*/)
+{
    //WATERREVERSE = FALSE;
    if (x>=gMapSize-1 || y>=gMapSize-1 ||
 	   x<0 || y<0) return;   
@@ -3949,8 +3958,8 @@ void ProcessMapW(int x, int y, int r)
 }
 
 
-void ProcessMapW2(int x, int y, int r)
-{    
+void ProcessMapW2(int x, int y, int /*r*/)
+{
    if (!( (FMap[y  ][x  ] & fmWaterA) &&
 	      (FMap[y  ][x+2] & fmWaterA) &&	   
 		  (FMap[y+2][x  ] & fmWaterA) &&
@@ -4103,6 +4112,11 @@ void RenderWCircles()
 
 void RenderWater()
 {
+  // SOURCEPORT: water is transparent geometry — irrelevant for the depth-only shadow
+  // pass (the GL renderer already suppresses GPU draws via m_shadowGeomSuppressed, but
+  // the O(ctViewR²) CPU tile loop still ran 3× per frame).  Early-exit here.
+  if (g_glRenderer && g_glRenderer->IsShadowPassActive()) return;
+
 #ifdef _d3d
   SetRenderStates(FALSE, D3DBLEND_INVSRCALPHA);
 #elif defined(_opengl)
@@ -5565,8 +5579,8 @@ void RenderElements()
 	// Without this, RenderElements' particles — which never call d3dSetTexture — would
 	// drive uPBR=1 with garbage normal/MR/AO bindings and render as yellow-green sludge
 	// instead of the intended partGround brown.
-	hMaterial = NULL;
-	hCustomMaterial = NULL;
+	hMaterial = nullptr;
+	hCustomMaterial = nullptr;
 	int fproc1 = 0;
     
 	for (int eg = 0; eg<ElCount; eg++) {				
@@ -5664,7 +5678,8 @@ void RenderCharacterPost(TCharacter *cptr)
 
       
    if (!SHADOWS3D) return;
-   if (zs > 256 * (ctViewR-8)) return;   
+   if (OptDayNight == 2) return;  // SOURCEPORT: no shadows at night
+   if (zs > 256 * (ctViewR-8)) return;
    
    int Al = 0x60;
    
@@ -6040,9 +6055,10 @@ void RotateVVector(Vector3d& v)
 // SOURCEPORT: placeholder for fog layer rendering
 void RenderFogLayers()
 {
+   // SOURCEPORT: stub — fog is screen-space only; no geometry to submit.
+   // Guard against shadow-pass calls now and when fog volumes are implemented.
+   if (g_glRenderer && g_glRenderer->IsShadowPassActive()) return;
    // TODO: implement fog volume geometry rendering through the model pipeline
-   // to visualize fog zones in 3D space. Fog is currently applied as vertex
-   // color tinting on models only, making it look grey without atmospheric context.
 }
 
 
@@ -6435,8 +6451,8 @@ sky_done:
 
    nv = RotateVector(Sun3dPos);
    SunLight = 0;
-   // SOURCEPORT: debug toggle to skip sun rendering (Shift+U)
-   if (nv.z < -2024 && !DBG_NO_SUN) RenderSun(nv.x, nv.y, nv.z);
+   // SOURCEPORT: debug toggle to skip sun rendering (Shift+U); no sun at night
+   if (nv.z < -2024 && !DBG_NO_SUN && OptDayNight != 2) RenderSun(nv.x, nv.y, nv.z);
 }
 
 
