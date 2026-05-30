@@ -1,5 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Game.cpp:37:27: warning: narrowing conversion from 'int' to 'float' [bugprone-narrowing-conversions]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Game.cpp:38:27: warning: narrowing conversion from 'int' to 'float' [bugprone-narrowing-conversions]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Game.cpp:39:27: warning: narrowing conversion from 'int' to 'float' [bugprone-narrowing-conversions]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Game.cpp:43:27: warning: narrowing conversion from 'int' to 'float' [bugprone-narrowing-conversions]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Game.cpp:44:27: warning: narrowing conversion from 'int' to 'float' [bugprone-narrowing-conversions]

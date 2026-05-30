@@ -59,3 +59,7 @@ OpenCarnivores/
 
 # Runtime renderer debug log
 debug_renderer.txt
+
+# Stale clang-tidy and build output logs
+tidy_*.txt
+build_*.txt

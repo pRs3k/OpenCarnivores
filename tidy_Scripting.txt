@@ -1,4 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Scripting.cpp:27:6: warning: do not define a C-style variadic function; consider using a function parameter pack or currying instead [cert-dcl50-cpp]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Scripting.cpp:30:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Scripting.cpp:169:9: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
-deps/lua/src\lauxlib.h:198:12: warning: suspicious 'sizeof' by 'sizeof' multiplication [bugprone-sizeof-expression,cert-arr39-c]

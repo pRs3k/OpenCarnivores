@@ -1,5 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Characters.cpp:187:24: warning: call to 'cos' promotes float to double [performance-type-promotion-in-math-fn]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Characters.cpp:188:27: warning: call to 'sin' promotes float to double [performance-type-promotion-in-math-fn]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Characters.cpp:202:15: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Characters.cpp:249:13: warning: call to 'fabs' promotes float to double [performance-type-promotion-in-math-fn]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Characters.cpp:256:19: warning: call to 'fabs' promotes float to double [performance-type-promotion-in-math-fn]

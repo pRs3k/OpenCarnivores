@@ -1,5 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_OpenAL.cpp:20:10: warning: non-portable path to file '"Hunt.h"'; specified path differs in case from file name on disk [clang-diagnostic-nonportable-include-path]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_OpenAL.cpp:75:65: warning: initialization of 'g_bufCache' with static storage duration may throw an exception that cannot be caught [bugprone-throwing-static-initialization,cert-err58-cpp]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_OpenAL.cpp:93:6: warning: enum 'ReverbZone' uses a larger base type ('int', size: 4 bytes) than necessary for its value set, consider using 'std::uint8_t' (1 byte) as the base type to reduce its size [performance-enum-size]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_OpenAL.cpp:345:16: warning: narrowing conversion from 'Uint32' (aka 'unsigned int') to 'float' [bugprone-narrowing-conversions]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_OpenAL.cpp:425:30: warning: narrowing conversion from 'int' to 'float' [bugprone-narrowing-conversions]

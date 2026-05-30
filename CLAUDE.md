@@ -4,6 +4,7 @@ Source port of Carnivores 2 — clean, maintainable engine on modern systems wit
 - No explanations, code only.
 - Output only changed blocks.
 - Answer in one sentence.
+- All commits must be authored by pRs3k only. Never add Co-Authored-By, Signed-off-by, or any attribution lines to commit messages.
 
 ## Coding rules
 - C++17 standard.

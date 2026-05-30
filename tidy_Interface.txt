@@ -1,5 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Interface.cpp:5:16: warning: declaration uses identifier '_TMenuSet', which is a reserved identifier [bugprone-reserved-identifier]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Interface.cpp:78:11: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Interface.cpp:80:11: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Interface.cpp:121:11: warning: result of multiplication in type 'int' is used as a pointer offset after an implicit widening conversion to type 'ptrdiff_t' [bugprone-implicit-widening-of-multiplication-result]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Interface.cpp:122:11: warning: result of multiplication in type 'int' is used as a pointer offset after an implicit widening conversion to type 'ptrdiff_t' [bugprone-implicit-widening-of-multiplication-result]

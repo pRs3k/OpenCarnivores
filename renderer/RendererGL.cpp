@@ -382,13 +382,6 @@ bool RendererGL::Init(void* /*windowHandle*/, int width, int height) {
     // SOURCEPORT: Phase 4 — read display options from game globals
     extern int OptDisplayMode, OptVSync;
 
-    FILE* dbg = fopen("C:\\Users\\User\\Documents\\claude_code\\OpenCarnivores\\debug_renderer.txt", "a");
-    if (dbg) {
-        fprintf(dbg, "[OpenGL Renderer] Initializing RendererGL backend (GL 4.1 Core)\n");
-        fflush(dbg);
-        fclose(dbg);
-    }
-
     m_width  = width;
     m_height = height;
 

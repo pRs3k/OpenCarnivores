@@ -1,2 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_DLL.cpp:7:10: warning: non-portable path to file '"Hunt.h"'; specified path differs in case from file name on disk [clang-diagnostic-nonportable-include-path]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Audio_DLL.cpp:34:18: warning: ISO C++11 does not allow conversion from string literal to 'LPSTR' (aka 'char *') [clang-diagnostic-writable-strings]

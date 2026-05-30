@@ -1,5 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\Materials.cpp:20:38: warning: initialization of 'g_registry' with static storage duration may throw an exception that cannot be caught [bugprone-throwing-static-initialization,cert-err58-cpp]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Materials.cpp:27:36: warning: narrowing conversion from 'GLenum' (aka 'unsigned int') to signed type 'GLint' (aka 'int') is implementation-defined [bugprone-narrowing-conversions]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Materials.cpp:39:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Materials.cpp:53:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]
-C:\Users\User\Documents\claude_code\OpenCarnivores\Materials.cpp:54:5: warning: the value returned by this function should not be disregarded; neglecting it may lead to errors [cert-err33-c]

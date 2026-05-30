@@ -1,5 +1,0 @@
-C:\Users\User\Documents\claude_code\OpenCarnivores\XR.cpp:17:10: warning: non-portable path to file '"Hunt.h"'; specified path differs in case from file name on disk [clang-diagnostic-nonportable-include-path]
-C:\Users\User\Documents\claude_code\OpenCarnivores\XR.cpp:53:48: warning: macro replacement list should be enclosed in parentheses [bugprone-macro-parentheses]
-C:\Users\User\Documents\claude_code\OpenCarnivores\XR.cpp:54:48: warning: macro replacement list should be enclosed in parentheses [bugprone-macro-parentheses]
-C:\Users\User\Documents\claude_code\OpenCarnivores\XR.cpp:135:14: warning: enum 'XrFormFactor' uses a larger base type ('int', size: 4 bytes) than necessary for its value set, consider using 'std::uint8_t' (1 byte) as the base type to reduce its size [performance-enum-size]
-C:\Users\User\Documents\claude_code\OpenCarnivores\XR.cpp:139:14: warning: enum 'XrViewConfigurationType' uses a larger base type ('int', size: 4 bytes) than necessary for its value set, consider using 'std::uint8_t' (1 byte) as the base type to reduce its size [performance-enum-size]
