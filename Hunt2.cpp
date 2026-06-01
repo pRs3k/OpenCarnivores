@@ -464,8 +464,7 @@ void DrawScene()
    CreateChRenderList();
 #endif
 
-   // SOURCEPORT: Sky rendered once before per-eye loop in VR mode, skipped in DrawScene
-   if (!XR::StereoActive() && !DBG_NO_SKY) {
+   if (!DBG_NO_SKY) {
        drawSceneStage = "SkyPlane";  RenderSkyPlane();
    }
 
@@ -2053,32 +2052,9 @@ void ProcessGame()
             }
         }
 
-        // SOURCEPORT: save head-center camera position and orientation for sky plane rendering.
-        // The sky should not shift with IPD offset between eyes.
+        // SOURCEPORT: save head-center camera position for room-scale offset.
         g_vrCamCenterX = saveX + g_vrRoomOffsetX;
         g_vrCamCenterZ = saveZ + g_vrRoomOffsetZ;
-
-        // SOURCEPORT: render sky once with consistent head-center position and orientation before per-eye loop.
-        // This ensures both eyes see the sky at the same position instead of per-eye variations.
-        {
-            float savedCameraAlpha = CameraAlpha, savedCameraX = CameraX;
-            float savedCameraBeta = CameraBeta, savedCameraZ = CameraZ;
-            float savedCameraGamma = CameraGamma;
-            CameraAlpha = saveA;
-            CameraBeta = saveB;
-            CameraGamma = 0.f;  // SOURCEPORT: sky should not roll with head tilt
-            CameraX = saveX;
-            CameraZ = saveZ;
-            ca = cosf(CameraAlpha); sa = sinf(CameraAlpha);
-            cb = cosf(CameraBeta);  sb = sinf(CameraBeta);
-            cg = cosf(CameraGamma); sg = sinf(CameraGamma);
-            RenderSkyPlane();
-            CameraAlpha = savedCameraAlpha;
-            CameraBeta = savedCameraBeta;
-            CameraGamma = savedCameraGamma;
-            CameraX = savedCameraX;
-            CameraZ = savedCameraZ;
-        }
 
         for (int xrEye = 0; xrEye < 2; ++xrEye) {
             unsigned int fbo = XR::AcquireEyeImage(xrEye);
@@ -2125,7 +2101,7 @@ void ProcessGame()
             glViewport(0, 0, (GLsizei)WinW, (GLsizei)WinH);
             {
                 float R = (float)WinW, B = (float)WinH;
-                const float N = 0.f, F = 0.25f;
+                const float N = 0.f, F = 1.0f;  // SOURCEPORT: typical depth range for screen-space geometry
                 float proj[16] = {
                      2.f/R, 0.f,    0.f,         0.f,
                      0.f,  -2.f/B,  0.f,         0.f,
@@ -2139,6 +2115,9 @@ void ProcessGame()
             // PhongMap/EnvMap stencil test (mode 2) would accept stale marks from
             // the previous frame's weapon position.
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+            // SOURCEPORT: temporarily disabled - trying RenderSkyPlane instead
+            // extern void RenderSkyShader();
+            // RenderSkyShader();
             // SOURCEPORT: disable alpha writes for the entire eye render.
             // The Meta Quest compositor inspects the FBO alpha channel even in
             // XR_ENVIRONMENT_BLEND_MODE_OPAQUE.  Semi-transparent faces (sfTransparent
@@ -2229,7 +2208,7 @@ void ProcessGame()
         glViewport(0, 0, WinW, WinH);
         {
             float R = (float)WinW, B = (float)WinH;
-            const float N = 0.f, F = 0.25f;
+            const float N = 0.f, F = 1.0f;  // SOURCEPORT: typical depth range for screen-space geometry
             float proj[16] = {
                  2.f/R, 0.f,    0.f,         0.f,
                  0.f,  -2.f/B,  0.f,         0.f,
@@ -2238,39 +2217,9 @@ void ProcessGame()
             };
             d3dUpdateProjection(proj);
         }
-        // SOURCEPORT: Path B world shadow pass — reconstruct world pos in depth shader.
-        extern RendererGL* g_glRenderer;
-        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0 && OptDayNight != 2) {
-            // Compute fresh trig from current camera angles (don't rely on stale globals).
-            float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
-            float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
-            float _cg = cosf(CameraGamma), _sg = sinf(CameraGamma);
-            g_glRenderer->SetCameraWorldUniforms(
-                (float)VideoCX, (float)VideoCY, CameraW, CameraH,
-                CameraX, CameraY, CameraZ,
-                _ca, _sa, _cb, _sb, _cg, _sg);
-            // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
-            // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
-            g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
-            // SOURCEPORT: CSM — render once per cascade (near→far), each with its own
-            // tight ortho frustum.  EndWorldShadowPass on the last cascade restores GL state
-            // and uploads all matrices to the main shader.
-            for (int _c = 0; _c < RendererGL::NUM_SHADOW_CASCADES_PUB; ++_c) {
-                g_glRenderer->BeginWorldShadowPass(_c);
-                DrawScene();
-                g_glRenderer->EndWorldShadowPass(_c);
-            }
-        }
-
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-        DrawScene();
-        // SOURCEPORT: render companion HUD pass with flatscreen camera.
-        // g_vrSecondEyePass gates state-advancing code so firing/timers don't double-advance.
-        g_vrSecondEyePass = true;
-        if (!TrophyMode) if (MapMode) DrawHMap();
-        DrawPostObjects();
-        ShowControlElements();
-        g_vrSecondEyePass = false;
+        // SOURCEPORT: companion window skipped in VR — user is wearing the headset.
+        // Scene, shadows, and HUD all rendered per-eye above; only ShowVideo() below
+        // is needed to drive the SDL swap.
     } else
 #endif
     {

@@ -2315,7 +2315,7 @@ void GetEyeCameraSetup(int eye,
 
     alpha = atan2f(fx, -fz);                                    // yaw
     beta  = asinf(fmaxf(-1.f, fminf(1.f, -fy)));               // pitch (-fy: game y = -sin(β))
-    gamma = asinf(fmaxf(-1.f, fminf(1.f, ry)));                // roll: ry=0 for pure yaw, no spurious tilt
+    gamma = 0.f;  // SOURCEPORT: force zero roll to prevent VR sky tilting
 
     // ── Position: IPD offset from HMD center (metres → game units) ─────────────
     // Use the mid-point between both eye positions as the reference "head centre"
