@@ -6088,7 +6088,22 @@ void RenderSkyPlane()
 #endif
 
    d3dSetTexture(SkyPic, 256, 256);
-   
+
+#ifdef _opengl
+   // SOURCEPORT: apply maximum anisotropic filtering and negative LOD bias to sky texture
+   // for crisp detail at grazing angles and reduced shimmer in VR.
+   if (g_glRenderer) {
+       GLuint texId = hTexture;  // hTexture is set by d3dSetTexture
+       if (texId) {
+           glBindTexture(GL_TEXTURE_2D, texId);
+           // Apply 16x anisotropic filtering for grazing-angle quality
+           glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 16.0f);
+           // Negative LOD bias selects sharper mipmaps, reducing blur and shimmer
+           glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -0.5f);
+       }
+   }
+#endif
+
    nv.x = 512; nv.y = 4024; nv.z=0;   
 
    cb = (float)cos(CameraBeta);
@@ -6207,8 +6222,8 @@ void RenderSkyPlane()
            else                      { tu_r = 0.f; tv_r = 0.f; }
        };
        // SOURCEPORT: subdivided sky strips eliminate UV banding near the horizon.
-       // 128 uniform strips; early-exit before the singularity where q→0.
-       const int N_STRIPS = 128;
+       // VR uses 256 strips for higher resolution; flatscreen uses 128.
+       const int N_STRIPS = XR::StereoActive() ? 256 : 128;
        float tu0l, tv0l, tu0r, tv0r;
        skyUV(0.f, tu0l, tv0l, tu0r, tv0r);
        for (int s = 0; s < N_STRIPS; s++) {
@@ -6225,7 +6240,11 @@ void RenderSkyPlane()
            auto emit = [&](float ssx, float ssy, float tu, float tv) {
                lpVertexG->sx = ssx; lpVertexG->sy = ssy; lpVertexG->sz = 0.0001f; lpVertexG->rhw = 1.f;
                lpVertexG->color = skyVertColor; lpVertexG->specular = 0xFF000000;
-               lpVertexG->tu = (tu + dtt) / 256.f; lpVertexG->tv = (tv - dtt) / 256.f;
+               // SOURCEPORT: higher precision UV calculation using double to reduce shimmer
+               double dtu = (double)tu + (double)dtt;
+               double dtv = (double)tv - (double)dtt;
+               lpVertexG->tu = (float)(dtu / 256.0);
+               lpVertexG->tv = (float)(dtv / 256.0);
                lpVertexG++;
            };
            emit(0.f,         sky0, tu0l, tv0l);

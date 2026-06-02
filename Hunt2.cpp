@@ -2069,13 +2069,15 @@ void ProcessGame()
                 eyeCW, eyeCH, eyeFovkUnused,
                 eyeVCXFrac, eyeVCYFrac);
             // SOURCEPORT: add locomotion body yaw so thumbstick turning rotates the world.
+            // Use natural 6DOF head orientation directly from HMD.
             CameraAlpha = eyeAlpha + g_vrBodyYaw;
             CameraBeta  = eyeBeta;
-            CameraGamma = eyeGamma;  // SOURCEPORT: head tilt (roll)
+            CameraGamma = eyeGamma;  // SOURCEPORT: use natural head roll for proper 6DOF
             ca = cosf(CameraAlpha); sa = sinf(CameraAlpha);
             cb = cosf(CameraBeta);  sb = sinf(CameraBeta);
-            cg = cosf(CameraGamma); sg = sinf(CameraGamma);  // SOURCEPORT: head tilt
-            // SOURCEPORT: add roomscale offset so leaning/crouching/walking moves the camera.
+            cg = cosf(CameraGamma); sg = sinf(CameraGamma);
+            // SOURCEPORT: use natural 6DOF head tracking - eye position offsets translate to camera movement.
+            // When player leans/tilts their head, the camera naturally follows their physical movement.
             CameraX = saveX + eyeDX + g_vrRoomOffsetX;
             CameraY = saveY + eyeDY + g_vrRoomOffsetY;
             CameraZ = saveZ + eyeDZ + g_vrRoomOffsetZ;
