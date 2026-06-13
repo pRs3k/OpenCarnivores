@@ -165,7 +165,41 @@ The real `pack.json` is a flat JSON file with these top-level keys:
   "sharpen_strength": 0.6,
 
   "shadows_mode": "full",
-  "shadow_strength": 0.45
+  "shadow_strength": 0.45,
+
+  "godrays_enabled": true,
+  "godrays_intensity": 0.5,
+  "godrays_density": 0.9,
+  "godrays_decay": 0.96,
+  "godrays_color_r": 1.0,
+  "godrays_color_g": 0.92,
+  "godrays_color_b": 0.75,
+
+  "heightfog_enabled": true,
+  "heightfog_density": 0.00012,
+  "heightfog_falloff": 0.0003,
+  "heightfog_sun_power": 8.0,
+  "heightfog_color_r": 0.65,
+  "heightfog_color_g": 0.72,
+  "heightfog_color_b": 0.80,
+  "heightfog_suncolor_r": 1.0,
+  "heightfog_suncolor_g": 0.85,
+  "heightfog_suncolor_b": 0.65,
+
+  "ssao_enabled": true,
+  "ssao_strength": 0.7,
+  "ssao_radius": 120.0,
+  "ssao_intensity": 1.2,
+  "ssao_debug": false,
+
+  "water_enabled": true,
+  "water_wave_strength": 0.18,
+  "water_clarity": 0.005,
+  "water_deep_color_r": 0.07,
+  "water_deep_color_g": 0.18,
+  "water_deep_color_b": 0.22,
+  "water_foam_width": 50.0,
+  "water_reflectivity": 0.35
 }
 ```
 
@@ -186,12 +220,81 @@ The real `pack.json` is a flat JSON file with these top-level keys:
 | `sharpen_strength` | 0.0–1.5 | Unsharp mask; 0 = off |
 | `shadows_mode` | "none", "full" | World shadow mapping mode |
 | `shadow_strength` | 0.0–1.0 | Shadow darkness; 0.45 is subtle |
+| `godrays_enabled` | true/false | Screen-space sun shafts (crepuscular rays) |
+| `godrays_intensity` | 0.0–2.0 | Overall ray brightness; 0.5 is subtle |
+| `godrays_density` | 0.5–1.0 | Ray march length toward the sun |
+| `godrays_decay` | 0.9–1.0 | Falloff along the ray; higher = longer shafts |
+| `godrays_color_r/g/b` | 0.0–1.0 | Ray tint; defaults to warm sunlight |
+| `heightfog_enabled` | true/false | Volumetric height fog (valley mist + horizon haze) |
+| `heightfog_density` | 0.00005–0.0005 | Fog thickness at the map's lowest terrain |
+| `heightfog_falloff` | 0.0001–0.001 | How fast fog thins with altitude (per GU); 0.0003 ≈ halves every 17 m |
+| `heightfog_sun_power` | 2–32 | Forward-scatter focus; higher = tighter sun glow |
+| `heightfog_color_r/g/b` | 0.0–1.0 | Base fog color; defaults to cool morning haze |
+| `heightfog_suncolor_r/g/b` | 0.0–1.0 | Fog tint when looking toward the sun |
+| `ssao_enabled` | true/false | Screen-space ambient occlusion |
+| `ssao_strength` | 0.0–1.0 | How much AO darkens the scene |
+| `ssao_radius` | 50–300 | Sample radius in world units (120 ≈ 0.9 m) |
+| `ssao_intensity` | 0.5–3.0 | Occlusion gain; higher = darker crevices |
+| `ssao_debug` | true/false | Development aid: render the raw AO buffer instead of the scene |
+| `water_enabled` | true/false | Animated refractive water (GL only; no-op in VR and underwater) |
+| `water_wave_strength` | 0.0–0.6 | Surface normal tilt from waves; 0 = perfectly flat mirror |
+| `water_clarity` | 0.001–0.02 | Absorption per GU of underwater depth; 0.005 ≈ teal at 1 m |
+| `water_deep_color_r/g/b` | 0.0–1.0 | Color of fully absorbed deep water |
+| `water_foam_width` | 0–200 | Shoreline foam band in GU (0 = disabled) |
+| `water_reflectivity` | 0.0–1.0 | Scales Fresnel sky reflection; 0.35 = subtle shimmer |
 
 ### shadows_mode
 
 - `"none"` — no world shadows (original game look)
 - `"full"` — full scene shadow map rendered from sun direction; all geometry (terrain + models) casts and receives shadows
 - `"dinos_only"` — reserved for future use; currently treated as `"full"`
+
+### godrays
+
+Screen-space crepuscular rays: sky pixels around the sun's screen position are
+extracted using the captured depth buffer, then radially blurred toward the sun
+and added to the scene before tone mapping. Rays fade automatically when the sun
+moves behind the camera or off-screen, and are inactive at night and in VR
+(post-processing runs flatscreen-only).
+
+### heightfog
+
+Volumetric height fog: per-pixel world position is reconstructed from the captured
+depth buffer and an exponential height-density fog is integrated analytically along
+each view ray. Fog is anchored at the map's lowest terrain, so it pools in valleys
+and thins with altitude; looking toward the sun tints the fog with `heightfog_suncolor`
+(Mie-style forward scattering). Applied before bloom and tone mapping. Layers on top
+of the game's retro distance fog — keep `heightfog_density` subtle. Inactive at night
+and in VR, like all post effects.
+
+### ssao
+
+Screen-space ambient occlusion, computed entirely from the captured depth buffer
+(no G-buffer needed): surfaces near corners, crevices, dense foliage, and contact
+points darken in proportion to how much surrounding geometry encloses them. Grounds
+dinos and props against the terrain and adds depth inside vegetation. Computed at
+half resolution with a depth-aware blur (no halos around silhouettes), then applied
+to the scene **before** height fog so mist is not darkened. `ssao_radius` is in
+world units — larger values give broad soft shading, smaller values give tight
+contact shadows.
+
+### water
+
+Animated refractive water surface that replaces the flat retro water texture on the
+GL path. The scene and depth are captured just before the water batch starts so
+each pixel can refract the world beneath it and compute the underwater path length
+for colour absorption. Refraction distortion is depth-scaled — shallow areas near
+the shore stay still (the sandy bottom is clearly visible), while deeper water
+shimmers. Schlick Fresnel adds a subtle sky reflection and sun glint. A narrow
+shoreline foam band can be enabled via `water_foam_width`.
+
+The water material is automatically disabled underwater, in VR stereo mode, and on
+the D3D path — the original retro look is preserved in those contexts.
+
+**Shadows:** the CSM shadow is intentionally not applied directly to the water
+surface. Tree and terrain shadows are already visible through the refracted scene
+capture; applying CSM again would double-count the darkness and cause
+precision-boundary flicker on the flat water geometry.
 
 ---
 

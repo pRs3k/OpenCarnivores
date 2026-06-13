@@ -682,6 +682,18 @@ void RendererGL::CompileShaders() {
     m_locCascadeBias    = glGetUniformLocation(m_shaderProgram, "uCascadeBias");
     m_locCascadeSplits  = glGetUniformLocation(m_shaderProgram, "uCascadeSplits");
 
+    // SOURCEPORT: water material uniform locations
+    m_locWaterMode       = glGetUniformLocation(m_shaderProgram, "uWaterMode");
+    m_locWaterTime       = glGetUniformLocation(m_shaderProgram, "uWaterTime");
+    m_locWaterScene      = glGetUniformLocation(m_shaderProgram, "uWaterScene");
+    m_locWaterDepth      = glGetUniformLocation(m_shaderProgram, "uWaterDepth");
+    m_locWaterScreenSize = glGetUniformLocation(m_shaderProgram, "uWaterScreenSize");
+    m_locWaterWave       = glGetUniformLocation(m_shaderProgram, "uWaterWave");
+    m_locWaterClarity    = glGetUniformLocation(m_shaderProgram, "uWaterClarity");
+    m_locWaterDeepColor  = glGetUniformLocation(m_shaderProgram, "uWaterDeepColor");
+    m_locWaterFoamWidth  = glGetUniformLocation(m_shaderProgram, "uWaterFoamWidth");
+    m_locWaterReflect    = glGetUniformLocation(m_shaderProgram, "uWaterReflect");
+
     // SOURCEPORT: screen-space fog uniform locations
     m_locFogYBeginGU  = glGetUniformLocation(m_shaderProgram, "uFogYBeginGU");
     m_locFogTransp    = glGetUniformLocation(m_shaderProgram, "uFogTransp");
@@ -824,20 +836,20 @@ void RendererGL::CreateBuffers() {
     // location 1: float depth (sz)
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(RenderVertex),
-                          (void*)offsetof(RenderVertex, sz));
+                          (void*)offsetof(RenderVertex, sz)); // NOLINT(performance-no-int-to-ptr)
     // location 2: vec4 color — D3D stores as ARGB (0xAARRGGBB), in memory [BB,GG,RR,AA].
     // Use GL_BGRA so OpenGL remaps bytes to (R=RR, G=GG, B=BB, A=AA) correctly.
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, GL_BGRA, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(RenderVertex),
-                          (void*)offsetof(RenderVertex, color));
+                          (void*)offsetof(RenderVertex, color)); // NOLINT(performance-no-int-to-ptr)
     // location 3: vec4 specular — same ARGB layout
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, GL_BGRA, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(RenderVertex),
-                          (void*)offsetof(RenderVertex, specular));
+                          (void*)offsetof(RenderVertex, specular)); // NOLINT(performance-no-int-to-ptr)
     // location 4: vec2 texcoord (tu, tv)
     glEnableVertexAttribArray(4);
     glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(RenderVertex),
-                          (void*)offsetof(RenderVertex, tu));
+                          (void*)offsetof(RenderVertex, tu)); // NOLINT(performance-no-int-to-ptr)
     glBindVertexArray(0);
 
     // SOURCEPORT: world-space shadow VAO/VBO (layout: vec3 pos + vec2 uv)
@@ -848,7 +860,7 @@ void RendererGL::CreateBuffers() {
     glBufferData(GL_ARRAY_BUFFER, MAX_WS_SHADOW_VERTS * sizeof(WSShadowVert), nullptr, GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(WSShadowVert), nullptr);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(WSShadowVert), (void*)(3*sizeof(float)));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(WSShadowVert), (void*)(3*sizeof(float))); // NOLINT(performance-no-int-to-ptr)
     glEnableVertexAttribArray(1);
     glBindVertexArray(0);
 }
@@ -962,7 +974,8 @@ void RendererGL::EndFrame() {
 // Must be called after all 3D geometry is drawn but BEFORE any HUD/UI draws so that
 // compass, wind meter, health bar, etc. are composited clean on top.
 void RendererGL::ApplyPostProcess() {
-    if (m_postOverlayEnabled || m_toneMappingMode != 0 || m_cgEnabled) {
+    if (m_postOverlayEnabled || m_toneMappingMode != 0 || m_cgEnabled || m_godRaysEnabled
+        || m_heightFogEnabled || m_ssaoEnabled) {
         RunPostOverlay();
     }
 }
@@ -2166,10 +2179,69 @@ void RendererGL::SubmitWorldSpaceShadowTriangle(
         FlushWorldSpaceShadow();
     if (m_wsShadowCount + 3 > MAX_WS_SHADOW_VERTS)
         FlushWorldSpaceShadow();
+    // SOURCEPORT: FlushWorldSpaceShadow early-returns without draining when the
+    // depth program/VAO is unavailable — drop the triangle rather than overflow.
+    if (m_wsShadowCount + 3 > MAX_WS_SHADOW_VERTS)
+        return;
     m_wsAlphaTest = alphaTest;
     m_wsShadowBuffer[m_wsShadowCount++] = {x0, y0, z0, u0, v0};
     m_wsShadowBuffer[m_wsShadowCount++] = {x1, y1, z1, u1, v1};
     m_wsShadowBuffer[m_wsShadowCount++] = {x2, y2, z2, u2, v2};
+}
+
+void RendererGL::BeginWaterPass(bool allow, float timeSec) {
+    m_waterPassActive = false;
+    if (!allow || !m_waterFXEnabled || m_shadowPassActive || !m_shaderProgram) return;
+
+    // Capture the fully rendered scene (everything under/behind the water draws
+    // before RenderWater) from the currently bound framebuffer at viewport size.
+    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+    if (vp[2] <= 0 || vp[3] <= 0) return;
+
+    if (!m_waterSceneTex) {
+        glGenTextures(1, &m_waterSceneTex);
+        glBindTexture(GL_TEXTURE_2D, m_waterSceneTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    if (!m_waterDepthTex) {
+        glGenTextures(1, &m_waterDepthTex);
+        glBindTexture(GL_TEXTURE_2D, m_waterDepthTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    // glCopyTexImage2D respecifies the texture each call — window resizes are free.
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_2D, m_waterSceneTex);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, vp[0], vp[1], vp[2], vp[3], 0);
+    glActiveTexture(GL_TEXTURE6);
+    glBindTexture(GL_TEXTURE_2D, m_waterDepthTex);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, vp[0], vp[1], vp[2], vp[3], 0);
+    glActiveTexture(GL_TEXTURE0);
+
+    glUseProgram(m_shaderProgram);
+    glUniform1i(m_locWaterMode, 1);
+    glUniform1f(m_locWaterTime, timeSec);
+    glUniform1i(m_locWaterScene, 5);
+    glUniform1i(m_locWaterDepth, 6);
+    glUniform2f(m_locWaterScreenSize, (float)vp[2], (float)vp[3]);
+    glUniform1f(m_locWaterWave,      m_waterWaveStrength);
+    glUniform1f(m_locWaterClarity,   m_waterClarity);
+    glUniform3fv(m_locWaterDeepColor, 1, m_waterDeepColor);
+    glUniform1f(m_locWaterFoamWidth, m_waterFoamWidth);
+    glUniform1f(m_locWaterReflect,   m_waterReflectivity);
+    m_waterPassActive = true;
+}
+
+void RendererGL::EndWaterPass() {
+    if (!m_waterPassActive) return;
+    glUseProgram(m_shaderProgram);
+    glUniform1i(m_locWaterMode, 0);
+    m_waterPassActive = false;
 }
 
 void RendererGL::SetSunDirection(float x, float y, float z) {
@@ -2379,6 +2451,278 @@ void main() {
 }
 )";
 
+    // ── God ray pass shaders ──────────────────────────────────────────────────
+    // SOURCEPORT: screen-space crepuscular rays (Mitchell radial blur technique).
+    // Mask pass: sky pixels near the sun become the light source. The engine uses
+    // reversed depth (clear=0, sky plane writes sz≈0.0001, geometry writes -16/cam_z
+    // which is ≥ ~0.001 even at maximum view range), so depth < 0.0004 ⟺ sky.
+    static const char* FS_GODRAY_MASK = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uDepth;
+uniform vec2  uSunPos;    // sun position in UV space
+uniform vec3  uSunColor;
+uniform float uAspect;    // width/height for circular falloff
+void main() {
+    float d = texture(uDepth, vTexCoord).r;
+    // SOURCEPORT: hairline terrain cracks read as sky depth; without this fill the
+    // radial blur smears each crack row into a long fading streak whenever the sun
+    // sits low — same selective crack test as the height fog pass.
+    if (d < 0.0004) {
+        vec2 tx = 1.0 / vec2(textureSize(uDepth, 0));
+        float dl = texture(uDepth, vTexCoord - vec2(tx.x, 0.0)).r;
+        float dr = texture(uDepth, vTexCoord + vec2(tx.x, 0.0)).r;
+        float du = texture(uDepth, vTexCoord + vec2(0.0, tx.y)).r;
+        float dd = texture(uDepth, vTexCoord - vec2(0.0, tx.y)).r;
+        if (max(min(dl, dr), min(du, dd)) > 0.0004) d = 1.0;  // crack ⟹ solid, not sky
+    }
+    float sky = (d < 0.0004) ? 1.0 : 0.0;
+    vec2 dv = (vTexCoord - uSunPos) * vec2(uAspect, 1.0);
+    float falloff = max(1.0 - dot(dv, dv) * 2.0, 0.0);
+    FragColor = vec4(uSunColor * (sky * falloff * falloff), 1.0);
+}
+)";
+
+    // Radial blur pass: march each pixel toward the sun accumulating masked light.
+    static const char* FS_GODRAY_BLUR = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uTex;
+uniform vec2  uSunPos;
+uniform float uDensity;   // 0..1 fraction of the pixel→sun distance to march
+uniform float uDecay;     // per-sample falloff
+void main() {
+    const int SAMPLES = 48;
+    vec2 delta = (vTexCoord - uSunPos) * (uDensity / float(SAMPLES));
+    vec2 p = vTexCoord;
+    float illum = 1.0;
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < SAMPLES; ++i) {
+        p -= delta;
+        acc += texture(uTex, p).rgb * illum;
+        illum *= uDecay;
+    }
+    FragColor = vec4(acc * (2.0 / float(SAMPLES)), 1.0);
+}
+)";
+
+    // ── SSAO shaders ──────────────────────────────────────────────────────────
+    // SOURCEPORT: Alchemy-style screen-space ambient occlusion, depth-only (no
+    // G-buffer): view-space position reconstructed from the captured depth, normal
+    // from position derivatives, 12-sample golden-angle spiral disk with a
+    // per-pixel random rotation. World-space radius keeps the AO scale consistent
+    // at any distance. Sky pixels return 1.0 (unoccluded).
+    static const char* FS_SSAO = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uDepth;
+uniform vec2  uScreenSize;   // full-res pixels
+uniform float uVideoCX;
+uniform float uVideoCY;
+uniform float uCameraW;
+uniform float uCameraH;
+uniform float uRadius;       // world-space sample radius (GU)
+uniform float uIntensity;    // occlusion gain
+
+vec3 viewPos(vec2 uv) {
+    // SOURCEPORT: deterministic full-res texel selection. This half-res pass's
+    // pixel centers land exactly on full-res texel boundaries, where NEAREST
+    // rounding (and a naive floor(uv*size) snap) flips on float noise — per-row
+    // it made dark horizontal lines on receding ground, per-column it striped
+    // vertical silhouettes. Deriving the half-res cell index first (floor at
+    // i+0.5, never boundary-ambiguous) and mapping to a fixed texel of the 2×2
+    // block makes ray and depth agree on the same texel, deterministically.
+    vec2 fs = vec2(textureSize(uDepth, 0));
+    uv = (floor(uv * fs * 0.5) * 2.0 + 0.5) / fs;
+    float d = texture(uDepth, uv).r;
+    float z = 16.0 / max(d, 1e-6);
+    vec2 px = vec2(uv.x * uScreenSize.x, (1.0 - uv.y) * uScreenSize.y);
+    return vec3((px.x - uVideoCX) * z / uCameraW,
+                (uVideoCY - px.y) * z / uCameraH,
+                -z);
+}
+
+// SOURCEPORT: interleaved gradient noise (Jimenez 2014). The classic
+// fract(sin(dot))·43758 hash degenerates into structured horizontal bands at
+// large pixel coords (GPU sin precision), which correlated the kernel rotation
+// along screen rows and surfaced as camera-locked dash lines in the AO.
+float hash(vec2 p) { return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y)); }
+
+void main() {
+    float d0 = texture(uDepth, vTexCoord).r;
+    if (d0 < 0.0004) { FragColor = vec4(1.0); return; }   // sky: unoccluded
+    vec3 P = viewPos(vTexCoord);
+    // SOURCEPORT: robust normal reconstruction — dFdx/dFdy straddle depth
+    // discontinuities (hairline terrain cracks at tile rows), giving garbage
+    // normals for the pixels alongside each crack and rows of false-occlusion
+    // dashes that track the camera. Instead, build each tangent from whichever
+    // side has the smaller depth step — always the same surface, never across
+    // a crack or silhouette edge. Tap stride = one HALF-res texel (2 full-res):
+    // depth reads quantize to 2×2 blocks, so a 1-texel step could land in the
+    // same block (zero tangent → NaN normal).
+    vec2 fts = 2.0 / uScreenSize;
+    vec3 Pr = viewPos(vTexCoord + vec2(fts.x, 0.0));
+    vec3 Pl = viewPos(vTexCoord - vec2(fts.x, 0.0));
+    vec3 Pu = viewPos(vTexCoord + vec2(0.0, fts.y));
+    vec3 Pd = viewPos(vTexCoord - vec2(0.0, fts.y));
+    vec3 ddx = (abs(Pr.z - P.z) < abs(P.z - Pl.z)) ? (Pr - P) : (P - Pl);
+    vec3 ddy = (abs(Pu.z - P.z) < abs(P.z - Pd.z)) ? (Pu - P) : (P - Pd);
+    vec3 N = normalize(cross(ddx, ddy));
+    if (dot(N, -P) < 0.0) N = -N;        // ensure normal faces the camera
+    float z = -P.z;
+    // World radius → screen pixels at this depth, clamped to bound texture-cache
+    // cost up close and keep at least a couple of pixels far away.
+    float rpx = clamp(uRadius * uCameraW / z, 2.0, 80.0);
+    vec2 ruv = vec2(rpx / uScreenSize.x, rpx * (uCameraH / uCameraW) / uScreenSize.y);
+    float angle = hash(gl_FragCoord.xy) * 6.2831853;
+    const int KERNEL = 12;
+    float occ = 0.0;
+    for (int i = 0; i < KERNEL; i++) {
+        float a = angle + float(i) * 2.3999632;   // golden angle
+        float rr = (float(i) + 0.7) / float(KERNEL);
+        vec2 suv = vTexCoord + vec2(cos(a), sin(a)) * ruv * rr;
+        vec3 S = viewPos(suv);
+        vec3 v = S - P;
+        float vv = dot(v, v);
+        float vn = dot(v, N);
+        // Positive occlusion when the sample sits above the surface plane (minus a
+        // depth-proportional bias against self-occlusion), with squared-distance
+        // falloff so distant geometry contributes nothing — built-in range check.
+        occ += max(0.0, vn - 0.02 * z) / (vv + uRadius * uRadius * 0.01);
+    }
+    float ao = 1.0 - clamp(occ * uIntensity * uRadius / float(KERNEL), 0.0, 1.0);
+    FragColor = vec4(vec3(ao), 1.0);
+}
+)";
+
+    // SOURCEPORT: depth-aware bilateral 5×5 blur — smooths SSAO sampling noise
+    // without bleeding occlusion across depth edges (no halos around silhouettes).
+    // Gradient-aware: on ground receding from the camera, depth between VERTICAL
+    // neighbours legitimately changes by hundreds of GU per texel; a naive
+    // |sd - cd| test rejects them, degenerating the blur to horizontal-only and
+    // smearing AO noise into camera-locked horizontal dashes. Instead, predict
+    // each tap's depth from the local gradient and weight by the deviation from
+    // that prediction — continuous slopes blur fully, discontinuities still reject.
+    static const char* FS_SSAO_BLUR = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uAO;       // half-res raw AO
+uniform sampler2D uDepth;    // full-res depth
+uniform vec2 uTexel;         // half-res texel size
+float lz(vec2 uv) {
+    // SOURCEPORT: same deterministic texel selection as the AO pass — half-res
+    // pixel centers sit on full-res texel boundaries where rounding flips on
+    // float noise; pick a fixed texel of each 2×2 block via the half-res cell.
+    vec2 fs = vec2(textureSize(uDepth, 0));
+    uv = (floor(uv * fs * 0.5) * 2.0 + 0.5) / fs;
+    return 16.0 / max(texture(uDepth, uv).r, 1e-6);
+}
+void main() {
+    float cd = lz(vTexCoord);
+    // Local depth gradient per texel, clamped: a discontinuity corrupts the
+    // gradient estimate, but real surface slope rarely exceeds 25% of depth/texel.
+    float gx = (lz(vTexCoord + vec2(uTexel.x, 0.0)) - lz(vTexCoord - vec2(uTexel.x, 0.0))) * 0.5;
+    float gy = (lz(vTexCoord + vec2(0.0, uTexel.y)) - lz(vTexCoord - vec2(0.0, uTexel.y))) * 0.5;
+    float gcap = cd * 0.25;
+    vec2 grad = clamp(vec2(gx, gy), vec2(-gcap), vec2(gcap));
+    float acc = 0.0, wsum = 0.0;
+    for (int dy = -2; dy <= 2; dy++)
+    for (int dx = -2; dx <= 2; dx++) {
+        vec2 suv = vTexCoord + vec2(float(dx), float(dy)) * uTexel;
+        float sd = lz(suv);
+        float expected = cd + grad.x * float(dx) + grad.y * float(dy);
+        float w = exp(-float(dx*dx + dy*dy) * 0.12)
+                * exp(-abs(sd - expected) / (cd * 0.03 + 16.0));
+        acc += texture(uAO, suv).r * w;
+        wsum += w;
+    }
+    FragColor = vec4(vec3(acc / max(wsum, 1e-5)), 1.0);
+}
+)";
+
+    // ── Volumetric height fog shader ──────────────────────────────────────────
+    // SOURCEPORT: depth-aware exponential height fog with sun forward scattering.
+    // World position is reconstructed per pixel from the captured depth using the
+    // same camera convention the shadow depth shader inverts (sz = -16/cam_z,
+    // screen → camera via VideoCX/CY + CameraW/H, camera → world via uCamToWorld).
+    // Fog density: rho(y) = density * exp(-(y - anchor) * falloff); the integral
+    // along the view ray has the closed form used below (Quilez-style analytic fog).
+    static const char* FS_HEIGHTFOG = R"(
+#version 330 core
+in vec2 vTexCoord;
+out vec4 FragColor;
+uniform sampler2D uScene;
+uniform sampler2D uDepth;
+uniform vec2  uScreenSize;
+uniform float uVideoCX;
+uniform float uVideoCY;
+uniform float uCameraW;
+uniform float uCameraH;
+uniform mat3  uCamToWorld;
+uniform float uCameraY;
+uniform vec3  uSunDir;
+uniform float uDensity;    // extinction per GU at anchor height
+uniform float uFalloff;    // height falloff per GU
+uniform float uAnchorY;    // fog reference height (lowest terrain, GU)
+uniform float uSkyDist;    // ray length used for sky pixels (GU)
+uniform vec3  uFogColor;
+uniform vec3  uSunColor;
+uniform float uSunPower;
+uniform sampler2D uAO;       // half-res blurred SSAO (1.0 = unoccluded)
+uniform float uAOStrength;   // 0 = SSAO inactive this frame
+uniform float uAODebug;      // 1 = visualize the raw AO buffer
+void main() {
+    vec3 scene = texture(uScene, vTexCoord).rgb;
+    // SOURCEPORT: AO darkens the scene BEFORE fog is mixed in — occlusion is a
+    // surface property; the fog scattering above it stays unoccluded.
+    if (uAOStrength > 0.0) {
+        float ao = texture(uAO, vTexCoord).r;
+        // SOURCEPORT: ssao_debug pack param — show the blurred AO buffer directly
+        // so sampling artifacts can be inspected without scene texture masking.
+        if (uAODebug > 0.5) { FragColor = vec4(vec3(ao), 1.0); return; }
+        scene *= mix(1.0, ao, uAOStrength);
+    }
+    float d = texture(uDepth, vTexCoord).r;
+    // SOURCEPORT: seal hairline terrain cracks. T-junctions at tile/LOD seams leave
+    // 1px gaps where the sky depth shows through between two ground rows; fogging
+    // those pixels at sky distance draws faint dashes that track the camera. If a
+    // sky-depth pixel has solid geometry on BOTH sides of an axis it is a crack,
+    // not real sky — fill with the farther neighbour. True sky is unaffected: at
+    // the horizon the pixels alongside are sky too, so no pair qualifies.
+    if (d < 0.0004) {
+        vec2 tx = 1.0 / uScreenSize;
+        float dl = texture(uDepth, vTexCoord - vec2(tx.x, 0.0)).r;
+        float dr = texture(uDepth, vTexCoord + vec2(tx.x, 0.0)).r;
+        float du = texture(uDepth, vTexCoord + vec2(0.0, tx.y)).r;
+        float dd = texture(uDepth, vTexCoord - vec2(0.0, tx.y)).r;
+        float fill = max(min(dl, dr), min(du, dd));
+        if (fill > 0.0004) d = fill;
+    }
+    // Reversed depth: sky plane writes ~0.0001 → treat as a long ray; geometry: cam_z = -16/d
+    float dist = (d < 0.0004) ? uSkyDist : 16.0 / d;
+    vec2 px = vec2(vTexCoord.x * uScreenSize.x, (1.0 - vTexCoord.y) * uScreenSize.y);
+    vec3 camVec = vec3((px.x - uVideoCX) * dist / uCameraW,
+                       (uVideoCY - px.y) * dist / uCameraH,
+                       -dist);
+    vec3 worldVec = uCamToWorld * camVec;
+    float t = length(worldVec);
+    vec3 rd = worldVec / t;
+    // Analytic integral of exponential height density along the ray.
+    float by = uFalloff * rd.y;
+    float integ = (abs(by) > 1e-7) ? (1.0 - exp(clamp(-t * by, -60.0, 60.0))) / by : t;
+    float optical = uDensity * exp(-(uCameraY - uAnchorY) * uFalloff) * integ;
+    float f = 1.0 - exp(-max(optical, 0.0));
+    // Mie-style forward scattering: fog glows warm when looking toward the sun.
+    float sunAmt = pow(max(dot(rd, uSunDir), 0.0), uSunPower);
+    vec3 fogCol = mix(uFogColor, uSunColor, sunAmt);
+    FragColor = vec4(mix(scene, fogCol, f), 1.0);
+}
+)";
+
     // Pass 3: composite — bloom + tone mapping in one draw call
     static const char* FS_COMPOSITE = R"(
 #version 330 core
@@ -2386,6 +2730,9 @@ in vec2 vTexCoord;
 out vec4 FragColor;
 uniform sampler2D uScene;
 uniform sampler2D uBloom;
+uniform sampler2D uGodRays;
+uniform float uGodRayIntensity;  // 0 = god rays inactive this frame
+uniform float uAODebug;          // 1 = pass the scene (AO visualization) through untouched
 uniform float uIntensity;
 uniform int   uToneMap;      // 0=off, 1=ACES, 2=Reinhard
 uniform float uExposure;     // pre-exposure multiplier (1.0 = neutral)
@@ -2411,6 +2758,9 @@ vec3 Reinhard(vec3 x) {
 
 void main() {
     vec3 scene = texture(uScene, vTexCoord).rgb;
+    // SOURCEPORT: AO debug — the scene pass already wrote the AO buffer as the
+    // scene; bypass sharpen/bloom/god rays/tonemap so the view is truly raw AO.
+    if (uAODebug > 0.5) { FragColor = vec4(scene, 1.0); return; }
     // SOURCEPORT: unsharp mask sharpen — applied to scene before bloom/tonemapping.
     // Samples 4-tap neighborhood average, adds the high-frequency difference back.
     // textureSize avoids needing a resolution uniform.
@@ -2420,13 +2770,25 @@ void main() {
                      texture(uScene, vTexCoord + vec2(-ts.x, 0)).rgb +
                      texture(uScene, vTexCoord + vec2(0,  ts.y)).rgb +
                      texture(uScene, vTexCoord + vec2(0, -ts.y)).rgb) * 0.25;
-        scene = clamp(scene + (scene - blur) * uSharpen, 0.0, 1.0);
+        vec3 hf = scene - blur;
+        // SOURCEPORT: coring — fade the unsharp mask out for sub-perceptual deltas
+        // (≲2/255). Without it, faint derivative kinks in smooth fog gradients along
+        // terrain vertex rows get etched into visible camera-tracking dash lines;
+        // real texture and silhouette edges are far above this threshold.
+        float amp = max(max(abs(hf.r), abs(hf.g)), abs(hf.b));
+        float gate = smoothstep(0.004, 0.012, amp);
+        scene = clamp(scene + hf * (uSharpen * gate), 0.0, 1.0);
     }
     vec3 bloom = texture(uBloom, vTexCoord).rgb;
     // SOURCEPORT: additive bloom — brights contribute a soft glow additively.
     // (1-scene) weighting prevents already-saturated pixels from over-clipping.
     // Applied before tone mapping so ACES/Reinhard compresses the bloom highlights.
     vec3 result = scene + bloom * uIntensity * (1.0 - scene);
+    // SOURCEPORT: god rays added before exposure/tone mapping so ACES compresses the
+    // shaft highlights instead of letting them clip to white.
+    if (uGodRayIntensity > 0.0) {
+        result += texture(uGodRays, vTexCoord).rgb * uGodRayIntensity;
+    }
     // SOURCEPORT: tone mapping applied after bloom composite.
     result *= uExposure;
     if      (uToneMap == 1) result = ACESFilmic(result);
@@ -2442,6 +2804,11 @@ void main() {
         // Lift/gain: per-channel shadow offset + highlight scale
         result = clamp(result * uGain + uLift, 0.0, 1.0);
     }
+    // SOURCEPORT: ±0.5 LSB dither — breaks up 8-bit banding on smooth gradients
+    // (fog, sky, bloom) at the final quantization to the backbuffer. Interleaved
+    // gradient noise: the sin-dot hash bands at large pixel coords.
+    float dn = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
+    result += (dn - 0.5) / 255.0;
     FragColor = vec4(result, 1.0);
 }
 )";
@@ -2449,9 +2816,18 @@ void main() {
     // ── One-time initialisation ───────────────────────────────────────────────
     static GLuint s_vao = 0, s_vbo = 0;
     static GLuint s_progThreshold = 0, s_progBlur = 0, s_progComposite = 0;
+    static GLuint s_progGRMask = 0, s_progGRBlur = 0;
+    static GLuint s_progHeightFog = 0;
+    static GLuint s_progSSAO = 0, s_progSSAOBlur = 0;
     static GLuint s_sceneTex = 0;
+    static GLuint s_depthTex = 0;          // SOURCEPORT: scene depth capture for depth-aware effects
     static GLuint s_fboA = 0, s_texA = 0;  // half-res ping
     static GLuint s_fboB = 0, s_texB = 0;  // half-res pong (second pass uses same pair)
+    static GLuint s_fboC = 0, s_texC = 0;  // half-res god ray mask
+    static GLuint s_fboD = 0, s_texD = 0;  // half-res god ray blur result
+    static GLuint s_fboE = 0, s_texE = 0;  // half-res raw SSAO
+    static GLuint s_fboF = 0, s_texF = 0;  // half-res blurred SSAO
+    static GLuint s_fogFBO = 0, s_fogTex = 0;  // full-res fogged scene
     static int    s_bloomW = 0, s_bloomH = 0;
     static bool   s_ready = false;
     // SOURCEPORT: cached uniform locations for all three post-process programs.
@@ -2462,6 +2838,18 @@ void main() {
     static GLint s_locCmpToneMap = -1,s_locCmpExposure = -1, s_locCmpCGEnabled = -1;
     static GLint s_locCmpSat = -1,    s_locCmpContrast = -1;
     static GLint s_locCmpLift = -1,   s_locCmpGain = -1,     s_locCmpSharpen = -1;
+    static GLint s_locCmpGodRays = -1, s_locCmpGRIntensity = -1, s_locCmpAODebug = -1;
+    static GLint s_locGRMaskDepth = -1, s_locGRMaskSunPos = -1, s_locGRMaskColor = -1, s_locGRMaskAspect = -1;
+    static GLint s_locGRBlurTex = -1,   s_locGRBlurSunPos = -1, s_locGRBlurDensity = -1, s_locGRBlurDecay = -1;
+    static GLint s_locHFScene = -1, s_locHFDepth = -1, s_locHFScreenSize = -1;
+    static GLint s_locHFVCX = -1, s_locHFVCY = -1, s_locHFCW = -1, s_locHFCH = -1;
+    static GLint s_locHFC2W = -1, s_locHFCamY = -1, s_locHFSunDir = -1;
+    static GLint s_locHFDensity = -1, s_locHFFalloff = -1, s_locHFAnchorY = -1, s_locHFSkyDist = -1;
+    static GLint s_locHFColor = -1, s_locHFSunColor = -1, s_locHFSunPower = -1;
+    static GLint s_locHFAO = -1, s_locHFAOStrength = -1, s_locHFAODebug = -1;
+    static GLint s_locAODepth = -1, s_locAOScreenSize = -1, s_locAOVCX = -1, s_locAOVCY = -1;
+    static GLint s_locAOCW = -1, s_locAOCH = -1, s_locAORadius = -1, s_locAOIntensity = -1;
+    static GLint s_locAOBlurAO = -1, s_locAOBlurDepth = -1, s_locAOBlurTexel = -1;
     // SOURCEPORT: number of H+V blur iterations; 2 gives a ~5-texel effective kernel
     // at half-res (≈10 screen pixels), producing a soft glow visible at typical game distances.
     static constexpr int BLUR_ITERATIONS = 2;
@@ -2502,6 +2890,11 @@ void main() {
         s_progThreshold = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_THRESHOLD));
         s_progBlur       = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_BLUR));
         s_progComposite  = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_COMPOSITE));
+        s_progGRMask     = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_GODRAY_MASK));
+        s_progGRBlur     = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_GODRAY_BLUR));
+        s_progHeightFog  = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_HEIGHTFOG));
+        s_progSSAO       = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_SSAO));
+        s_progSSAOBlur   = link(compile(GL_VERTEX_SHADER, VS), compile(GL_FRAGMENT_SHADER, FS_SSAO_BLUR));
 
         // Scene copy texture (full-res)
         glGenTextures(1, &s_sceneTex);
@@ -2511,7 +2904,17 @@ void main() {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-        s_ready = s_progThreshold && s_progBlur && s_progComposite;
+        // SOURCEPORT: depth copy texture (full-res) — captured from the backbuffer each
+        // frame god rays are active. NEAREST filtering: depth values must not be blended.
+        glGenTextures(1, &s_depthTex);
+        glBindTexture(GL_TEXTURE_2D, s_depthTex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        s_ready = s_progThreshold && s_progBlur && s_progComposite && s_progGRMask && s_progGRBlur
+               && s_progHeightFog && s_progSSAO && s_progSSAOBlur;
         if (s_ready) {
             s_locThrTex       = glGetUniformLocation(s_progThreshold, "uTex");
             s_locThrThreshold = glGetUniformLocation(s_progThreshold, "uThreshold");
@@ -2528,6 +2931,48 @@ void main() {
             s_locCmpLift      = glGetUniformLocation(s_progComposite,  "uLift");
             s_locCmpGain      = glGetUniformLocation(s_progComposite,  "uGain");
             s_locCmpSharpen   = glGetUniformLocation(s_progComposite,  "uSharpen");
+            s_locCmpGodRays     = glGetUniformLocation(s_progComposite, "uGodRays");
+            s_locCmpGRIntensity = glGetUniformLocation(s_progComposite, "uGodRayIntensity");
+            s_locCmpAODebug     = glGetUniformLocation(s_progComposite, "uAODebug");
+            s_locGRMaskDepth  = glGetUniformLocation(s_progGRMask, "uDepth");
+            s_locGRMaskSunPos = glGetUniformLocation(s_progGRMask, "uSunPos");
+            s_locGRMaskColor  = glGetUniformLocation(s_progGRMask, "uSunColor");
+            s_locGRMaskAspect = glGetUniformLocation(s_progGRMask, "uAspect");
+            s_locGRBlurTex     = glGetUniformLocation(s_progGRBlur, "uTex");
+            s_locGRBlurSunPos  = glGetUniformLocation(s_progGRBlur, "uSunPos");
+            s_locGRBlurDensity = glGetUniformLocation(s_progGRBlur, "uDensity");
+            s_locGRBlurDecay   = glGetUniformLocation(s_progGRBlur, "uDecay");
+            s_locHFScene      = glGetUniformLocation(s_progHeightFog, "uScene");
+            s_locHFDepth      = glGetUniformLocation(s_progHeightFog, "uDepth");
+            s_locHFScreenSize = glGetUniformLocation(s_progHeightFog, "uScreenSize");
+            s_locHFVCX        = glGetUniformLocation(s_progHeightFog, "uVideoCX");
+            s_locHFVCY        = glGetUniformLocation(s_progHeightFog, "uVideoCY");
+            s_locHFCW         = glGetUniformLocation(s_progHeightFog, "uCameraW");
+            s_locHFCH         = glGetUniformLocation(s_progHeightFog, "uCameraH");
+            s_locHFC2W        = glGetUniformLocation(s_progHeightFog, "uCamToWorld");
+            s_locHFCamY       = glGetUniformLocation(s_progHeightFog, "uCameraY");
+            s_locHFSunDir     = glGetUniformLocation(s_progHeightFog, "uSunDir");
+            s_locHFDensity    = glGetUniformLocation(s_progHeightFog, "uDensity");
+            s_locHFFalloff    = glGetUniformLocation(s_progHeightFog, "uFalloff");
+            s_locHFAnchorY    = glGetUniformLocation(s_progHeightFog, "uAnchorY");
+            s_locHFSkyDist    = glGetUniformLocation(s_progHeightFog, "uSkyDist");
+            s_locHFColor      = glGetUniformLocation(s_progHeightFog, "uFogColor");
+            s_locHFSunColor   = glGetUniformLocation(s_progHeightFog, "uSunColor");
+            s_locHFSunPower   = glGetUniformLocation(s_progHeightFog, "uSunPower");
+            s_locHFAO         = glGetUniformLocation(s_progHeightFog, "uAO");
+            s_locHFAOStrength = glGetUniformLocation(s_progHeightFog, "uAOStrength");
+            s_locHFAODebug    = glGetUniformLocation(s_progHeightFog, "uAODebug");
+            s_locAODepth      = glGetUniformLocation(s_progSSAO, "uDepth");
+            s_locAOScreenSize = glGetUniformLocation(s_progSSAO, "uScreenSize");
+            s_locAOVCX        = glGetUniformLocation(s_progSSAO, "uVideoCX");
+            s_locAOVCY        = glGetUniformLocation(s_progSSAO, "uVideoCY");
+            s_locAOCW         = glGetUniformLocation(s_progSSAO, "uCameraW");
+            s_locAOCH         = glGetUniformLocation(s_progSSAO, "uCameraH");
+            s_locAORadius     = glGetUniformLocation(s_progSSAO, "uRadius");
+            s_locAOIntensity  = glGetUniformLocation(s_progSSAO, "uIntensity");
+            s_locAOBlurAO     = glGetUniformLocation(s_progSSAOBlur, "uAO");
+            s_locAOBlurDepth  = glGetUniformLocation(s_progSSAOBlur, "uDepth");
+            s_locAOBlurTexel  = glGetUniformLocation(s_progSSAOBlur, "uTexel");
         }
         fprintf(stdout, "[Bloom] Init %s\n", s_ready ? "OK" : "FAILED");
     }
@@ -2539,12 +2984,12 @@ void main() {
     if (bw != s_bloomW || bh != s_bloomH) {
         s_bloomW = bw; s_bloomH = bh;
 
-        auto makeFBO = [](GLuint& fbo, GLuint& tex, int w, int h) {
+        auto makeFBO = [](GLuint& fbo, GLuint& tex, int w, int h, GLenum internalFmt) {
             if (fbo) glDeleteFramebuffers(1, &fbo);
             if (tex) glDeleteTextures(1, &tex);
             glGenTextures(1, &tex);
             glBindTexture(GL_TEXTURE_2D, tex);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFmt, w, h, 0, GL_RGB, GL_FLOAT, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -2554,8 +2999,20 @@ void main() {
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         };
-        makeFBO(s_fboA, s_texA, bw, bh);
-        makeFBO(s_fboB, s_texB, bw, bh);
+        makeFBO(s_fboA, s_texA, bw, bh, GL_RGB16F);
+        makeFBO(s_fboB, s_texB, bw, bh, GL_RGB16F);
+        makeFBO(s_fboC, s_texC, bw, bh, GL_RGB16F);
+        makeFBO(s_fboD, s_texD, bw, bh, GL_RGB16F);
+        // SOURCEPORT: single-channel targets for SSAO (raw + bilateral-blurred).
+        // R16F not R8: 8-bit AO gradients band visibly once multiplied into the scene.
+        makeFBO(s_fboE, s_texE, bw, bh, GL_R16F);
+        makeFBO(s_fboF, s_texF, bw, bh, GL_R16F);
+        // SOURCEPORT: full-res target for the scene pass (SSAO apply + height fog) —
+        // replaces s_sceneTex as the source for bloom extraction and the composite.
+        // RGB16F not RGB8: the slow fog gradient quantizes to visible 1/255 contour
+        // bands at 8 bits, which the composite sharpen then etches into distinct
+        // lines that track the camera (iso-distance contours).
+        makeFBO(s_fogFBO, s_fogTex, m_width, m_height, GL_RGB16F);
         fprintf(stdout, "[Bloom] FBOs resized to %dx%d\n", bw, bh);
     }
 
@@ -2580,6 +3037,136 @@ void main() {
     glBindTexture(GL_TEXTURE_2D, s_sceneTex);
     glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, m_width, m_height, 0);
 
+    // ── Step A2: project sun to screen + shared depth capture ────────────────
+    // SOURCEPORT: god ray intensity is 0 whenever the sun is behind the camera or
+    // far off-screen; the composite pass then skips the god-ray texture entirely.
+    float grIntensity = 0.0f;
+    float sunU = 0.5f, sunV = 0.5f;
+    if (m_godRaysEnabled && m_godRayIntensity > 0.0f) {
+        // World→camera rotation R is the transpose of m_camToWorld (which stores
+        // R^T column-major), so R[i][j] = m_camToWorld[i*3+j].
+        const float* rm = m_camToWorld;
+        const float* sd = m_sunDirWorld;
+        float sunCamX = rm[0]*sd[0] + rm[1]*sd[1] + rm[2]*sd[2];
+        float sunCamY = rm[3]*sd[0] + rm[4]*sd[1] + rm[5]*sd[2];
+        float sunCamZ = rm[6]*sd[0] + rm[7]*sd[1] + rm[8]*sd[2];
+        float facing  = -sunCamZ;   // camera looks down -z; >0 ⟹ sun in front
+        if (facing > 0.05f) {
+            // Same projection the depth shader inverts for world-pos reconstruction.
+            float screenX = m_unifVideoCX + sunCamX * m_unifCameraW / facing;
+            float screenY = m_unifVideoCY - sunCamY * m_unifCameraH / facing;
+            sunU = screenX / (float)m_width;
+            sunV = 1.0f - screenY / (float)m_height; // captured texture row 0 = screen bottom
+            // Fade rays out as the sun moves past the screen edge so they never pop.
+            float offU = fmaxf(0.0f, fmaxf(-sunU, sunU - 1.0f));
+            float offV = fmaxf(0.0f, fmaxf(-sunV, sunV - 1.0f));
+            float edgeFade = fmaxf(0.0f, 1.0f - fmaxf(offU, offV) * 2.0f);
+            grIntensity = m_godRayIntensity * edgeFade;
+        }
+    }
+    bool fogActive = m_heightFogEnabled && m_heightFogDensity > 0.0f;
+    bool aoActive  = m_ssaoEnabled && m_ssaoStrength > 0.0f;
+    if (fogActive || aoActive || grIntensity > 0.0f) {
+        // SOURCEPORT: capture scene depth while the default framebuffer is still
+        // bound — shared by SSAO, height fog and god ray passes.
+        glBindTexture(GL_TEXTURE_2D, s_depthTex);
+        glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 0, 0, m_width, m_height, 0);
+    }
+
+    // ── Step A3a: SSAO (half-res: depth → raw AO → bilateral blur) ───────────
+    if (aoActive) {
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboE);
+        glViewport(0, 0, s_bloomW, s_bloomH);
+        glUseProgram(s_progSSAO);
+        glBindTexture(GL_TEXTURE_2D, s_depthTex);
+        glUniform1i(s_locAODepth, 0);
+        glUniform2f(s_locAOScreenSize, (float)m_width, (float)m_height);
+        glUniform1f(s_locAOVCX, m_unifVideoCX);
+        glUniform1f(s_locAOVCY, m_unifVideoCY);
+        glUniform1f(s_locAOCW,  m_unifCameraW);
+        glUniform1f(s_locAOCH,  m_unifCameraH);
+        glUniform1f(s_locAORadius,    m_ssaoRadius);
+        glUniform1f(s_locAOIntensity, m_ssaoIntensity);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Depth-aware blur: raw AO (unit 0) + depth (unit 1) → s_texF
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboF);
+        glUseProgram(s_progSSAOBlur);
+        glBindTexture(GL_TEXTURE_2D, s_texE);
+        glUniform1i(s_locAOBlurAO, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, s_depthTex);
+        glUniform1i(s_locAOBlurDepth, 1);
+        glUniform2f(s_locAOBlurTexel, 1.0f / s_bloomW, 1.0f / s_bloomH);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glActiveTexture(GL_TEXTURE0);
+    }
+
+    // ── Step A3b: scene pass — SSAO apply + height fog (full-res → fogTex) ───
+    // SOURCEPORT: AO multiplies the scene first, then fog mixes over it; the fogged
+    // result replaces s_sceneTex for all downstream passes so bloom extraction and
+    // tone mapping operate on the final scene. With fog disabled the pass runs with
+    // density 0 (pure AO apply); with SSAO disabled uAOStrength=0 skips the AO read.
+    GLuint sceneSrc = s_sceneTex;
+    if (fogActive || aoActive) {
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fogFBO);
+        glViewport(0, 0, m_width, m_height);
+        glUseProgram(s_progHeightFog);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, s_sceneTex);
+        glUniform1i(s_locHFScene, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, s_depthTex);
+        glUniform1i(s_locHFDepth, 1);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, s_texF);
+        glUniform1i(s_locHFAO, 2);
+        glUniform1f(s_locHFAOStrength, aoActive ? m_ssaoStrength : 0.0f);
+        glUniform1f(s_locHFAODebug, (aoActive && m_ssaoDebug) ? 1.0f : 0.0f);
+        glUniform2f(s_locHFScreenSize, (float)m_width, (float)m_height);
+        glUniform1f(s_locHFVCX, m_unifVideoCX);
+        glUniform1f(s_locHFVCY, m_unifVideoCY);
+        glUniform1f(s_locHFCW,  m_unifCameraW);
+        glUniform1f(s_locHFCH,  m_unifCameraH);
+        glUniformMatrix3fv(s_locHFC2W, 1, GL_FALSE, m_camToWorld);
+        glUniform1f(s_locHFCamY, m_cameraWorldPos[1]);
+        glUniform3fv(s_locHFSunDir, 1, m_sunDirWorld);
+        glUniform1f(s_locHFDensity, fogActive ? m_heightFogDensity : 0.0f);
+        glUniform1f(s_locHFFalloff, m_heightFogFalloff);
+        glUniform1f(s_locHFAnchorY, m_fogAnchorY);
+        glUniform1f(s_locHFSkyDist, m_fogViewRange * 2.0f);
+        glUniform3fv(s_locHFColor,    1, m_heightFogColor);
+        glUniform3fv(s_locHFSunColor, 1, m_heightFogSunColor);
+        glUniform1f(s_locHFSunPower, m_heightFogSunPower);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glActiveTexture(GL_TEXTURE0);
+        sceneSrc = s_fogTex;
+    }
+
+    // ── Step A4: god ray GPU passes (mask + radial blur) ─────────────────────
+    if (grIntensity > 0.0f) {
+        // Mask pass: sky pixels near sun → light source (half-res fboC)
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboC);
+        glViewport(0, 0, s_bloomW, s_bloomH);
+        glUseProgram(s_progGRMask);
+        glBindTexture(GL_TEXTURE_2D, s_depthTex);
+        glUniform1i(s_locGRMaskDepth, 0);
+        glUniform2f(s_locGRMaskSunPos, sunU, sunV);
+        glUniform3f(s_locGRMaskColor, m_godRayColor[0], m_godRayColor[1], m_godRayColor[2]);
+        glUniform1f(s_locGRMaskAspect, (float)m_width / (float)m_height);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        // Radial blur pass: march toward sun (fboC → fboD)
+        glBindFramebuffer(GL_FRAMEBUFFER, s_fboD);
+        glUseProgram(s_progGRBlur);
+        glBindTexture(GL_TEXTURE_2D, s_texC);
+        glUniform1i(s_locGRBlurTex, 0);
+        glUniform2f(s_locGRBlurSunPos, sunU, sunV);
+        glUniform1f(s_locGRBlurDensity, m_godRayDensity);
+        glUniform1f(s_locGRBlurDecay, m_godRayDecay);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
     // ── Steps B-D: bloom extraction + multi-pass blur (skipped if only tone mapping active) ──
     // SOURCEPORT: 2 iterations of separable H+V Gaussian blur at half-resolution.
     // Each iteration doubles the effective kernel radius; 2 passes ≈ 10-screen-pixel glow.
@@ -2589,7 +3176,7 @@ void main() {
         glBindFramebuffer(GL_FRAMEBUFFER, s_fboA);
         glViewport(0, 0, s_bloomW, s_bloomH);
         glUseProgram(s_progThreshold);
-        glBindTexture(GL_TEXTURE_2D, s_sceneTex);
+        glBindTexture(GL_TEXTURE_2D, sceneSrc);
         glUniform1i(s_locThrTex,       0);
         glUniform1f(s_locThrThreshold, m_bloomThreshold);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
@@ -2615,11 +3202,18 @@ void main() {
     glViewport(0, 0, m_width, m_height);
     glUseProgram(s_progComposite);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, s_sceneTex);
+    glBindTexture(GL_TEXTURE_2D, sceneSrc);
     glUniform1i(s_locCmpScene,    0);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, s_texA);
     glUniform1i(s_locCmpBloom,    1);
+    // SOURCEPORT: god rays on unit 2 — s_texD may hold stale content when the sun was
+    // off-screen this frame, but grIntensity=0 makes the composite shader skip it.
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, s_texD);
+    glUniform1i(s_locCmpGodRays,     2);
+    glUniform1f(s_locCmpGRIntensity, grIntensity);
+    glUniform1f(s_locCmpAODebug, (aoActive && m_ssaoDebug) ? 1.0f : 0.0f);
     glUniform1f(s_locCmpIntensity, m_postOverlayEnabled ? m_bloomIntensity : 0.0f);
     glUniform1i(s_locCmpToneMap,  m_toneMappingMode);
     glUniform1f(s_locCmpExposure, m_exposure);

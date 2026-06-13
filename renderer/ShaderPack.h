@@ -34,6 +34,36 @@ struct PostFXConfig {
     // World shadows: "none" | "full" ("dinos_only" planned, treated as "full" for now)
     std::string shadowsMode   = "none";
     float       shadowStrength = 0.5f;
+
+    // God rays (screen-space crepuscular rays from the sun)
+    bool  godRaysEnabled  = false;
+    float godRayIntensity = 0.5f;
+    float godRayDensity   = 0.9f;
+    float godRayDecay     = 0.96f;
+    float godRayColor[3]  = {1.0f, 0.92f, 0.75f};
+
+    // Volumetric height fog (depth-aware, sun forward scattering)
+    bool  heightFogEnabled  = false;
+    float heightFogDensity  = 0.00012f;
+    float heightFogFalloff  = 0.0003f;
+    float heightFogSunPower = 8.0f;
+    float heightFogColor[3]    = {0.65f, 0.72f, 0.80f};
+    float heightFogSunColor[3] = {1.0f, 0.85f, 0.65f};
+
+    // SSAO (depth-only screen-space ambient occlusion)
+    bool  ssaoEnabled   = false;
+    float ssaoStrength  = 0.7f;
+    float ssaoRadius    = 120.0f;
+    float ssaoIntensity = 1.2f;
+    bool  ssaoDebug     = false;   // visualize the AO buffer (development aid)
+
+    // Water material (GL path only; no-op on D3D and in VR/underwater)
+    bool  waterEnabled      = true;
+    float waterWaveStrength = 0.35f;
+    float waterClarity      = 0.0025f;
+    float waterDeepColor[3] = {0.07f, 0.18f, 0.22f};
+    float waterFoamWidth    = 50.0f;
+    float waterReflectivity = 0.85f;
 };
 
 class ShaderPack {

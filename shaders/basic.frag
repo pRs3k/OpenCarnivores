@@ -47,15 +47,33 @@ uniform vec3                 uCascadeSplits;    // SOURCEPORT: CSM — x=C0 far,
 uniform vec3                 uCascadeBias;      // SOURCEPORT: CSM — per-cascade NDC bias x/y/z
 uniform float     uShadowStrength;
 
+// SOURCEPORT: water material — active only during the RenderWater batch (uWaterMode=1).
+// The scene colour+depth captured just before the water batch (BeginWaterPass) provide
+// per-pixel refraction and underwater path length for absorption and shoreline foam.
+uniform int       uWaterMode;
+uniform float     uWaterTime;        // seconds, wraps every 600 s
+uniform sampler2D uWaterScene;       // unit 5: scene colour behind the water
+uniform sampler2D uWaterDepth;       // unit 6: scene depth behind the water
+uniform vec2      uWaterScreenSize;  // capture dimensions (viewport pixels)
+uniform float     uWaterWave;        // wave normal strength
+uniform float     uWaterClarity;     // absorption per GU of underwater distance
+uniform vec3      uWaterDeepColor;
+uniform float     uWaterFoamWidth;   // shoreline foam band (GU)
+uniform float     uWaterReflect;     // Fresnel reflectivity scale
+
 out vec4 FragColor;
 
 // SOURCEPORT: CSM — PCF 3×3 shadow sample for one cascade layer.
 // Accesses global uniforms directly (legal in GLSL 330 for non-sampler parameters).
 // Returns [0,1]: 0=fully lit, 1=fully in shadow. Fragments outside the cascade
 // ortho frustum (proj outside [0,1]³) return 0 so they appear lit.
-float sampleCascade(int cas, vec3 worldPos) {
+float sampleCascade(int cas, vec3 worldPos, float biasScale) {
     float bias = (cas == 0) ? uCascadeBias.x
                : (cas == 1) ? uCascadeBias.y : uCascadeBias.z;
+    // SOURCEPORT: slope-scaled bias — a constant bias leaves stipple acne (dashed
+    // camera-tracking lines) on ground tilted relative to the sun: receiver depth
+    // varies across each shadow texel while the stored caster depth is flat.
+    bias *= biasScale;
     vec4 lsPos = uLightSpaceArr[cas] * vec4(worldPos, 1.0);
     vec3 proj  = lsPos.xyz / lsPos.w * 0.5 + 0.5;
     if (proj.z < 0.0 || proj.z >= 1.0 ||
@@ -148,7 +166,74 @@ void main() {
     if (uDebugMode == 4) { FragColor = vec4(0.5, 0.5, 0.5, 1.0); return; }          // solid gray
     if (uDebugMode == 7) { FragColor = vec4(1.0, 0.0, 1.0, 1.0); return; }          // flat magenta
 
-    if (uPBR && uDebugMode != 1) {
+    // SOURCEPORT: water material. Replaces the flat retro water texture with animated
+    // waves, depth-aware refraction/absorption, Fresnel sky reflection, sun glint and
+    // shoreline foam. Distance fog and shadows still apply downstream.
+    if (uWaterMode == 1 && vRhw < 1.0) {
+        vec3 V = normalize(uCameraPos - vWorldPos);
+        float t = uWaterTime;
+
+        // Animated normal: three large-scale directional gradient waves with analytic
+        // derivatives. Spatial scale 350 GU (~2.6 m) and slow speeds keep the water
+        // calm rather than swirly; lower amplitudes on secondary/tertiary waves
+        // reduce tight interference spirals.
+        vec2 wp = vWorldPos.xz * (1.0 / 350.0);
+        vec2 g  = vec2(0.8, 0.5)  * cos(dot(wp, vec2(0.8, 0.5))  + t * 0.40)
+                + vec2(-0.5, 0.9) * cos(dot(wp, vec2(-0.5, 0.9)) + t * 0.55) * 0.45
+                + vec2(1.1, -0.8) * cos(dot(wp, vec2(1.1, -0.8)) + t * 0.85) * 0.18;
+        vec3 N = normalize(vec3(-g.x * uWaterWave, 1.0, -g.y * uWaterWave));
+
+        // Own linear distance (window depth = sz = 16/cam_z) and screen UV.
+        float zSelf = 16.0 / max(gl_FragCoord.z, 1e-6);
+        vec2 suv = gl_FragCoord.xy / uWaterScreenSize;
+
+        // Refraction: depth-scale the UV wobble so shallow water (visible bottom)
+        // stays still — only deep water gets distorted. Sample depth at the straight-
+        // down UV first to get an undistorted depth estimate.
+        float zBehindRaw = 16.0 / max(texture(uWaterDepth, suv).r, 1e-6);
+        float wdistRaw   = max(zBehindRaw - zSelf, 0.0);
+        float refractScale = clamp(wdistRaw / 120.0, 0.0, 1.0);
+        vec2 ruv = suv + N.xz * (18.0 / max(zSelf, 300.0)) * refractScale;
+        float zBehind = 16.0 / max(texture(uWaterDepth, ruv).r, 1e-6);
+        if (zBehind < zSelf) {
+            ruv = suv;
+            zBehind = zBehindRaw;
+        }
+        vec3 refr = texture(uWaterScene, ruv).rgb;
+
+        // Absorption: underwater path length tints toward the deep colour,
+        // modulated by the map's vertex lighting so caves/shade stay dark.
+        // baseAbsorb gives a minimum tint so clear shallow water reads as water,
+        // not transparent glass merging with the surrounding ground.
+        float wdist = max(zBehind - zSelf, 0.0);
+        float absorb = 1.0 - exp(-wdist * uWaterClarity);
+        const float baseAbsorb = 0.38;
+        vec3 deep = uWaterDeepColor * (0.4 + 0.6 * vColor.r);
+        vec3 waterCol = mix(refr, deep, baseAbsorb + absorb * (1.0 - baseAbsorb));
+
+        // Analytic sky reflection (tinted from the map fog colour) + sun glint,
+        // weighted by Schlick Fresnel.
+        vec3 R = reflect(-V, N);
+        float up = clamp(R.y, 0.0, 1.0);
+        vec3 skyCol = mix(uFogColor.rgb, uFogColor.rgb * vec3(0.55, 0.75, 1.05), sqrt(up));
+        float F = 0.02 + 0.98 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
+        F = clamp(F * uWaterReflect, 0.0, 1.0);
+        float glint = pow(max(dot(R, normalize(uSunDirWorld)), 0.0), 180.0);
+        waterCol = mix(waterCol, skyCol, F) + glint * vec3(1.0, 0.95, 0.8) * (0.25 + 0.75 * F);
+
+        // Shoreline foam: narrow band where the water is shallow, broken up by the
+        // water texture itself (a safe noise source at any world coordinate).
+        if (uWaterFoamWidth > 0.0) {
+            float shore = 1.0 - smoothstep(0.0, uWaterFoamWidth, wdist);
+            float fn = texture(uTexture, vWorldPos.xz * 0.011 + vec2(t * 0.04, -t * 0.03)).r;
+            waterCol = mix(waterCol, vec3(0.85, 0.9, 0.92), shore * shore * smoothstep(0.35, 0.75, fn));
+        }
+
+        color.rgb = waterCol;
+        color.a   = 1.0;
+    }
+
+    if (uPBR && uDebugMode != 1 && uWaterMode == 0) {
         // SOURCEPORT: world-space PBR. All vectors computed in world space so that
         // lighting is correct regardless of camera orientation.
         vec3 albedo = texel.rgb;
@@ -225,7 +310,11 @@ void main() {
     // vRhw < 1.0 gates shadow to 3D geometry only: 2D/HUD vertices (aDepth=0)
     // produce vRhw=1.0 and must not be shadowed — world-origin vWorldPos for a
     // fullscreen rect would land inside the frustum and darken sun-blind quads.
-    if (uWorldShadow && uShadowStrength > 0.0 && vRhw < 1.0) {
+    // SOURCEPORT: water tiles skip the surface shadow test — the shadow is already
+    // visible in the captured scene (uWaterScene) via refraction, so applying it
+    // again to the water surface itself doubles the darkening and causes precision-
+    // boundary flicker (flat tile depth lands on the shadow map decision edge).
+    if (uWorldShadow && uShadowStrength > 0.0 && vRhw < 1.0 && uWaterMode == 0) {
         // SOURCEPORT: CSM — select cascade by horizontal world-space distance from camera.
         float distXZ = length(vWorldPos.xz - uCameraPos.xz);
         int cascade = (distXZ < uCascadeSplits.x) ? 0 : (distXZ < uCascadeSplits.y) ? 1 : 2;
@@ -238,7 +327,15 @@ void main() {
             if (uDebugMode == 9) { FragColor = vec4(_proj.xy, 0.0, 1.0); return; }
         }
 
-        float shadow = sampleCascade(cascade, vWorldPos);
+        // SOURCEPORT: slope-scaled bias factor — tan of the angle between the face
+        // normal (from derivatives) and the sun, clamped. Computed here, in uniform
+        // control flow, so the derivatives are well-defined; the cascade-blend
+        // branches below are non-uniform and must not contain dFdx/dFdy.
+        vec3 sN = normalize(cross(dFdx(vWorldPos), dFdy(vWorldPos)));
+        float sNdL = max(abs(dot(sN, normalize(uSunDirWorld))), 0.1);
+        float slopeBias = 1.0 + 1.5 * clamp(sqrt(1.0 - sNdL*sNdL) / sNdL, 0.0, 4.0);
+
+        float shadow = sampleCascade(cascade, vWorldPos, slopeBias);
 
         // SOURCEPORT: CSM blend zone — cross-fade the last 30% of each cascade
         // into the next to hide the hard seam at the split boundary.
@@ -246,10 +343,10 @@ void main() {
         float blend1Start = uCascadeSplits.y * 0.7;
         if (cascade == 0 && distXZ >= blend0Start) {
             float t = clamp((distXZ - blend0Start) / (uCascadeSplits.x - blend0Start), 0.0, 1.0);
-            shadow = mix(shadow, sampleCascade(1, vWorldPos), t);
+            shadow = mix(shadow, sampleCascade(1, vWorldPos, slopeBias), t);
         } else if (cascade == 1 && distXZ >= blend1Start) {
             float t = clamp((distXZ - blend1Start) / (uCascadeSplits.y - blend1Start), 0.0, 1.0);
-            shadow = mix(shadow, sampleCascade(2, vWorldPos), t);
+            shadow = mix(shadow, sampleCascade(2, vWorldPos, slopeBias), t);
         }
 
         color.rgb *= 1.0 - shadow * uShadowStrength;

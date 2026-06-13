@@ -23,5 +23,39 @@
   "sharpen_strength": 0.6,
 
   "shadows_mode": "full",
-  "shadow_strength": 0.45
+  "shadow_strength": 0.45,
+
+  "godrays_enabled": true,
+  "godrays_intensity": 0.5,
+  "godrays_density": 0.9,
+  "godrays_decay": 0.96,
+  "godrays_color_r": 1.0,
+  "godrays_color_g": 0.92,
+  "godrays_color_b": 0.75,
+
+  "heightfog_enabled": true,
+  "heightfog_density": 0.00012,
+  "heightfog_falloff": 0.0003,
+  "heightfog_sun_power": 8.0,
+  "heightfog_color_r": 0.65,
+  "heightfog_color_g": 0.72,
+  "heightfog_color_b": 0.80,
+  "heightfog_suncolor_r": 1.0,
+  "heightfog_suncolor_g": 0.85,
+  "heightfog_suncolor_b": 0.65,
+
+  "ssao_enabled": true,
+  "ssao_strength": 0.7,
+  "ssao_radius": 120.0,
+  "ssao_intensity": 1.2,
+  "ssao_debug": false,
+
+  "water_enabled": true,
+  "water_wave_strength": 0.18,
+  "water_clarity": 0.005,
+  "water_deep_color_r": 0.07,
+  "water_deep_color_g": 0.18,
+  "water_deep_color_b": 0.22,
+  "water_foam_width": 50.0,
+  "water_reflectivity": 0.35
 }

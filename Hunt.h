@@ -33,7 +33,7 @@ typedef void* LPDIRECTDRAWSURFACE;
 #define TCMIN ((000<<16)+62024)
 
 
-#ifdef _MAIN_
+#ifdef MAIN_
  #define EXTORNOT 
 #else
  #define EXTORNOT extern
@@ -939,7 +939,7 @@ EXTORNOT HANDLE hlog;
 
 // SOURCEPORT: Phase 1 post-processing effect toggles and parameters (inline for C++17)
 // Bloom effect: bright pixel extraction + separable Gaussian blur
-#ifdef _MAIN_
+#ifdef MAIN_
 bool   g_enableBloom = false;
 float  g_bloomIntensity = 1.0f;         // 0.0-1.0 (additive blend factor)
 float  g_bloomThreshold = 0.8f;         // 0.0-2.0 (bright pixel threshold)
@@ -1020,7 +1020,7 @@ void StartLoading();
 void EndLoading();
 void PrintLoad(char *t);
 
-#ifdef _MAIN_
+#ifdef MAIN_
 EXTORNOT char KeysName[256][24] = {
 "...",
 "Esc",
@@ -1160,5 +1160,5 @@ EXTORNOT char KeysName[256][24] = {
 "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
 	};
 #else
-   EXTORNOT char KeysName[256][24]; // SOURCEPORT: was 128, must match _MAIN_ definition
+   EXTORNOT char KeysName[256][24]; // SOURCEPORT: was 128, must match MAIN_ definition
 #endif

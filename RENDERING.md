@@ -81,7 +81,7 @@ Place sibling PNG files next to the asset (or in `<map>/override/`):
 **Lighting (world-space):**
 - All PBR vectors (N, V, L) computed in **world space** — correct at all camera angles.
 - Geometric surface normal derived from `dFdx/dFdy` of the interpolated world position (`vWorldPos`), eliminating the need for per-vertex normals in the `.CAR`/`.3DF` format.
-- Sun direction (`uSunDirWorld`) updated each frame from `SunShadowK` via `SetSunDirection`, matching the shadow map's light direction exactly.
+- Sun direction (`uSunDirWorld`) updated each frame from `Sun3dPos` via `SetSunDirection` — the same world-space vector `RenderSun` projects to draw the sun disk, so PBR lighting, god rays, height fog scattering, and CSM shadows all align with the visual sun.
 - Cook-Torrance GGX BRDF: NDF (GGX distribution) + Smith geometry + Fresnel-Schlick.
 
 **Tangent frame:**
@@ -130,7 +130,7 @@ Real-time sun shadow mapping implemented in `RendererGL.cpp` / `renderd3d.cpp`.
 **Architecture (Path B — world-space depth pass)**:
 - Shadow pass runs once per frame before the main render: `BeginWorldShadowPass → DrawScene → EndWorldShadowPass → DrawScene`.
 - Light placed at `cameraPos + sunDir × 10 000 GU`; orthographic frustum ±`m_shadowRange` GU (dynamically set to `(ctViewR+2)×256` to match player view distance), near=1, far=20 000, 2048² depth texture (`GL_DEPTH_COMPONENT24`, `GL_CLAMP_TO_BORDER` with border=1).
-- Sun direction from `SunShadowK` (morning 0.7 / noon 0.5 / evening −0.7): `sunDir = (−K, 1, −K)` normalised.
+- Sun direction from `Sun3dPos` (world-space sun position set per time-of-day in `Game.cpp`), normalised by `SetSunDirection`. Replaces the earlier `SunShadowK`-derived approximation which had up to 26° elevation error vs. the visual sun disk.
 - PCF 3×3 tap in `basic.frag`; shadow strength is a tunable uniform (`uShadowStrength`).
 
 **Terrain shadow depth (view-direction-independent)**:
@@ -166,15 +166,28 @@ Real-time sun shadow mapping implemented in `RendererGL.cpp` / `renderd3d.cpp`.
 
 Any function that binds to `GL_TEXTURE0` must save and restore the previous binding (`glGetIntegerv(GL_TEXTURE_BINDING_2D)` + `glBindTexture` after). The world-space shadow batch (`FlushWorldSpaceShadow`) reads unit 0 for foliage alpha-test. A stale texture from a HUD/UI draw (e.g. `DrawTextWithFont`) will corrupt tree shadow alpha on the frame following the draw — manifesting as shadows changing whenever text, the map, or the weapon appears on screen. Functions that currently save/restore unit 0: `DrawBitmap`, `DrawTextWithFont`.
 
+## Post-Process Pipeline (current)
+
+All effects run flatscreen-only (VR omitted for comfort/performance) and are skipped at night. Controlled via `shaderpacks/default/pack.json`. See [SHADER_PACKS.md](SHADER_PACKS.md) for the full parameter reference and [SHADER_DEVELOPMENT_NOTES.md](SHADER_DEVELOPMENT_NOTES.md) for design history.
+
+| Effect | Implementation | Notes |
+|--------|---------------|-------|
+| Bloom | Half-res dual-pass Gaussian blur + screen-blend | Threshold-based; ACES-compressed to avoid blown whites |
+| ACES tone mapping | Filmic curve applied after bloom | Lifts shadows, compresses highlights |
+| Color grading | Saturation/contrast/lift/gain | Applied post-tonemap |
+| Sharpen | Unsharp mask with coring gate | Gate suppresses sub-perceptual deltas to avoid amplifying banding |
+| God rays | Screen-space radial blur from sun screen position | Sun position from `Sun3dPos` → `RunPostOverlay`; crack-fill guards terrain seams |
+| Volumetric height fog | Analytic exponential height integral per ray | Quilez-style; anchored at map's lowest terrain; Mie forward scatter toward sun |
+| SSAO | Alchemy-style depth-only, 12-sample spiral, half-res | Bilateral depth-aware blur; deterministic texel selection to avoid half-res boundary dashes |
+| Water material | Per-pixel refraction + absorption + Fresnel | Depth-scaled refraction; `glCopyTexImage2D` scene+depth capture; CSM shadow skipped on water tiles |
+
 ## Future Enhancements
 
-**Modder-driven feature roadmap**:
-- Advanced lighting models (PBR, physically-based materials)
-- Screen-space ambient occlusion (SSAO)
-- Screen-space reflections (SSR)
-- Advanced post-processing (bloom, motion blur, chromatic aberration)
-- Custom material types and blend modes
-- Cascaded shadow maps for larger shadow coverage at close range
+- Depth of field (depth capture already present; add Bokeh blur pass)
+- Lens flare (sun disk + anamorphic streaks; sun screen position already computed)
+- Vignette + chromatic aberration (composite pass additions)
+- Screen-space reflections (color + depth capture already present)
+- Dynamic weather (rain streak overlay, wind vertex sway)
 
 **How to add features**: Create shader packs in `shaderpacks/` with custom effects. See [SHADER_PACKS.md](SHADER_PACKS.md).
 

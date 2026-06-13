@@ -3483,7 +3483,8 @@ void DrawTPlaneW(BOOL SECONT)
 
 
 
-void _RenderObject(int x, int y)
+// SOURCEPORT: original engine function name kept for traceability (CLAUDE.md rule).
+void _RenderObject(int x, int y) // NOLINT(bugprone-reserved-identifier)
 {	 	  	  
 	  int ob = OMap[y][x];
 
@@ -4120,7 +4121,15 @@ void RenderWater()
 #ifdef _d3d
   SetRenderStates(FALSE, D3DBLEND_INVSRCALPHA);
 #elif defined(_opengl)
-  if (g_glRenderer) g_glRenderer->SetRenderStates(false, BLEND_INVSRCALPHA);
+  if (g_glRenderer) {
+      g_glRenderer->SetRenderStates(false, BLEND_INVSRCALPHA);
+      // SOURCEPORT: water material — flush any pending batch, then capture the scene
+      // colour/depth (the underwater world is fully drawn at this point) and enable
+      // the water branch in basic.frag. Retro water when disabled, underwater, or VR.
+      if (lpVertexG) d3dEndBufferG(FALSE);
+      g_glRenderer->BeginWaterPass(!UNDERWATER && !XR::StereoActive(),
+                                   (float)(RealTime % 600000) / 1000.f);
+  }
 #endif
 
 
@@ -4161,6 +4170,10 @@ void RenderWater()
 	
 
    d3dEndBufferG(FALSE);
+#ifdef _opengl
+   // SOURCEPORT: restore normal shader before RenderWCircles (ripple circles are retro geometry).
+   if (g_glRenderer) g_glRenderer->EndWaterPass();
+#endif
 
    FogYBase = 0;
 #ifdef _d3d
@@ -4178,14 +4191,14 @@ void RenderWater()
 
 
 
-void RenderCircle(float cx, float cy, float z, float _R, DWORD RGBA, DWORD RGBA2)
+void RenderCircle(float cx, float cy, float z, float rad, DWORD RGBA, DWORD RGBA2) // SOURCEPORT: param _R renamed (reserved identifier)
 {  
 /*
   RGBA = (RGBA  & 0xFF00FF00) + ((RGBA  & 0x000000FF)<<16) + ((RGBA  & 0x00FF0000)>>16);
   RGBA2= (RGBA2 & 0xFF00FF00) + ((RGBA2 & 0x000000FF)<<16) + ((RGBA2 & 0x00FF0000)>>16);
   */
-  float  R = (float)((int)(      _R*16.f)) / 16.f;  
-  float R2 = (float)((int)(0.65f*_R*16.f)) / 16.f;  
+  float  R = (float)((int)(      rad*16.f)) / 16.f;
+  float R2 = (float)((int)(0.65f*rad*16.f)) / 16.f;
   float sz = ZSCALE_ / z;  
 
   lpVertex->sx       = cx;
@@ -4376,9 +4389,9 @@ int  BuildTreeClipNoSort()
 
         fc++;
         fptr->Next = -1;
-        // SOURCEPORT: restructured to clarify LastFace invariant (clang-analyzer OOB false-positive).
-        // LastFace is always a valid index here when Current != -1 (set in the first iteration).
-        if (Current == -1) {
+        // SOURCEPORT: branch on LastFace itself (Current == -1 ⟺ LastFace == -1 here) so
+        // the gFace[LastFace] index is provably valid — silences clang-analyzer OOB report.
+        if (LastFace == -1) {
             Current = f;
         } else {
             mptr->gFace[LastFace].Next = f;
@@ -6079,10 +6092,13 @@ void RenderSkyPlane()
    { extern RendererGL* g_glRenderer;
      if (g_glRenderer && g_glRenderer->IsShadowPassActive()) return; }
    // SOURCEPORT: In VR use head-centre position so the sky has no IPD-offset parallax.
-   float saveX = CameraX, saveZ = CameraZ;
+   // Also lock Y to base position (no eye vertical offset from looking up/down/tilting).
+   float saveX = CameraX, saveY = CameraY, saveZ = CameraZ;
    if (XR::StereoActive()) {
        extern float g_vrCamCenterX, g_vrCamCenterZ;
+       extern float g_vrBaseCamY;
        CameraX = g_vrCamCenterX;
+       CameraY = g_vrBaseCamY;
        CameraZ = g_vrCamCenterZ;
    }
 #endif
@@ -6104,7 +6120,7 @@ void RenderSkyPlane()
    }
 #endif
 
-   nv.x = 512; nv.y = 4024; nv.z=0;   
+   nv.x = 512; nv.y = 4024; nv.z=0;
 
    cb = (float)cos(CameraBeta);
    sb = (float)sin(CameraBeta);
@@ -6465,7 +6481,7 @@ sky_done:
    LINEARFILTER = TRUE;
 
 #ifdef _opengl
-   if (XR::StereoActive()) { CameraX = saveX; CameraZ = saveZ; }
+   if (XR::StereoActive()) { CameraX = saveX; CameraY = saveY; CameraZ = saveZ; }
 #endif
 
    nv = RotateVector(Sun3dPos);

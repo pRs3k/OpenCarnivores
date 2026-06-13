@@ -65,6 +65,7 @@ To play in VR (Meta Quest 3, HTC Vive, Valve Index, etc.):
 - **Adaptive VSync** and uncapped framerate, with 90 FPS VR mode for stable HMD performance
 - **OpenGL 3.3 renderer** with hardware trilinear mipmapping, anisotropic filtering, and per-texture LOD bias tuning (no more terrain texture pop, no more foliage shimmer)
 - **Cascaded Shadow Maps** — 3-cascade PCF world-space shadow mapping (8× sharper shadows near the player, seamless cross-fade between cascades); semi-transparent dinosaur flat shadows blend naturally with terrain; toggleable in Options → Video
+- **Cinematic post-processing** — ACES tone mapping, bloom, color grading, sharpen, screen-space god rays (aligned to the visual sun), volumetric height fog, SSAO, and animated refractive water; all driven by the shader pack system and tunable via `shaderpacks/default/pack.json`
 - **Graphics settings** — adjustable anisotropic filtering (2x/4x/8x/max), render distance, and supersampling for VR
 - **OpenAL Soft audio** — 3D positional audio, terrain occlusion, ready for HRTF and EFX reverb
 - **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)
@@ -320,7 +321,11 @@ Ships enabled by default. Provides cinematic enhancement without changing the ga
 - Additive bloom on bright surfaces (sun, water, sky)
 - Subtle colour grading (saturation +20%, contrast +10%)
 - Unsharp-mask sharpening (strength 0.6)
-- Full cascade shadow mapping at strength 0.45
+- Full cascaded shadow mapping at strength 0.45
+- Screen-space crepuscular god rays from the sun (correctly aligned to the sun disk position)
+- Volumetric height fog pooling in valleys with warm Mie forward scattering toward the sun
+- Depth-only screen-space ambient occlusion (SSAO) — darkens crevices, contact points, and dense foliage
+- Animated refractive water with depth absorption, Fresnel sky reflection, and shoreline foam
 
 ### pbr-auto mod (`mods/pbr-auto/`)
 Auto-generated normal maps for all five playable areas and all dinosaurs — adds depth and surface detail to every piece of game geometry without touching original textures. Enable in the MODS menu. Works with or without the default shader pack.

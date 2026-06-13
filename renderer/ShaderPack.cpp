@@ -52,7 +52,12 @@ static std::string FindValue(const std::string& json, const std::string& key) {
 
 static float   JsonFloat(const std::string& json, const std::string& key, float   def) {
     auto v = FindValue(json, key);
-    return v.empty() ? def : (float)std::atof(v.c_str());
+    if (v.empty()) return def;
+    // SOURCEPORT: strtof instead of atof — atof returns 0.0 on malformed input
+    // with no error signal; fall back to the documented default instead.
+    char* end = nullptr;
+    float r = std::strtof(v.c_str(), &end);
+    return (end == v.c_str()) ? def : r;
 }
 static bool    JsonBool(const std::string& json, const std::string& key, bool    def) {
     auto v = FindValue(json, key);
@@ -106,6 +111,44 @@ bool ShaderPack::Load() {
     m_config.shadowsMode    = JsonString(json, "shadows_mode",   "none");
     m_config.shadowStrength = JsonFloat (json, "shadow_strength", 0.5f);
 
+    // God rays
+    m_config.godRaysEnabled  = JsonBool (json, "godrays_enabled",   false);
+    m_config.godRayIntensity = JsonFloat(json, "godrays_intensity", 0.5f);
+    m_config.godRayDensity   = JsonFloat(json, "godrays_density",   0.9f);
+    m_config.godRayDecay     = JsonFloat(json, "godrays_decay",     0.96f);
+    m_config.godRayColor[0]  = JsonFloat(json, "godrays_color_r",   1.0f);
+    m_config.godRayColor[1]  = JsonFloat(json, "godrays_color_g",   0.92f);
+    m_config.godRayColor[2]  = JsonFloat(json, "godrays_color_b",   0.75f);
+
+    // Height fog
+    m_config.heightFogEnabled  = JsonBool (json, "heightfog_enabled",   false);
+    m_config.heightFogDensity  = JsonFloat(json, "heightfog_density",   0.00012f);
+    m_config.heightFogFalloff  = JsonFloat(json, "heightfog_falloff",   0.0003f);
+    m_config.heightFogSunPower = JsonFloat(json, "heightfog_sun_power", 8.0f);
+    m_config.heightFogColor[0] = JsonFloat(json, "heightfog_color_r",   0.65f);
+    m_config.heightFogColor[1] = JsonFloat(json, "heightfog_color_g",   0.72f);
+    m_config.heightFogColor[2] = JsonFloat(json, "heightfog_color_b",   0.80f);
+    m_config.heightFogSunColor[0] = JsonFloat(json, "heightfog_suncolor_r", 1.0f);
+    m_config.heightFogSunColor[1] = JsonFloat(json, "heightfog_suncolor_g", 0.85f);
+    m_config.heightFogSunColor[2] = JsonFloat(json, "heightfog_suncolor_b", 0.65f);
+
+    // SSAO
+    m_config.ssaoEnabled   = JsonBool (json, "ssao_enabled",   false);
+    m_config.ssaoStrength  = JsonFloat(json, "ssao_strength",  0.7f);
+    m_config.ssaoRadius    = JsonFloat(json, "ssao_radius",    120.0f);
+    m_config.ssaoIntensity = JsonFloat(json, "ssao_intensity", 1.2f);
+    m_config.ssaoDebug     = JsonBool (json, "ssao_debug",     false);
+
+    // Water material
+    m_config.waterEnabled      = JsonBool (json, "water_enabled",       true);
+    m_config.waterWaveStrength = JsonFloat(json, "water_wave_strength", 0.35f);
+    m_config.waterClarity      = JsonFloat(json, "water_clarity",       0.0025f);
+    m_config.waterDeepColor[0] = JsonFloat(json, "water_deep_color_r",  0.07f);
+    m_config.waterDeepColor[1] = JsonFloat(json, "water_deep_color_g",  0.18f);
+    m_config.waterDeepColor[2] = JsonFloat(json, "water_deep_color_b",  0.22f);
+    m_config.waterFoamWidth    = JsonFloat(json, "water_foam_width",    50.0f);
+    m_config.waterReflectivity = JsonFloat(json, "water_reflectivity",  0.85f);
+
     fprintf(stdout, "[ShaderPack] Loaded '%s' — bloom=%s tonemap=%s cg=%s shadows=%s\n",
             m_name.c_str(),
             m_config.bloomEnabled ? "on" : "off",
@@ -145,6 +188,36 @@ void ShaderPack::Apply(RendererGL* renderer) const {
     if (m_config.shadowsMode == "full" || m_config.shadowsMode == "dinos_only") smode = 2;
     renderer->SetShadowMode(smode);
     renderer->SetShadowStrength(m_config.shadowStrength);
+
+    // God rays
+    renderer->SetGodRaysEnabled(m_config.godRaysEnabled);
+    renderer->SetGodRayIntensity(m_config.godRayIntensity);
+    renderer->SetGodRayDensity(m_config.godRayDensity);
+    renderer->SetGodRayDecay(m_config.godRayDecay);
+    renderer->SetGodRayColor(m_config.godRayColor[0], m_config.godRayColor[1], m_config.godRayColor[2]);
+
+    // Height fog
+    renderer->SetHeightFogEnabled(m_config.heightFogEnabled);
+    renderer->SetHeightFogDensity(m_config.heightFogDensity);
+    renderer->SetHeightFogFalloff(m_config.heightFogFalloff);
+    renderer->SetHeightFogSunPower(m_config.heightFogSunPower);
+    renderer->SetHeightFogColor(m_config.heightFogColor[0], m_config.heightFogColor[1], m_config.heightFogColor[2]);
+    renderer->SetHeightFogSunColor(m_config.heightFogSunColor[0], m_config.heightFogSunColor[1], m_config.heightFogSunColor[2]);
+
+    // SSAO
+    renderer->SetSSAOEnabled(m_config.ssaoEnabled);
+    renderer->SetSSAOStrength(m_config.ssaoStrength);
+    renderer->SetSSAORadius(m_config.ssaoRadius);
+    renderer->SetSSAOIntensity(m_config.ssaoIntensity);
+    renderer->SetSSAODebug(m_config.ssaoDebug);
+
+    // Water material
+    renderer->SetWaterFXEnabled(m_config.waterEnabled);
+    renderer->SetWaterWaveStrength(m_config.waterWaveStrength);
+    renderer->SetWaterClarity(m_config.waterClarity);
+    renderer->SetWaterDeepColor(m_config.waterDeepColor[0], m_config.waterDeepColor[1], m_config.waterDeepColor[2]);
+    renderer->SetWaterFoamWidth(m_config.waterFoamWidth);
+    renderer->SetWaterReflectivity(m_config.waterReflectivity);
 }
 
 // ── ShaderPackManager ─────────────────────────────────────────────────────────

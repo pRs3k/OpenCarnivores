@@ -178,6 +178,56 @@ public:
     void  SetSharpenStrength(float s)  { m_sharpenStrength = s; }
     float GetSharpenStrength() const   { return m_sharpenStrength; }
 
+    // SOURCEPORT: screen-space god rays (crepuscular rays). Sun position is projected
+    // from m_sunDirWorld using the camera uniforms cached by SetCameraWorldUniforms;
+    // depth buffer captured per-frame identifies sky pixels as the light source mask.
+    void SetGodRaysEnabled(bool e)             { m_godRaysEnabled = e; }
+    bool GetGodRaysEnabled() const             { return m_godRaysEnabled; }
+    void SetGodRayIntensity(float i)           { m_godRayIntensity = i; }
+    void SetGodRayDensity(float d)             { m_godRayDensity = d; }
+    void SetGodRayDecay(float d)               { m_godRayDecay = d; }
+    void SetGodRayColor(float r, float g, float b) { m_godRayColor[0]=r; m_godRayColor[1]=g; m_godRayColor[2]=b; }
+
+    // SOURCEPORT: volumetric height fog — depth-aware exponential height fog with
+    // Mie-style forward scattering toward the sun. Applied full-res to the captured
+    // scene before bloom extraction so bloom/tonemap operate on the fogged image.
+    void SetHeightFogEnabled(bool e)    { m_heightFogEnabled = e; }
+    bool GetHeightFogEnabled() const    { return m_heightFogEnabled; }
+    void SetHeightFogDensity(float d)   { m_heightFogDensity = d; }
+    void SetHeightFogFalloff(float f)   { m_heightFogFalloff = f; }
+    void SetHeightFogSunPower(float p)  { m_heightFogSunPower = p; }
+    void SetHeightFogColor(float r, float g, float b)    { m_heightFogColor[0]=r;    m_heightFogColor[1]=g;    m_heightFogColor[2]=b; }
+    void SetHeightFogSunColor(float r, float g, float b) { m_heightFogSunColor[0]=r; m_heightFogSunColor[1]=g; m_heightFogSunColor[2]=b; }
+    // Per-frame world params from game globals: fog anchor height (lowest terrain,
+    // MapMinY*ctHScale — same horizon reference RenderSkyPlane uses) and view radius
+    // in GU (ctViewR*256), which bounds the ray length used for sky pixels.
+    void SetHeightFogWorldParams(float anchorY, float viewRangeGU) { m_fogAnchorY = anchorY; m_fogViewRange = viewRangeGU; }
+
+    // SOURCEPORT: SSAO — depth-only screen-space ambient occlusion (Alchemy-style),
+    // computed half-res from the captured depth, bilateral-blurred, and multiplied
+    // into the scene before height fog in the same full-res scene pass.
+    void SetSSAOEnabled(bool e)      { m_ssaoEnabled = e; }
+    bool GetSSAOEnabled() const      { return m_ssaoEnabled; }
+    void SetSSAOStrength(float s)    { m_ssaoStrength = s; }
+    void SetSSAORadius(float r)      { m_ssaoRadius = r; }
+    void SetSSAOIntensity(float i)   { m_ssaoIntensity = i; }
+    void SetSSAODebug(bool d)        { m_ssaoDebug = d; }
+
+    // SOURCEPORT: water material. BeginWaterPass captures the scene colour+depth from
+    // the currently bound framebuffer (the underwater world is fully rendered by the
+    // time RenderWater runs) and enables the water branch in basic.frag; EndWaterPass
+    // disables it. `allow` is false when underwater or in VR — the retro water path
+    // then renders unchanged.
+    void BeginWaterPass(bool allow, float timeSec);
+    void EndWaterPass();
+    void SetWaterFXEnabled(bool e)        { m_waterFXEnabled = e; }
+    bool GetWaterFXEnabled() const        { return m_waterFXEnabled; }
+    void SetWaterWaveStrength(float s)    { m_waterWaveStrength = s; }
+    void SetWaterClarity(float c)         { m_waterClarity = c; }
+    void SetWaterDeepColor(float r, float g, float b) { m_waterDeepColor[0]=r; m_waterDeepColor[1]=g; m_waterDeepColor[2]=b; }
+    void SetWaterFoamWidth(float w)       { m_waterFoamWidth = w; }
+    void SetWaterReflectivity(float r)    { m_waterReflectivity = r; }
+
 private:
     void CompileShaders();
     void CreateBuffers();
@@ -344,6 +394,44 @@ private:
 
     // SOURCEPORT: sharpen state
     float    m_sharpenStrength = 0.0f;
+
+    // SOURCEPORT: god ray state (driven by ShaderPack::Apply)
+    bool     m_godRaysEnabled  = false;
+    float    m_godRayIntensity = 0.5f;   // overall additive strength
+    float    m_godRayDensity   = 0.9f;   // ray march length toward sun (0..1 of pixel→sun distance)
+    float    m_godRayDecay     = 0.96f;  // per-sample falloff along the ray
+    float    m_godRayColor[3]  = {1.0f, 0.92f, 0.75f}; // warm sunlight
+
+    // SOURCEPORT: height fog state (driven by ShaderPack::Apply + per-frame world params)
+    bool     m_heightFogEnabled  = false;
+    float    m_heightFogDensity  = 0.00012f;  // extinction per GU at anchor height
+    float    m_heightFogFalloff  = 0.0003f;   // density halves every ~2300 GU (~17 m) above anchor
+    float    m_heightFogSunPower = 8.0f;      // forward-scattering exponent
+    float    m_heightFogColor[3]    = {0.65f, 0.72f, 0.80f}; // cool morning haze
+    float    m_heightFogSunColor[3] = {1.0f, 0.85f, 0.65f};  // warm glow toward the sun
+    float    m_fogAnchorY   = 0.0f;       // lowest terrain height (GU)
+    float    m_fogViewRange = 12000.0f;   // view radius (GU); sky rays use 2× this
+
+    // SOURCEPORT: SSAO state (driven by ShaderPack::Apply)
+    bool     m_ssaoEnabled   = false;
+    float    m_ssaoStrength  = 0.7f;   // how much AO darkens the scene (0..1)
+    float    m_ssaoRadius    = 120.0f; // world-space sample radius (GU, ~0.9 m)
+    float    m_ssaoIntensity = 1.2f;   // occlusion gain before clamping
+    bool     m_ssaoDebug     = false;  // visualize the blurred AO buffer
+
+    // SOURCEPORT: water material state (driven by ShaderPack::Apply)
+    bool     m_waterFXEnabled     = false;
+    float    m_waterWaveStrength  = 0.35f;   // wave normal strength
+    float    m_waterClarity       = 0.0025f; // absorption per GU (~63% at 3 m)
+    float    m_waterDeepColor[3]  = {0.07f, 0.18f, 0.22f};
+    float    m_waterFoamWidth     = 50.0f;   // shoreline foam band (GU, ~0.4 m)
+    float    m_waterReflectivity  = 0.85f;
+    bool     m_waterPassActive    = false;
+    GLuint   m_waterSceneTex      = 0;       // scene colour captured before the water batch
+    GLuint   m_waterDepthTex      = 0;       // scene depth captured before the water batch
+    GLint    m_locWaterMode = -1, m_locWaterTime = -1, m_locWaterScene = -1, m_locWaterDepth = -1;
+    GLint    m_locWaterScreenSize = -1, m_locWaterWave = -1, m_locWaterClarity = -1;
+    GLint    m_locWaterDeepColor = -1, m_locWaterFoamWidth = -1, m_locWaterReflect = -1;
 
     // SOURCEPORT: color grading state
     bool     m_cgEnabled     = false;

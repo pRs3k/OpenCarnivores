@@ -1,4 +1,4 @@
-#define _MAIN_
+#define MAIN_  // SOURCEPORT: renamed from _MAIN_ (reserved identifier)
 #include "Hunt.h"
 #include "stdio.h"
 
@@ -25,6 +25,8 @@ int  g_sdlMouseDY = 0;
 bool g_vrSecondEyePass = false;
 // SOURCEPORT: set by Game.cpp ExitTime expiry to trigger return-to-menus instead of DoHalt
 bool g_returnToMenus = false;
+// SOURCEPORT: base camera position (without eye offsets) for world-space sky rendering
+float g_vrBaseCamX = 0.f, g_vrBaseCamY = 0.f, g_vrBaseCamZ = 0.f;
 
 // Translate SDL scancode to Win32 VK code (covers keys actually used by KeyMap)
 static int SDL_ScancodeToVK(SDL_Scancode sc)
@@ -465,7 +467,26 @@ void DrawScene()
 #endif
 
    if (!DBG_NO_SKY) {
-       drawSceneStage = "SkyPlane";  RenderSkyPlane();
+       drawSceneStage = "SkyPlane";
+       if (XR::StereoActive()) {
+           // SOURCEPORT: lock sky to world-space (body yaw only, no head rotation).
+           // Compute the locked rotation values BEFORE RenderSkyPlane so RotateVVector uses them.
+           float saveAlpha = CameraAlpha, saveBeta = CameraBeta, saveGamma = CameraGamma;
+           float saveCa = ca, saveSa = sa, saveCb = cb, saveSb = sb, saveCg = cg, saveSg = sg;
+           CameraAlpha = g_vrBodyYaw;
+           CameraBeta = 0.f;
+           CameraGamma = 0.f;
+           // Pre-compute rotation values so RotateVVector uses locked angles, not stale globals
+           ca = cosf(CameraAlpha); sa = sinf(CameraAlpha);
+           cb = cosf(CameraBeta);  sb = sinf(CameraBeta);
+           cg = cosf(CameraGamma); sg = sinf(CameraGamma);
+           RenderSkyPlane();
+           // Restore original values
+           CameraAlpha = saveAlpha; CameraBeta = saveBeta; CameraGamma = saveGamma;
+           ca = saveCa; sa = saveSa; cb = saveCb; sb = saveSb; cg = saveCg; sg = saveSg;
+       } else {
+           RenderSkyPlane();
+       }
    }
 
    cb = (float)cos(CameraBeta);
@@ -2056,6 +2077,12 @@ void ProcessGame()
         g_vrCamCenterX = saveX + g_vrRoomOffsetX;
         g_vrCamCenterZ = saveZ + g_vrRoomOffsetZ;
 
+        // SOURCEPORT: save base position (world-space, no eye or room offsets) for sky rendering.
+        // The sky should move with the terrain, not with the player's head/room position.
+        g_vrBaseCamX = saveX;
+        g_vrBaseCamY = saveY;
+        g_vrBaseCamZ = saveZ;
+
         for (int xrEye = 0; xrEye < 2; ++xrEye) {
             unsigned int fbo = XR::AcquireEyeImage(xrEye);
             if (!fbo) continue;
@@ -2227,7 +2254,10 @@ void ProcessGame()
     {
         // SOURCEPORT: Path B world shadow pass (flatscreen) — reconstruct world pos in depth shader.
         extern RendererGL* g_glRenderer;
-        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0 && OptDayNight != 2) {
+        // SOURCEPORT: camera + sun uniforms are consumed by both the shadow pass and the
+        // post-process god rays (sun screen projection), so upload them every flatscreen
+        // frame regardless of shadow mode.
+        if (g_glRenderer && OptDayNight != 2) {
             float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
             float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
             float _cg = cosf(CameraGamma), _sg = sinf(CameraGamma);
@@ -2235,9 +2265,19 @@ void ProcessGame()
                 (float)VideoCX, (float)VideoCY, CameraW, CameraH,
                 CameraX, CameraY, CameraZ,
                 _ca, _sa, _cb, _sb, _cg, _sg);
-            // SOURCEPORT: sun direction from SunShadowK matches RenderShadowClip convention:
-            // shadow falls in (+SunShadowK, 0, +SunShadowK) ⟹ sun at (-K, 1, -K).
-            g_glRenderer->SetSunDirection(-SunShadowK, 1.0f, -SunShadowK);
+            // SOURCEPORT: use Sun3dPos (the world-space vector RenderSun projects to
+            // get the sun disk's screen position) so god rays, height fog scattering,
+            // and CSM shadow direction all align with the visual sun.  SunShadowK is a
+            // separate constant for the dino drop-shadow polygon offset and is NOT the
+            // authoritative sun angle.
+            g_glRenderer->SetSunDirection(Sun3dPos.x, Sun3dPos.y, Sun3dPos.z);
+            // SOURCEPORT: height fog anchor = map's lowest terrain (same horizon reference
+            // RenderSkyPlane uses, including its 10241024 uninitialised sentinel) and the
+            // current view radius in GU, which bounds sky-pixel ray length.
+            int _mmy = (MapMinY == 10241024) ? 0 : MapMinY;
+            g_glRenderer->SetHeightFogWorldParams((float)_mmy * ctHScale, (float)ctViewR * 256.0f);
+        }
+        if (g_glRenderer && g_glRenderer->GetShadowMode() > 0 && OptDayNight != 2) {
             // SOURCEPORT: CSM — render once per cascade (near→far), each with its own
             // tight ortho frustum.  EndWorldShadowPass on the last cascade restores GL state
             // and uploads all matrices to the main shader.

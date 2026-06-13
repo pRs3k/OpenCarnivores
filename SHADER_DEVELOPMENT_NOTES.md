@@ -287,4 +287,255 @@ vec3 proj  = lsPos.xyz / lsPos.w * 0.5 + 0.5;
 
 **Root cause 2 — stale GL_TEXTURE0 binding from HUD/UI draws corrupting foliage shadow alpha** (`RendererGL.cpp`, `renderd3d.cpp`):
 
+## Phase 4: Depth Capture + God Rays
+
+### Depth capture (gateway feature)
+
+`RunPostOverlay` now captures the backbuffer **depth** alongside color
+(`glCopyTexImage2D` with `GL_DEPTH_COMPONENT24` into `s_depthTex`). This is the
+enabler for all depth-aware post effects (god rays now; SSAO, volumetric height
+fog, DoF, SSR later).
+
+**Depth semantics (reversed convention):** cleared = 0.0, sky plane writes
+sz ≈ 0.0001, world geometry writes `sz = -16/cam_z` which stays ≥ ~0.001 even at
+maximum view range. So `depth < 0.0004` reliably classifies a pixel as sky.
+
+### God rays (screen-space crepuscular rays)
+
+Mitchell radial-blur technique, two half-res passes added to the post chain:
+
+1. **Mask pass** (`FS_GODRAY_MASK` → fboC): sky pixels (from depth) weighted by
+   quadratic falloff around the sun's screen position × `godrays_color`.
+2. **Radial blur** (`FS_GODRAY_BLUR` → fboD): 48 samples marched from each pixel
+   toward the sun with per-sample decay.
+3. **Composite**: added to the scene before exposure/tone mapping so ACES
+   compresses shaft highlights (texture unit 2 on the existing composite pass).
+
+**Sun screen projection (CPU, in RunPostOverlay):** world sun direction
+(`m_sunDirWorld`, from `SunShadowK`) is rotated into camera space with the
+transpose of `m_camToWorld` (R^T stored column-major ⟹ `R[i][j] = m[i*3+j]`),
+then projected with the same VideoCX/CY + CameraW/H convention the depth shader
+inverts for world-pos reconstruction. Texture V is flipped (`1 - screenY/H`)
+because the captured texture has row 0 at the screen bottom. Rays fade with an
+edge factor as the sun leaves the screen and are skipped entirely (`grIntensity=0`)
+when the sun is behind the camera.
+
+**Prerequisite change (Hunt2.cpp flatscreen path):** `SetCameraWorldUniforms` +
+`SetSunDirection` are now called every flatscreen frame regardless of shadow
+mode — previously they only ran when `GetShadowMode() > 0`, which would have
+left god rays with stale camera data when shadows were disabled.
+
+**Scope:** flatscreen only (ApplyPostProcess is not called in VR) and day only
+(post chain is skipped when `OptDayNight == 2`).
+
+### Sun position misalignment (fixed post-Phase 4)
+
+**Symptom:** god rays originated from a point visibly higher in the sky than the
+rendered sun disk — noticeably wrong during morning and afternoon hunts.
+
+**Root cause:** `SetSunDirection` was called with `(-SunShadowK, 1.0f, -SunShadowK)`.
+`SunShadowK` is the *dino drop-shadow polygon offset* constant (0.7 morning / 0.5
+noon / −0.7 afternoon) — it is not the authoritative sun angle. The actual sun disk
+is drawn by `RenderSun(nv.x, nv.y, nv.z)` where `nv = RotateVector(Sun3dPos)`.
+`Sun3dPos` is the world-space sun position vector set per time-of-day in `Game.cpp`:
+morning `(−4048, 2048, −4048)` (elevation ≈19°) vs. the `SunShadowK`-derived
+direction `(−0.7, 1, −0.7)` (elevation ≈45°) — a 26° vertical error.
+
+**Fix:** `SetSunDirection(Sun3dPos.x, Sun3dPos.y, Sun3dPos.z)` in `Hunt2.cpp`.
+`SetSunDirection` normalises the vector, so the magnitude of `Sun3dPos` is
+irrelevant. This also aligns height fog sun scattering and CSM shadow direction
+with the visual sun (more physically correct shadows, especially in the morning).
+
+## Phase 5: Volumetric Height Fog
+
+Depth-aware exponential height fog with sun forward scattering (`FS_HEIGHTFOG`),
+the first effect to use full per-pixel world reconstruction in the post chain.
+
+**Per-pixel world reconstruction in post:** the fog shader inverts the screen
+projection exactly like `depth.vert`, but from the captured depth texture:
+`cam_z = -16/depth`, pixel → camera ray via VideoCX/CY + CameraW/H, camera →
+world via `uCamToWorld`. Sky pixels (depth < 0.0004) use a capped ray length of
+2× the view radius so the horizon hazes out and hides the terrain draw-distance
+edge, while looking up stays clear.
+
+**Analytic fog integral (Quilez-style):** density `rho(y) = a·exp(-(y-anchor)·b)`
+integrated along the ray has closed form
+`a·exp(-(camY-anchor)·b) · (1-exp(-b·rd.y·t))/(b·rd.y)`; the exponent is clamped
+to ±60 to avoid fp32 overflow on long downward rays. Anchor = `MapMinY*ctHScale`
+(the map's lowest terrain — same horizon reference RenderSkyPlane uses), passed
+per-frame from Hunt2.cpp via `SetHeightFogWorldParams` along with `ctViewR*256`.
+
+**Pipeline placement:** full-res pass (scene + depth → `s_fogFBO`, GL_RGB8) right
+after the shared depth capture and **before** bloom extraction; downstream passes
+sample `sceneSrc` (the fogged texture when fog is active, `s_sceneTex` otherwise),
+so bloom and tone mapping operate on the fogged image. The depth capture is now
+shared between height fog and god rays — captured once when either is active.
+
+**Sun scattering:** `pow(max(dot(rd, sunDir), 0), sun_power)` lerps the fog color
+toward `heightfog_suncolor`, giving the fog a warm glow around the sun direction
+that pairs with the god rays.
+
+## Phase 6: SSAO
+
+Depth-only Alchemy-style ambient occlusion (`FS_SSAO` + `FS_SSAO_BLUR`), no
+G-buffer required.
+
+**Technique:** view-space position from the captured depth (`z = 16/depth`,
+inverse screen projection), normal from `cross(dFdx(P), dFdy(P))` flipped to face
+the camera. 12 samples on a golden-angle spiral disk with per-pixel hash rotation;
+each sample's occlusion is `max(0, dot(v,N) - 0.02z) / (|v|² + (0.1·radius)²)` —
+the squared-distance falloff doubles as the range check, so distant geometry and
+sky samples contribute nothing. The sample radius is specified in world units and
+projected to pixels per-fragment (clamped 2–80 px), keeping AO scale consistent
+at any distance.
+
+**Noise removal:** 5×5 bilateral blur weighted by spatial Gaussian × linear-depth
+similarity (relative 8% + 16 GU tolerance) — smooths the hash-rotation noise
+without bleeding AO across silhouette edges.
+
+**Pipeline placement:** both passes run half-res into new `GL_R8` targets
+(`s_fboE` raw → `s_fboF` blurred) right after the shared depth capture. The
+blurred AO is applied inside the existing full-res scene pass (`FS_HEIGHTFOG`,
+unit 2): `scene *= mix(1, ao, strength)` **before** the fog mix, since occlusion
+is a surface property and fog scattering above it stays unoccluded. The scene
+pass now runs when either fog or SSAO is active, with `uDensity=0` acting as a
+fog passthrough when only SSAO is on.
+
+**Limitation (by design):** AO multiplies final scene color rather than just the
+ambient lighting term — standard for post-process SSAO in a non-deferred
+pipeline. Strength 0.7 default keeps sunlit surfaces from looking dirty.
+
+### Banding fix (post-Phase 6)
+
+**Symptom:** faint horizontal contour lines on the ground that follow the player,
+most visible in debug modes (flat surfaces, no texture noise to mask them).
+
+**Root cause:** the scene-pass target was `GL_RGB8` — the slow height-fog gradient
+quantized into 1/255 steps (iso-distance contours, hence camera-tracking), and the
+composite's unsharp-mask sharpen amplified each band-step edge into a visible line.
+
+**Fix:** scene-pass target upgraded to `GL_RGB16F`, SSAO targets to `GL_R16F`
+(same class of issue once AO multiplies the scene), and the composite now applies
+a ±0.5 LSB hash dither before output — this also removes pre-existing 8-bit
+banding in the sky gradient at the final backbuffer quantization.
+
+### Terrain crack dashes (post-Phase 6)
+
+**Symptom (second artifact):** after the banding fix, short horizontal dashes
+remained on the ground at terrain-tile-row spacings, tracking the camera.
+
+**Root cause:** hairline T-junction cracks at terrain tile/LOD seams — 1px gaps
+where the sky-plane depth (~0.0001) shows through between two ground rows. The
+height fog reads those pixels as sky-distance rays and paints them with heavy
+fog. (SSAO was ruled out analytically: its depth-proportional bias `0.02·z`
+swamps anything a tile-seam crease can produce.)
+
+**Fix:** selective crack-fill in `FS_HEIGHTFOG` — a sky-depth pixel whose
+horizontal OR vertical neighbour pair are BOTH solid geometry is a crack, not
+sky, and takes the farther neighbour's depth. True sky is unaffected (at the
+horizon, the side neighbours are sky too, so no pair qualifies). Note the raw
+colour crack (sky tint through the 1px gap) is a pre-existing engine artifact
+that only a mesh-level terrain fix would remove; the fog no longer amplifies it.
+
+### Camera-tracking dash lines — root cause: half-res depth texel ambiguity
+
+**Symptom:** faint horizontal dash lines on the ground tracking the camera,
+persisting through multiple plausible-but-wrong fixes (shadow bias, noise hash,
+normals, blur weighting). Isolated with the `ssao_debug` pack param, which
+renders the raw AO buffer: the lines were IN the AO buffer — perfectly straight,
+content-independent, evenly spaced rows.
+
+**Root cause:** the half-res SSAO pass reads the full-res depth texture, and
+every half-res pixel center lands EXACTLY on a full-res texel boundary
+(`(j+0.5)/halfH × fullH = 2j+1`). NEAREST sampling at an exact boundary tips on
+float rounding, and the rounding direction flips at certain rows. On those rows
+the reconstruction pairs one texel's view ray with the neighbouring row's depth —
+on receding ground that puts the reconstructed point half a depth-step off the
+surface, the whole kernel registers false occlusion, and the entire row darkens.
+A first-attempt fix (`floor(uv·size)+0.5` snap) moved the same coin-flip into
+the `floor()` (exact-integer argument) and striped vertical silhouettes per
+column instead.
+
+**Fix (FS_SSAO `viewPos` + FS_SSAO_BLUR `lz`):** deterministic texel selection —
+compute the half-res cell index first (`floor(uv·halfSize)` evaluates at i+0.5,
+never boundary-ambiguous), then map to a fixed corner of the 2×2 full-res block:
+`uv = (floor(uv·fullSize·0.5)·2 + 0.5)/fullSize`. Ray and depth then always
+describe the same texel, so the reconstructed point lies on the real surface
+regardless of which texel a boundary case would have picked. Normal-tap stride
+is one half-res texel (2 full-res) — a 1-texel step could land inside the same
+quantized block and produce a zero tangent → NaN normal.
+
+**Useful by-products of the hunt** (kept, all genuine improvements):
+- `ssao_debug` pack param — composite bypass that shows the raw AO buffer
+- robust side-choosing normals in FS_SSAO (no garbage normals at depth edges)
+- gradient-aware bilateral AO blur (full 2D blur on continuous slopes; a naive
+  |Δz| test rejected vertical neighbours on receding ground, degenerating to a
+  horizontal-only blur that smeared noise into streaks)
+- interleaved gradient noise for kernel rotation + composite dither (the classic
+  `fract(sin(dot))` hash bands at large pixel coords)
+- god-ray mask crack-fill (hairline terrain cracks read as sky and streaked
+  under the radial blur when the sun sat low)
+- height fog crack-fill (same cracks fogged at sky distance → dashes)
+- slope-scaled shadow bias in `basic.frag` (`bias *= 1 + 1.5·clamp(tanθ, 0, 4)`,
+  computed in uniform control flow) — proper CSM practice, prevents acne on
+  sun-tilted slopes
+- sharpen coring in the composite (unsharp mask gated off below ~2/255 deltas)
+- 16F intermediate targets + output dither (banding removal)
+
 `DrawTextWithFont` and `DrawBitmap` bind `m_bitmapTexture` to `GL_TEXTURE0` and did not restore the previous binding. `FlushWorldSpaceShadow` (called at `EndWorldShadowPass`) reads `GL_TEXTURE0` for alpha-testing foliage geometry in the world-space shadow batch. The frame after any text or HUD draw, the foliage in the shadow pass was alpha-tested against the text/bitmap texture instead of its own foliage texture — changing which tree pixels wrote shadow depth, and therefore changing tree shadow patterns on the terrain. **Fix**: save/restore `GL_TEXTURE0` in `DrawTextWithFont` and `DrawBitmap` (`glGetIntegerv(GL_TEXTURE_BINDING_2D)` + restore after draw). Additionally, the object render loop in `renderd3d.cpp` now explicitly calls `glBindTexture` on unit 0 immediately after each `d3dSetTexture`, so `FlushWorldSpaceShadow` always uses the correct model texture even before the first HUD draw of the session.
+
+## Phase 7: Water Material
+
+Animated refractive water that replaces the flat retro water texture. Active only on
+the GL path (D3D retains its original look), disabled automatically underwater and
+in VR stereo.
+
+### Architecture
+
+**Scene capture:** `BeginWaterPass(allow, timeSec)` (called at the top of
+`RenderWater()` after flushing any pending batch) copies the current color and
+depth buffers into two persistent textures via `glCopyTexImage2D`:
+- `m_waterSceneTex` (unit 5) — full scene color at the moment the water starts
+  rendering; provides the "world seen through water" for refraction.
+- `m_waterDepthTex` (unit 6) — depth at the same moment; used to compute
+  per-pixel underwater path length.
+
+`EndWaterPass()` is called after `d3dEndBufferG` flushes the last water tile and
+before `RenderWCircles()` so ripple circles revert to the normal shader.
+
+**Fragment shader (`basic.frag`, `uWaterMode == 1`):**
+1. Animated surface normal from three summed cosine waves (analytic gradient
+   derivatives for smooth normals without finite differences). Spatial scale 350 GU
+   (~2.6 m), slow speeds (0.40/0.55/0.85 t-multipliers) to avoid tight spirals.
+2. Depth-scaled refraction: undistorted depth sampled first at `suv` to get
+   approximate water depth; UV offset `N.xz × (18/zSelf)` is then scaled by
+   `clamp(wdist/120, 0, 1)` so shallow water (bottom clearly visible) has no
+   distortion while deep water ripples the scene.
+3. Absorption: `1 − exp(−wdist × clarity)` blends the refracted scene toward
+   `uWaterDeepColor`, plus a constant `baseAbsorb = 0.38` so even zero-depth
+   water has a visible teal tint and reads as water rather than clear glass.
+4. Schlick Fresnel sky reflection + sun glint; reflectivity uniform scales the
+   Fresnel weight to keep the sky contribution subtle.
+5. Shoreline foam: narrow `smoothstep` band in shallow areas, broken up with the
+   water tile's own texture as noise.
+
+**Uniforms exposed to pack.json:** `water_enabled`, `water_wave_strength`,
+`water_clarity`, `water_deep_color_r/g/b`, `water_foam_width`,
+`water_reflectivity`.
+
+### Tuning history and lessons
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Too swirly | Wave spatial scale 96 GU was too fine; three-wave interference creates spiral patterns | Scale to 350 GU; reduce direction-vector magnitudes and secondary-wave amplitudes |
+| Floating / sky-colored | Reflectivity 0.85 overwhelmed the water color with pale sky | Reduce to 0.35 |
+| Ground visibly moving | Refraction UV shift applied uniformly even in 1-pixel-deep water | Depth-scale the offset — zero in shallow, full in deep |
+| Too transparent | baseAbsorb 0.12 not enough; water_clarity 0.0025 absorbed too slowly | baseAbsorb → 0.38; clarity → 0.005 |
+| Shadow flicker (every other frame) | CSM shadow block had no `uWaterMode` guard; flat water tile depth lands on the shadow-map precision boundary, flipping the shadow test frame-by-frame | Add `&& uWaterMode == 0` to the shadow block; shadow is already visible via the captured scene through refraction |
+
+### Key invariant
+The water tile geometry must **not** receive the CSM shadow directly — doing so
+double-counts the shadow (the captured scene already has the shadow on the terrain)
+and causes precision-boundary flicker because a flat horizontal surface sits on the
+exact decision boundary of the depth comparison. The shadow on the underwater
+terrain is already visible through refraction.
