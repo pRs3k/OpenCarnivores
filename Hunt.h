@@ -707,7 +707,7 @@ EXTORNOT   TSFX     RandSound[256];
 
 //========= GAME ====================//
 EXTORNOT int TargetDino, TargetArea, TargetWeapon, WeaponPres, TargetCall,
-              TrophyTime, ObservMode, Tranq, ObjectsOnLook,
+              TrophyTime, ObservMode, Tranq, KidsMode, ObjectsOnLook,
 			  CurrentWeapon, ShotsLeft[10], AmmoMag[10];
 
 EXTORNOT Vector3d answpos;

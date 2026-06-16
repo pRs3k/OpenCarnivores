@@ -1251,7 +1251,7 @@ for (int s=0; s<=WeapInfo[CurrentWeapon].TraceC; s++) {
 	 v.y = PlayerY;
 	 v.z = PlayerZ;
 	 MakeNoise(v, ctViewR*200 * WeapInfo[CurrentWeapon].Loud);
-	 ShotsLeft[CurrentWeapon]--;
+	 if (!KidsMode) ShotsLeft[CurrentWeapon]--;  // KIDSMODE: unlimited ammo
 	 // SOURCEPORT: fire Lua OnFire hook after the shot is committed.
 	 Scripting::OnFire(CurrentWeapon);
    }
@@ -1276,8 +1276,11 @@ void ProcessSlide()
    chh=GetLandQHNoObj(PlayerX - 12, PlayerZ + 12); if (chh<mh) { mh = chh; sd = 7; }
    chh=GetLandQHNoObj(PlayerX + 12, PlayerZ + 12); if (chh<mh) { mh = chh; sd = 8; }
 
+   // KIDSMODE: wider slide threshold — only very steep drops push the player back,
+   // so most hills and inclines can be climbed without getting stuck.
+   const float slideThresh = KidsMode ? 48.f : 16.f;
    if (!NOCLIP)
-    if (mh<ch-16) {
+    if (mh<ch-slideThresh) {
      float delta = (ch-mh) / 4;
      if (sd == 1) { PlayerX -= delta; }
      if (sd == 2) { PlayerX += delta; }
@@ -1731,8 +1734,11 @@ SKIPYMOVE:
   if (UNDERWATER) {
 	  MyHealth-=TimeDt*12;
 	  //if ( !(Takt & 31)) AddElements(CameraX + sa*64*cb, CameraY - 32 - sb*64, CameraZ - ca*64*cb, 4);
-	  if (MyHealth<=0)
+	  if (MyHealth<=0) {
 	      AddDeadBody(nullptr, HUNT_BREATH);
+	      // KIDSMODE: skip the drowning animation — player body holds the final dead pose
+	      if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
+	  }
   }
  
   if (UNDERWATER)
@@ -2357,6 +2363,12 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	// so modded MENUM.TGA, TREX.CAR, AREA*.RSC, etc. are picked up on first open.
 	VFS::Init();
 
+	// SOURCEPORT: activate KidsMode when the carnivores-kids mod is mounted.
+	// KidsMode disables blood, skips eating/drowning death animations, and makes
+	// all killed dinosaurs sleep (tranquilizer behaviour) instead of dying.
+	KidsMode = VFS::IsMounted("carnivores-kids") ? TRUE : FALSE;
+	if (KidsMode) PrintLog("[Kids] Carnivores Kids mode active\n");
+
 	CreateMainWindow();
 
 	Init3DHardware();
@@ -2446,6 +2458,8 @@ int PASCAL WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 // SDL_main.h redirects WinMain → main on Windows.
 int main(int  /*argc*/, char*  /*argv*/[])
 {
+    SetUnhandledExceptionFilter(CrashHandler); // SOURCEPORT: produce crash.log on unhandled exception (SDL path)
+
     // SOURCEPORT: must be set before SDL_Init so SDL uses physical pixels on DPI-scaled
     // displays (e.g. 150% scaling: 2560x1440 physical vs 1707x960 logical).
     SDL_SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
@@ -2474,6 +2488,8 @@ int main(int  /*argc*/, char*  /*argv*/[])
     // so modded MENUM.TGA, .CAR, .RSC, _res.txt, etc. are picked up on first open.
     // (The legacy WinMain path also calls this; main() is the actual SDL entry.)
     VFS::Init();
+    KidsMode = VFS::IsMounted("carnivores-kids") ? TRUE : FALSE;
+    if (KidsMode) PrintLog("[Kids] Carnivores Kids mode active\n");
 
     // SOURCEPORT: game-controller support. Opens the first connected pad, handles
     // hot-plug, and routes analog/button state through the same KeyboardState[] +

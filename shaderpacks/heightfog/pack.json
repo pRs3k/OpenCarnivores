@@ -1,0 +1,16 @@
+{
+  "name": "Height Fog",
+  "description": "Depth-aware volumetric fog with sun forward scattering. Adds atmospheric haze in valleys and at distance.",
+  "author": "OpenCarnivores",
+
+  "heightfog_enabled": true,
+  "heightfog_density": 0.00012,
+  "heightfog_falloff": 0.0003,
+  "heightfog_sun_power": 8.0,
+  "heightfog_color_r": 0.65,
+  "heightfog_color_g": 0.72,
+  "heightfog_color_b": 0.80,
+  "heightfog_suncolor_r": 1.0,
+  "heightfog_suncolor_g": 0.85,
+  "heightfog_suncolor_b": 0.65
+}

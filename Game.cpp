@@ -1,3 +1,5 @@
+#include <cmath>
+
 #include "Hunt.h"
 #include "Bindings.h"
 #include "Gamepad.h"
@@ -194,8 +196,8 @@ float GetLandLt2(float x, float y)
 
 void CalcModelGroundLight(TModel *mptr, float x0, float z0, int FI)
 {
-	float ca = cos(FI * pi / 2);
-	float sa = sin(FI * pi / 2);
+	float ca = std::cos(FI * pi / 2);
+	float sa = std::sin(FI * pi / 2);
 	for (int v=0; v<mptr->VCount; v++) {
 		float x = mptr->gVertex[v].x * ca + mptr->gVertex[v].z * sa + x0;
 		float z = mptr->gVertex[v].z * ca - mptr->gVertex[v].x * sa + z0;
@@ -209,8 +211,8 @@ BOOL PointOnBound(float &H, float px, float py, float cx, float cy, float oy, TB
 	px-=cx;
 	py-=cy; 
 	
-	float ca = (float) cos(angle*pi / 2.f);
-	float sa = (float) sin(angle*pi / 2.f);	
+	float ca = (float) std::cos(angle*pi / 2.f);
+	float sa = (float) std::sin(angle*pi / 2.f);	
 
 	BOOL _on = FALSE;
 	H=-1000;
@@ -232,7 +234,7 @@ BOOL PointOnBound(float &H, float px, float py, float cx, float cy, float oy, TB
 	     b = bound[o].b;
 		}
 
-	    if ( ( fabs(px - ccx) < a) &&  (fabs(py - ccy) < b) ) 
+	    if ( ( std::fabs(px - ccx) < a) &&  (std::fabs(py - ccy) < b) ) 
 		{
 		      _on=TRUE;			  
 			  if (H < bound[o].y2) H = bound[o].y2;			  
@@ -249,8 +251,8 @@ BOOL PointUnBound(float &H, float px, float py, float cx, float cy, float oy, TB
 	px-=cx;
 	py-=cy; 
 	
-	float ca = (float) cos(angle*pi / 2.f);
-	float sa = (float) sin(angle*pi / 2.f);	
+	float ca = (float) std::cos(angle*pi / 2.f);
+	float sa = (float) std::sin(angle*pi / 2.f);	
 
 	BOOL _on = FALSE;
 	H=+1000;
@@ -272,7 +274,7 @@ BOOL PointUnBound(float &H, float px, float py, float cx, float cy, float oy, TB
 	     b = bound[o].b;
 		}
 
-	    if ( ( fabs(px - ccx) < a) &&  (fabs(py - ccy) < b) ) 
+	    if ( ( std::fabs(px - ccx) < a) &&  (std::fabs(py - ccy) < b) ) 
 		{
 		      _on=TRUE;			  
 			  if (H > bound[o].y1) H = bound[o].y1;
@@ -321,9 +323,9 @@ float GetLandCeilH(float CameraX, float CameraZ)
 				if (h > LandY + hh) h = LandY + hh;
 		} else {
 		 if (MObjects[ob].info.flags & ofCIRCLE)
-		   r = (float) sqrt( (ox-CameraX)*(ox-CameraX) + (oz-CameraZ)*(oz-CameraZ) );
+		   r = (float) std::sqrt( (ox-CameraX)*(ox-CameraX) + (oz-CameraZ)*(oz-CameraZ) );
 		 else
-		   r = (float) max( fabs(ox-CameraX) , fabs(oz-CameraZ) );
+		   r = (float) max( std::fabs(ox-CameraX) , std::fabs(oz-CameraZ) );
 		 
 		 if (r<CR) h = MObjects[ob].info.YLo + LandY;
 		}
@@ -379,9 +381,9 @@ float GetLandQH(float CameraX, float CameraZ)
 				if (h < LandY + hh) h = LandY + hh;
 		} else {
 		 if (MObjects[ob].info.flags & ofCIRCLE)
-		   r = (float) sqrt( (ox-CameraX)*(ox-CameraX) + (oz-CameraZ)*(oz-CameraZ) );
+		   r = (float) std::sqrt( (ox-CameraX)*(ox-CameraX) + (oz-CameraZ)*(oz-CameraZ) );
 		 else
-		   r = (float) max( fabs(ox-CameraX) , fabs(oz-CameraZ) );
+		   r = (float) max( std::fabs(ox-CameraX) , std::fabs(oz-CameraZ) );
 		 
 		 if (r<CR) h = MObjects[ob].info.YHi + LandY;
 		}
@@ -413,9 +415,9 @@ float GetLandHObj(float CameraX, float CameraZ)
         if (MObjects[ob].info.YLo + GetLandOH(ccx+x, ccz+z) > PlayerY+256) continue;
         float r;
 		if (MObjects[ob].info.flags & ofCIRCLE) 		
-		  r = (float) sqrt( (ox-CameraX)*(ox-CameraX) + (oz-CameraZ)*(oz-CameraZ) );
+		  r = (float) std::sqrt( (ox-CameraX)*(ox-CameraX) + (oz-CameraZ)*(oz-CameraZ) );
 		else
-		  r = (float) max( fabs(ox-CameraX) , fabs(oz-CameraZ) );
+		  r = (float) max( std::fabs(ox-CameraX) , std::fabs(oz-CameraZ) );
 
         if (r<CR) 
             h = MObjects[ob].info.YHi + GetLandOH(ccx+x, ccz+z);
@@ -448,15 +450,15 @@ void ProcessCommandLine()
 {
   for (int a=0; a<__argc; a++) {
      LPSTR s = __argv[a];
-     if (strstr(s,"x=")) { PlayerX = (float)atof(&s[2])*256.f; LockLanding = TRUE; }
-     if (strstr(s,"y=")) { PlayerZ = (float)atof(&s[2])*256.f; LockLanding = TRUE; }          
-	 if (strstr(s,"reg=")) TrophyRoom.RegNumber = atoi(&s[4]); 
+     if (strstr(s,"x=")) { PlayerX = (float)strtod(&s[2], nullptr)*256.f; LockLanding = TRUE; }
+     if (strstr(s,"y=")) { PlayerZ = (float)strtod(&s[2], nullptr)*256.f; LockLanding = TRUE; }
+	 if (strstr(s,"reg=")) TrophyRoom.RegNumber = (int)strtol(&s[4], nullptr, 10);
      if (strstr(s,"prj=")) { // SOURCEPORT: replaced strcpy with strncpy; ProjectName is 128 bytes
          strncpy(ProjectName, (s+4), sizeof(ProjectName)-1);
          ProjectName[sizeof(ProjectName)-1] = '\0'; }
-	 if (strstr(s,"din=")) TargetDino = (atoi(&s[4])*1024);
-	 if (strstr(s,"wep=")) WeaponPres = atoi(&s[4]);	 
-	 if (strstr(s,"dtm=")) OptDayNight  = atoi(&s[4]);
+	 if (strstr(s,"din=")) TargetDino = ((int)strtol(&s[4], nullptr, 10)*1024);
+	 if (strstr(s,"wep=")) WeaponPres = (int)strtol(&s[4], nullptr, 10);
+	 if (strstr(s,"dtm=")) OptDayNight  = (int)strtol(&s[4], nullptr, 10);
 
 	 if (strstr(s,"-debug"))   DEBUG = TRUE;
 	 if (strstr(s,"-double"))  DoubleAmmo = TRUE;
@@ -466,8 +468,8 @@ void ProcessCommandLine()
 	 if (strstr(s,"-nosnd"))  { OptSound = -1; extern void Audio_SetNoSnd(); Audio_SetNoSnd(); }  // SOURCEPORT: disable audio
 
      // SOURCEPORT: Phase 4 display options
-     if (strstr(s,"width="))      OptResW        = atoi(s + 6);
-     if (strstr(s,"height="))     OptResH        = atoi(s + 7);
+     if (strstr(s,"width="))      OptResW        = (int)strtol(s + 6, nullptr, 10);
+     if (strstr(s,"height="))     OptResH        = (int)strtol(s + 7, nullptr, 10);
      if (strstr(s,"-fullscreen")) OptDisplayMode = 1;
      if (strstr(s,"-borderless")) OptDisplayMode = 2;
      if (strstr(s,"-windowed"))   OptDisplayMode = 0;
@@ -815,7 +817,7 @@ void InitEngine()
 #else
         ANSI_CHARSET,
 #endif				
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, NULL);	
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, nullptr);	
 
 
 
@@ -828,7 +830,7 @@ void InitEngine()
 #else
         ANSI_CHARSET,
 #endif		        
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, NULL);	
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, nullptr);	
 
 
     fnt_Midd  = CreateFont(
@@ -839,12 +841,12 @@ void InitEngine()
 #else
         ANSI_CHARSET,
 #endif		        
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, NULL);	
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, nullptr);	
 
 
     // SOURCEPORT: use growable heap (0 max = no limit) instead of fixed 64MB
     Heap = HeapCreate( 0, 60000000, 0 );
-    if( Heap == NULL ) {
+    if( Heap == nullptr ) {
       MessageBox(hwndMain,"Error creating heap.","Error",IDOK);     
       return; }
 
@@ -1136,8 +1138,8 @@ void AddElements(float x, float y, float z, int etype, int cnt)
     Elements[ElCount].RGBA2 = conv_xGx(Elements[ElCount].RGBA2);	
 		
 	float al = siRand(128) / 128.f * pi / 4.f;
-	float ss = sin(al);
-	float cc = cos(al);
+	float ss = std::sin(al);
+	float cc = std::cos(al);
 
 	for (int e=0; e<Elements[ElCount].ECount; e++) {
 		Elements[ElCount].EList[e].pos.x = x;
@@ -1233,7 +1235,8 @@ ENDTRACE:
 
   
   if (sres!=tresChar) return;
-  AddElements(bx, by, bz, partBlood, 4 + WeapInfo[CurrentWeapon].Power*4);  
+  // KIDSMODE: no blood particles
+  if (!KidsMode) AddElements(bx, by, bz, partBlood, 4 + WeapInfo[CurrentWeapon].Power*4);
   if (!Characters[ShotDino].Health) return;
 
 //======= character damage =========//
@@ -1264,7 +1267,7 @@ ENDTRACE:
 	 if (Characters[ShotDino].AI!=AI_TREX || Characters[ShotDino].State==0)
         Characters[ShotDino].State = 2;	 
 	 
-	 if (Characters[ShotDino].AI != AI_BRACH)
+	 if (Characters[ShotDino].AI != AI_BRACH && !KidsMode)
            Characters[ShotDino].BloodTTime+=90000;
 	   
 	}   
@@ -1293,7 +1296,7 @@ void RemoveCharacter(int index)
 void AnimateShip()
 {
   if (Ship.State==-1) {
-	  SetAmbient3d(0,0, 0,0,0);
+	  SetAmbient3d(0,nullptr, 0,0,0);
 	  if (!ShipTask.tcount) return; 
 	  InitShip(ShipTask.clist[0]);
 	  memcpy(&ShipTask.clist[0], &ShipTask.clist[1], 250*4);
@@ -1305,28 +1308,28 @@ void AnimateShip()
 	           ShipModel.SoundFX[0].lpData, 
 			   Ship.pos.x, Ship.pos.y, Ship.pos.z);
 
-  int _TimeDt = TimeDt;
+  int TimeDt = ::TimeDt;
 
 //====== get up/down time acceleration ===========//
   if (Ship.FTime) {
 	int am = ShipModel.Animation[0].AniTime;
-	if (Ship.FTime < 500) _TimeDt = TimeDt * (Ship.FTime + 48) / 548;
-    if (am-Ship.FTime < 500) _TimeDt = TimeDt * (am-Ship.FTime + 48) / 548;
-	if (_TimeDt<2) _TimeDt=2;
+	if (Ship.FTime < 500) TimeDt = TimeDt * (Ship.FTime + 48) / 548;
+    if (am-Ship.FTime < 500) TimeDt = TimeDt * (am-Ship.FTime + 48) / 548;
+	if (TimeDt<2) TimeDt=2;
   }
 //===================================
 
   float L  = VectorLength( SubVectors(Ship.tgpos, Ship.pos) );  
-  float L2 = sqrt ( (Ship.tgpos.x - Ship.pos.x) * (Ship.tgpos.x - Ship.pos.x) +
+  float L2 = std::sqrt ( (Ship.tgpos.x - Ship.pos.x) * (Ship.tgpos.x - Ship.pos.x) +
 	                (Ship.tgpos.x - Ship.pos.x) * (Ship.tgpos.x - Ship.pos.x) );
 
-  Ship.pos.y+=0.3f*(float)cos(RealTime / 256.f);
+  Ship.pos.y+=0.3f*(float)std::cos(RealTime / 256.f);
 
   
 
   Ship.tgalpha    = FindVectorAlpha(Ship.tgpos.x - Ship.pos.x, Ship.tgpos.z - Ship.pos.z);
   float currspeed;
-  float dalpha = (float)fabs(Ship.tgalpha - Ship.alpha); 
+  float dalpha = (float)std::fabs(Ship.tgalpha - Ship.alpha); 
   float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd; 
 
 
@@ -1335,8 +1338,8 @@ void AnimateShip()
    if (Ship.speed>1)
    if (L<4000)
 	if (VectorLength(SubVectors(PlayerPos, Ship.pos))<(ctViewR+2)*256) {
-		Ship.tgpos.x += (float)cos(Ship.alpha) * 256*6.f;
-		Ship.tgpos.z += (float)sin(Ship.alpha) * 256*6.f;
+		Ship.tgpos.x += (float)std::cos(Ship.alpha) * 256*6.f;
+		Ship.tgpos.z += (float)std::sin(Ship.alpha) * 256*6.f;
 		Ship.tgpos.y = GetLandUpH(Ship.tgpos.x, Ship.tgpos.z) + Ship.DeltaY;		
         Ship.tgpos.y = max(Ship.tgpos.y, GetLandUpH(Ship.pos.x, Ship.pos.z) + Ship.DeltaY);
 	}
@@ -1346,7 +1349,7 @@ void AnimateShip()
 
 //========= animate down ==========//
   if (Ship.State==3) {
-	Ship.FTime+=_TimeDt;
+	Ship.FTime+=TimeDt;
 	if (Ship.FTime>=ShipModel.Animation[0].AniTime) {
 	  Ship.FTime=ShipModel.Animation[0].AniTime-1;
       Ship.State=2;
@@ -1362,18 +1365,18 @@ void AnimateShip()
 //========= get body on board ==========//
   if (Ship.State) {
 	  if (Ship.cindex!=-1) {
-	    DeltaFunc(Characters[Ship.cindex].pos.y, Ship.pos.y-650 - (Ship.DeltaY-2048), _TimeDt / 3.f);
+	    DeltaFunc(Characters[Ship.cindex].pos.y, Ship.pos.y-650 - (Ship.DeltaY-2048), TimeDt / 3.f);
 	    DeltaFunc(Characters[Ship.cindex].beta,  0, TimeDt / 4048.f);
 	    DeltaFunc(Characters[Ship.cindex].gamma, 0, TimeDt / 4048.f);
 	  }
 	
 	if (Ship.State==2) {
-	  Ship.FTime-=_TimeDt;
+	  Ship.FTime-=TimeDt;
 	  if (Ship.FTime<0) Ship.FTime=0;
 
 	  // SOURCEPORT: guard cindex before array access (clang-analyzer OOB).
 	  if (Ship.FTime==0 && Ship.cindex != -1)
-		  if (fabs(Characters[Ship.cindex].pos.y - (Ship.pos.y-650 - (Ship.DeltaY-2048))) < 1.f) {
+		  if (std::fabs(Characters[Ship.cindex].pos.y - (Ship.pos.y-650 - (Ship.DeltaY-2048))) < 1.f) {
 		      Ship.State = 1;		  	  
 			  AddVoicev(ShipModel.SoundFX[5].length,
 		               ShipModel.SoundFX[5].lpData, 256);
@@ -1390,7 +1393,7 @@ void AnimateShip()
   float vspeed = 1.f + L / 128.f;
   if (vspeed > 24) vspeed = 24;
   if (Ship.State) vspeed = 24;
-  if (fabs(dalpha) > 0.4) vspeed = 0.f;
+  if (std::fabs(dalpha) > 0.4) vspeed = 0.f;
   float _s = Ship.speed;
   if (vspeed>Ship.speed) DeltaFunc(Ship.speed, vspeed, TimeDt / 200.f);
                     else Ship.speed = vspeed;
@@ -1402,12 +1405,12 @@ void AnimateShip()
 //====== fly ===========//
   float l = TimeDt * Ship.speed / 16.f;   
   
-  if (fabs(dalpha) < 0.4)
+  if (std::fabs(dalpha) < 0.4)
   if (l<L) {
    if (l>L2) l = L2 * 0.5f;
    if (L2<0.1) l = 0;
-   Ship.pos.x += (float)cos(Ship.alpha)*l;
-   Ship.pos.z += (float)sin(Ship.alpha)*l;
+   Ship.pos.x += (float)std::cos(Ship.alpha)*l;
+   Ship.pos.z += (float)std::sin(Ship.alpha)*l;
   } else {   
    if (Ship.State) {
 	 Ship.State = -1;
@@ -1440,16 +1443,16 @@ void AnimateShip()
 
 //======= rotation ============//
   
-  if (Ship.tgalpha > Ship.alpha) currspeed = 0.1f + (float)fabs(drspd)/2.f;
-                            else currspeed =-0.1f - (float)fabs(drspd)/2.f;     
+  if (Ship.tgalpha > Ship.alpha) currspeed = 0.1f + (float)std::fabs(drspd)/2.f;
+                            else currspeed =-0.1f - (float)std::fabs(drspd)/2.f;     
 							 
-  if (fabs(dalpha) > pi) currspeed=-currspeed;
+  if (std::fabs(dalpha) > pi) currspeed=-currspeed;
   
          
   DeltaFunc(Ship.rspeed, currspeed, (float)TimeDt / 420.f);
   
   float rspd=Ship.rspeed * TimeDt / 1024.f;
-  if (fabs(drspd) < fabs(rspd)) { Ship.alpha = Ship.tgalpha; Ship.rspeed/=2; }
+  if (std::fabs(drspd) < std::fabs(rspd)) { Ship.alpha = Ship.tgalpha; Ship.rspeed/=2; }
   else {
 	Ship.alpha+=rspd;
 	if (Ship.State) 
@@ -1592,8 +1595,8 @@ void AnimateProcesses()
 
   if ((Takt & 63)==0)  {
    float al2 = CameraAlpha + siRand(60) * pi / 180.f;
-   float c2 = cos(al2);
-   float s2 = sin(al2);
+   float c2 = std::cos(al2);
+   float s2 = std::sin(al2);
    float l = 1024 + rRand(3120);
    float xx = CameraX + s2 * l;
    float zz = CameraZ - c2 * l;
@@ -1609,8 +1612,8 @@ void AnimateProcesses()
   if (Wind.speed< 4.f) Wind.speed=4.f;
   if (Wind.speed>18.f) Wind.speed=18.f;
 
-  Wind.nv.x = (float) sin(Wind.alpha);
-  Wind.nv.z = (float)-cos(Wind.alpha);
+  Wind.nv.x = (float) std::sin(Wind.alpha);
+  Wind.nv.z = (float)-std::cos(Wind.alpha);
   Wind.nv.y = 0.f;
 
 
@@ -1705,38 +1708,38 @@ void LoadTrophy()
 	char fname[128];
 	int rn = TrophyRoom.RegNumber;
 	wsprintf(fname, "trophy0%d.sav", TrophyRoom.RegNumber);
-	HANDLE hfile = CreateFile(fname, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	HANDLE hfile = CreateFile(fname, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (hfile==INVALID_HANDLE_VALUE) {
 		PrintLog("===> Error loading trophy!\n");
 		return;
 	}
-	ReadFile(hfile, &TrophyRoom, sizeof(TrophyRoom), &l, NULL);
+	ReadFile(hfile, &TrophyRoom, sizeof(TrophyRoom), &l, nullptr);
 
-	ReadFile(hfile, &OptAgres, 4, &l, NULL);
-	ReadFile(hfile, &OptDens , 4, &l, NULL);
-	ReadFile(hfile, &OptSens , 4, &l, NULL);
+	ReadFile(hfile, &OptAgres, 4, &l, nullptr);
+	ReadFile(hfile, &OptDens , 4, &l, nullptr);
+	ReadFile(hfile, &OptSens , 4, &l, nullptr);
 
-	ReadFile(hfile, &OptRes, 4, &l, NULL);
-	ReadFile(hfile, &FOGENABLE, 4, &l, NULL);
-	ReadFile(hfile, &OptText , 4, &l, NULL);
-	ReadFile(hfile, &OptViewR, 4, &l, NULL);
-	ReadFile(hfile, &SHADOWS3D, 4, &l, NULL);
-	ReadFile(hfile, &OptMsSens, 4, &l, NULL);
-	{ int _unused; ReadFile(hfile, &_unused, 4, &l, NULL); } // OptBrightness — now owned by display.cfg
+	ReadFile(hfile, &OptRes, 4, &l, nullptr);
+	ReadFile(hfile, &FOGENABLE, 4, &l, nullptr);
+	ReadFile(hfile, &OptText , 4, &l, nullptr);
+	ReadFile(hfile, &OptViewR, 4, &l, nullptr);
+	ReadFile(hfile, &SHADOWS3D, 4, &l, nullptr);
+	ReadFile(hfile, &OptMsSens, 4, &l, nullptr);
+	{ int _unused; ReadFile(hfile, &_unused, 4, &l, nullptr); } // OptBrightness — now owned by display.cfg
 
 
-	ReadFile(hfile, &KeyMap, sizeof(KeyMap), &l, NULL);
-	ReadFile(hfile, &REVERSEMS, 4, &l, NULL);
+	ReadFile(hfile, &KeyMap, sizeof(KeyMap), &l, nullptr);
+	ReadFile(hfile, &REVERSEMS, 4, &l, nullptr);
 
-	ReadFile(hfile, &ScentMode, 4, &l, NULL);
-	ReadFile(hfile, &CamoMode, 4, &l, NULL);
-	ReadFile(hfile, &RadarMode, 4, &l, NULL);
-	ReadFile(hfile, &Tranq    , 4, &l, NULL);
-	ReadFile(hfile, &OPT_ALPHA_COLORKEY, 4, &l, NULL);
+	ReadFile(hfile, &ScentMode, 4, &l, nullptr);
+	ReadFile(hfile, &CamoMode, 4, &l, nullptr);
+	ReadFile(hfile, &RadarMode, 4, &l, nullptr);
+	ReadFile(hfile, &Tranq    , 4, &l, nullptr);
+	ReadFile(hfile, &OPT_ALPHA_COLORKEY, 4, &l, nullptr);
 
-	ReadFile(hfile, &OptSys  , 4, &l, NULL);
-	ReadFile(hfile, &OptSound , 4, &l, NULL);
-	ReadFile(hfile, &OptRender, 4, &l, NULL);
+	ReadFile(hfile, &OptSys  , 4, &l, nullptr);
+	ReadFile(hfile, &OptSound , 4, &l, nullptr);
+	ReadFile(hfile, &OptRender, 4, &l, nullptr);
 	
 
 	SetupRes();
@@ -1761,37 +1764,37 @@ void SaveTrophy()
 	if (TrophyRoom.Score >= 300) TrophyRoom.Rank = 2;
 
     
-    HANDLE hfile = CreateFile(fname, GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hfile = CreateFile(fname, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (hfile == INVALID_HANDLE_VALUE) {
 		PrintLog("==>> Error saving trophy!\n");
 		return;
 	}
-	WriteFile(hfile, &TrophyRoom, sizeof(TrophyRoom), &l, NULL);
+	WriteFile(hfile, &TrophyRoom, sizeof(TrophyRoom), &l, nullptr);
 
-    WriteFile(hfile, &OptAgres, 4, &l, NULL);
-	WriteFile(hfile, &OptDens , 4, &l, NULL);
-	WriteFile(hfile, &OptSens , 4, &l, NULL);
+    WriteFile(hfile, &OptAgres, 4, &l, nullptr);
+	WriteFile(hfile, &OptDens , 4, &l, nullptr);
+	WriteFile(hfile, &OptSens , 4, &l, nullptr);
 
-	WriteFile(hfile, &OptRes, 4, &l, NULL);
-	WriteFile(hfile, &FOGENABLE, 4, &l, NULL);
-	WriteFile(hfile, &OptText , 4, &l, NULL);
-	WriteFile(hfile, &OptViewR, 4, &l, NULL);
-	WriteFile(hfile, &SHADOWS3D, 4, &l, NULL);
-	WriteFile(hfile, &OptMsSens, 4, &l, NULL);
-	WriteFile(hfile, &OptBrightness, 4, &l, NULL);
+	WriteFile(hfile, &OptRes, 4, &l, nullptr);
+	WriteFile(hfile, &FOGENABLE, 4, &l, nullptr);
+	WriteFile(hfile, &OptText , 4, &l, nullptr);
+	WriteFile(hfile, &OptViewR, 4, &l, nullptr);
+	WriteFile(hfile, &SHADOWS3D, 4, &l, nullptr);
+	WriteFile(hfile, &OptMsSens, 4, &l, nullptr);
+	WriteFile(hfile, &OptBrightness, 4, &l, nullptr);
 
-	WriteFile(hfile, &KeyMap, sizeof(KeyMap), &l, NULL);
-	WriteFile(hfile, &REVERSEMS, 4, &l, NULL);	
+	WriteFile(hfile, &KeyMap, sizeof(KeyMap), &l, nullptr);
+	WriteFile(hfile, &REVERSEMS, 4, &l, nullptr);	
 
-	WriteFile(hfile, &ScentMode, 4, &l, NULL);
-	WriteFile(hfile, &CamoMode , 4, &l, NULL);
-	WriteFile(hfile, &RadarMode, 4, &l, NULL);
-	WriteFile(hfile, &Tranq    , 4, &l, NULL);
-	WriteFile(hfile, &OPT_ALPHA_COLORKEY, 4, &l, NULL);
+	WriteFile(hfile, &ScentMode, 4, &l, nullptr);
+	WriteFile(hfile, &CamoMode , 4, &l, nullptr);
+	WriteFile(hfile, &RadarMode, 4, &l, nullptr);
+	WriteFile(hfile, &Tranq    , 4, &l, nullptr);
+	WriteFile(hfile, &OPT_ALPHA_COLORKEY, 4, &l, nullptr);
 
-	WriteFile(hfile, &OptSys   , 4, &l, NULL);
-	WriteFile(hfile, &OptSound , 4, &l, NULL);
-	WriteFile(hfile, &OptRender, 4, &l, NULL);
+	WriteFile(hfile, &OptSys   , 4, &l, nullptr);
+	WriteFile(hfile, &OptSound , 4, &l, nullptr);
+	WriteFile(hfile, &OptRender, 4, &l, nullptr);
 	CloseHandle(hfile);
 	PrintLog("Trophy Saved.\n");
 }
@@ -1806,22 +1809,22 @@ static const DWORD kDisplayVer   = 3; // bumped: v3 added VR graphics options
 void SaveDisplayConfig()
 {
     DWORD l;
-    HANDLE h = CreateFileA("display.cfg", GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileA("display.cfg", GENERIC_WRITE, 0, nullptr,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return;
-    WriteFile(h, &kDisplayMagic,  4, &l, NULL);
-    WriteFile(h, &kDisplayVer,    4, &l, NULL);
-    WriteFile(h, &OptDisplayMode, 4, &l, NULL);
-    WriteFile(h, &OptVSync,       4, &l, NULL);
-    WriteFile(h, &OptResW,        4, &l, NULL);
-    WriteFile(h, &OptResH,        4, &l, NULL);
-    WriteFile(h, &OptBrightness,  4, &l, NULL);
+    WriteFile(h, &kDisplayMagic,  4, &l, nullptr);
+    WriteFile(h, &kDisplayVer,    4, &l, nullptr);
+    WriteFile(h, &OptDisplayMode, 4, &l, nullptr);
+    WriteFile(h, &OptVSync,       4, &l, nullptr);
+    WriteFile(h, &OptResW,        4, &l, nullptr);
+    WriteFile(h, &OptResH,        4, &l, nullptr);
+    WriteFile(h, &OptBrightness,  4, &l, nullptr);
     int sh = (int)SHADOWS3D, fg = (int)FOGENABLE;
-    WriteFile(h, &sh, 4, &l, NULL);
-    WriteFile(h, &fg, 4, &l, NULL);
+    WriteFile(h, &sh, 4, &l, nullptr);
+    WriteFile(h, &fg, 4, &l, nullptr);
     // SOURCEPORT: v3 — graphics quality options
-    WriteFile(h, &OptAnisoLevel, 4, &l, NULL);
-    WriteFile(h, &OptSSFactor,   4, &l, NULL);
+    WriteFile(h, &OptAnisoLevel, 4, &l, nullptr);
+    WriteFile(h, &OptSSFactor,   4, &l, nullptr);
     CloseHandle(h);
     PrintLog("Display config saved.\n");
 }
@@ -1829,27 +1832,27 @@ void SaveDisplayConfig()
 void LoadDisplayConfig()
 {
     DWORD l;
-    HANDLE h = CreateFileA("display.cfg", GENERIC_READ, FILE_SHARE_READ, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE h = CreateFileA("display.cfg", GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return;
     DWORD magic = 0, ver = 0;
-    ReadFile(h, &magic, 4, &l, NULL);
-    ReadFile(h, &ver,   4, &l, NULL);
+    ReadFile(h, &magic, 4, &l, nullptr);
+    ReadFile(h, &ver,   4, &l, nullptr);
     if (magic != kDisplayMagic || ver > kDisplayVer) { CloseHandle(h); return; }
-    ReadFile(h, &OptDisplayMode, 4, &l, NULL);
-    ReadFile(h, &OptVSync,       4, &l, NULL);
-    ReadFile(h, &OptResW,        4, &l, NULL);
-    ReadFile(h, &OptResH,        4, &l, NULL);
-    ReadFile(h, &OptBrightness,  4, &l, NULL);
+    ReadFile(h, &OptDisplayMode, 4, &l, nullptr);
+    ReadFile(h, &OptVSync,       4, &l, nullptr);
+    ReadFile(h, &OptResW,        4, &l, nullptr);
+    ReadFile(h, &OptResH,        4, &l, nullptr);
+    ReadFile(h, &OptBrightness,  4, &l, nullptr);
     if (OptBrightness < -64) OptBrightness = -64;
     int sh = 0, fg = 0;
-    ReadFile(h, &sh, 4, &l, NULL);
-    ReadFile(h, &fg, 4, &l, NULL);
+    ReadFile(h, &sh, 4, &l, nullptr);
+    ReadFile(h, &fg, 4, &l, nullptr);
     SHADOWS3D = sh; FOGENABLE = fg;
     // SOURCEPORT: v3 — graphics quality options (with forward compatibility)
     if (ver >= 3) {
-        ReadFile(h, &OptAnisoLevel, 4, &l, NULL);
-        ReadFile(h, &OptSSFactor,   4, &l, NULL);
+        ReadFile(h, &OptAnisoLevel, 4, &l, nullptr);
+        ReadFile(h, &OptSSFactor,   4, &l, nullptr);
     } else {
         // v2 or earlier: initialize options with defaults
         OptAnisoLevel = 3;   // High (8x) — reduces anisotropic aliasing on oblique ground tiles

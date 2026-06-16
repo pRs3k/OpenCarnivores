@@ -66,12 +66,12 @@ bool LoadOBJ(TModel* mptr, const char* objPath)
 
         if (p[0] == 'v' && p[1] == ' ') {
             float x, y, z;
-            if (std::sscanf(p + 2, "%f %f %f", &x, &y, &z) == 3) {
+            if (std::sscanf(p + 2, "%f %f %f", &x, &y, &z) == 3) { // NOLINT(bugprone-unchecked-string-to-number-conversion)
                 vx.push_back(x); vy.push_back(y); vz.push_back(z);
             }
         } else if (p[0] == 'v' && p[1] == 't') {
             float u, v;
-            if (std::sscanf(p + 2, "%f %f", &u, &v) == 2) {
+            if (std::sscanf(p + 2, "%f %f", &u, &v) == 2) { // NOLINT(bugprone-unchecked-string-to-number-conversion)
                 uu.push_back(u); vv.push_back(v);
             }
         } else if (p[0] == 'f' && (p[1] == ' ' || p[1] == '\t')) {

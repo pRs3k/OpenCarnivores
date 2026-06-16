@@ -338,9 +338,10 @@ private:
     // SOURCEPORT: CSM — 3 cascades replace the single shadow map.
     static constexpr int   NUM_SHADOW_CASCADES = 3;
     static constexpr int   CASCADE_SHADOW_SIZE = 2048;  // per-cascade depth map resolution
-    // Ortho half-extents as fractions of m_shadowRange.  C0=10%, C1=35%, C2=100%.
-    // 1:3.5:2.9 quality ratios (vs old 1:4:4) — gentler jumps reduce visible seams.
-    static constexpr float CASCADE_RANGE_FRACS[3] = {0.10f, 0.35f, 1.0f};
+    // SOURCEPORT: cascade 0 widened from 0.10→0.25 so it covers the full player view range
+    // (~15k–21k GU at typical ctViewR 60–82) — previously cascade 0 ended at 6.5k GU,
+    // causing thin casters (tree trunks) to vanish at the cascade 1 boundary mid-scene.
+    static constexpr float CASCADE_RANGE_FRACS[3] = {0.25f, 0.60f, 1.0f};
     RenderVertex m_mainBuffer[MAX_MAIN_VERTICES];
     RenderVertex m_geomBuffer[MAX_GEOM_VERTICES];
 

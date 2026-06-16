@@ -14,6 +14,7 @@
 #include <cstring>
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <set>
 #include "VFS.h"
 #include "Bindings.h"
@@ -32,6 +33,7 @@ struct MenuScreen {
     std::vector<uint8_t> map; // 400x300 hit-test map
     int mapW = 400, mapH = 300;
     bool loaded = false;
+    uint32_t gen = 0;  // SOURCEPORT: generation counter; CompositeMenu uses to detect screen change
 };
 
 // ─── Menu audio helpers ───────────────────────────────────────────────────────
@@ -59,6 +61,8 @@ static struct {
     bool rClick  = false;
     bool lHeld   = false;  // true while left button is held down (for drag)
     int  scancode = 0;
+    int  padDX = 0;  // controller move direction set by PollMenuEvents (-1/0/+1)
+    int  padDY = 0;
 } gMI;
 
 // Scale raw SDL logical mouse coords → GL drawable coords.
@@ -78,6 +82,12 @@ static bool PollMenuEvents(bool& appQuit) {
     gMI.lClick = false;
     gMI.rClick = false;
     gMI.scancode = 0;
+
+    // D-pad held-state for autorepeat — statics shared between event loop and post-loop.
+    static Uint32 s_dpadRepeatAt = 0;
+    static bool   s_dpadHeld     = false;
+    static int    s_dpadDX = 0, s_dpadDY = 0;
+
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
@@ -94,10 +104,39 @@ static bool PollMenuEvents(bool& appQuit) {
             break;
         case SDL_KEYDOWN:
             gMI.scancode = ev.key.keysym.scancode; break;
-        // SOURCEPORT: route hot-plug events through Gamepad so the device
-        // is opened even if SDL didn't enumerate it until after Gamepad::Init
-        // ran (DInput backend, late USB wake, etc.). Without this the event
-        // gets consumed here and g_pad stays null forever.
+        // SOURCEPORT: controller navigation — A = confirm, B/Start = back,
+        // D-pad/stick = cycle items. NOT forwarded to Gamepad::HandleEvent
+        // to avoid hunt-loop side-effects (weapon swap, pause, etc.) in menus.
+        // D-pad fires on CONTROLLERBUTTONDOWN (not state-poll) so quick taps
+        // that complete within a single frame are never silently dropped.
+        case SDL_CONTROLLERBUTTONDOWN: {
+            const uint8_t btn = ev.cbutton.button;
+            if (btn == SDL_CONTROLLER_BUTTON_A) {
+                gMI.lClick = true;
+            } else if (btn == SDL_CONTROLLER_BUTTON_B || btn == SDL_CONTROLLER_BUTTON_START) {
+                gMI.scancode = SDL_SCANCODE_ESCAPE;
+            } else {
+                int ddx = 0, ddy = 0;
+                if (btn == SDL_CONTROLLER_BUTTON_DPAD_LEFT)  ddx = -1;
+                if (btn == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) ddx =  1;
+                if (btn == SDL_CONTROLLER_BUTTON_DPAD_UP)    ddy = -1;
+                if (btn == SDL_CONTROLLER_BUTTON_DPAD_DOWN)  ddy =  1;
+                if (ddx || ddy) {
+                    gMI.padDX = ddx; gMI.padDY = ddy;
+                    s_dpadDX = ddx;  s_dpadDY = ddy;
+                    s_dpadRepeatAt = SDL_GetTicks() + 400;
+                    s_dpadHeld = true;
+                }
+            }
+            break;
+        }
+        case SDL_CONTROLLERBUTTONUP: {
+            const uint8_t btn = ev.cbutton.button;
+            if (btn == SDL_CONTROLLER_BUTTON_DPAD_LEFT  || btn == SDL_CONTROLLER_BUTTON_DPAD_RIGHT ||
+                btn == SDL_CONTROLLER_BUTTON_DPAD_UP    || btn == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+                s_dpadHeld = false;
+            break;
+        }
         case SDL_CONTROLLERDEVICEADDED:
         case SDL_CONTROLLERDEVICEREMOVED:
             Gamepad::HandleEvent(ev);
@@ -118,6 +157,51 @@ static bool PollMenuEvents(bool& appQuit) {
             break;
         }
     }
+    // SOURCEPORT: D-pad autorepeat + left-stick navigation.
+    // D-pad initial fire happened in the CONTROLLERBUTTONDOWN case above.
+    // Here we add repeat for held D-pad and immediate+repeat for the left stick.
+    {
+        SDL_GameController* pad = Gamepad::GetPad();
+        if (pad) {
+            Uint32 now = SDL_GetTicks();
+
+            // D-pad repeat — fires after initial delay set in CONTROLLERBUTTONDOWN
+            if (s_dpadHeld && now >= s_dpadRepeatAt) {
+                gMI.padDX = s_dpadDX; gMI.padDY = s_dpadDY;
+                s_dpadRepeatAt = now + 150;
+            }
+
+            // Left stick — only fires if D-pad didn't produce input this frame
+            if (!gMI.padDX && !gMI.padDY) {
+                static Uint32 s_stickRepeatAt = 0;
+                static bool   s_stickHeld     = false;
+
+                const int DEAD = 8000;
+                int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
+                int ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
+                int sdx = 0, sdy = 0;
+                if      (lx < -DEAD) sdx = -1;
+                else if (lx >  DEAD) sdx =  1;
+                if (!sdx) {
+                    if      (ly < -DEAD) sdy = -1;
+                    else if (ly >  DEAD) sdy =  1;
+                }
+                if (sdx || sdy) {
+                    if (!s_stickHeld) {
+                        gMI.padDX = sdx; gMI.padDY = sdy;
+                        s_stickRepeatAt = now + 400;
+                        s_stickHeld = true;
+                    } else if (now >= s_stickRepeatAt) {
+                        gMI.padDX = sdx; gMI.padDY = sdy;
+                        s_stickRepeatAt = now + 150;
+                    }
+                } else {
+                    s_stickHeld = false;
+                }
+            }
+        }
+    }
+
     // Audio tick happens in menus too — crossfades between MENUR ship-hum and
     // MENUAMB depend on this firing every menu frame.
     AudioUpdate();
@@ -144,6 +228,8 @@ static void FreePic(TPicture& pic) {
 }
 
 // Load a MenuScreen: OFF tga, ON tga (optional), RAW map (optional).
+static uint32_t s_menuGenCounter = 0;
+
 static bool LoadMenuScreen(MenuScreen& ms, const char* offPath,
                            const char* onPath = nullptr,
                            const char* mapPath = nullptr)
@@ -170,6 +256,7 @@ static bool LoadMenuScreen(MenuScreen& ms, const char* offPath,
     }
 
     ms.loaded = true;
+    ms.gen = ++s_menuGenCounter;
     return true;
 }
 
@@ -189,6 +276,66 @@ static void FreeMenuScreen(MenuScreen& ms) {
 static int CompositeMenu(MenuScreen& ms, const std::vector<int>& alwaysOn = {}) {
     if (!ms.comp.lpImage || !ms.off.lpImage) return 0;
 
+    // ── Controller focus navigation ───────────────────────────────────────────
+    // Centroid table: button ID → {cx, cy} in 400×300 map space.
+    // Rebuilt whenever the active menu screen changes.
+    // On D-pad/stick input (padDX/padDY), the cursor warps to the nearest button
+    // centroid in the pressed direction so the normal hit-test below picks it up.
+    static int      s_focusId = 0;
+    static uint32_t s_lastGen = 0;  // SOURCEPORT: gen counter immune to heap/stack address reuse
+    static std::map<int, std::pair<int,int>> s_centroids;
+
+    if (ms.gen != s_lastGen) {
+        s_lastGen = ms.gen;
+        s_centroids.clear();
+        s_focusId = 0;
+        if (!ms.map.empty()) {
+            std::map<int,int> cnt, sx, sy;
+            for (int iy = 0; iy < ms.mapH; iy++) {
+                for (int ix = 0; ix < ms.mapW; ix++) {
+                    uint8_t id = ms.map[iy * ms.mapW + ix];
+                    if (id > 0 && id != 42) { cnt[id]++; sx[id]+=ix; sy[id]+=iy; }
+                }
+            }
+            for (auto& [id, n] : cnt)
+                s_centroids[id] = { sx[id]/n, sy[id]/n };
+            // Default focus: topmost button (smallest map-Y centroid)
+            int topY = ms.mapH, topId = 0;
+            for (auto& [id, c] : s_centroids)
+                if (c.second < topY) { topY = c.second; topId = id; }
+            s_focusId = topId;
+        }
+    }
+
+    if ((gMI.padDX || gMI.padDY) && !s_centroids.empty()) {
+        // Snap cursor to current focus centroid, then find the nearest button in
+        // the pressed direction via dot-product score (penalise lateral offset).
+        auto cur = s_centroids.count(s_focusId)
+            ? s_centroids.at(s_focusId)
+            : std::make_pair(ms.mapW / 2, ms.mapH / 2);
+        if (s_centroids.count(s_focusId)) {
+            gMI.x = cur.first  * WinW / ms.mapW;
+            gMI.y = cur.second * WinH / ms.mapH;
+        }
+        int   bestId    = 0;
+        float bestScore = 1e30f;
+        for (auto& [id, c] : s_centroids) {
+            if (id == s_focusId) continue;
+            float relX  = (float)(c.first  - cur.first);
+            float relY  = (float)(c.second - cur.second);
+            float dot   = relX * gMI.padDX + relY * gMI.padDY;
+            if (dot <= 0.f) continue;
+            float score = dot + std::abs(relX * gMI.padDY - relY * gMI.padDX) * 2.f;
+            if (score < bestScore) { bestScore = score; bestId = id; }
+        }
+        if (bestId) {
+            s_focusId = bestId;
+            gMI.x = s_centroids[bestId].first  * WinW / ms.mapW;
+            gMI.y = s_centroids[bestId].second * WinH / ms.mapH;
+        }
+        gMI.padDX = gMI.padDY = 0;
+    }
+
     // Map mouse position to 400x300 map coords (map is half the 800x600 image)
     int mx = (gMI.x * ms.mapW) / WinW;
     int my = (gMI.y * ms.mapH) / WinH;
@@ -201,6 +348,9 @@ static int CompositeMenu(MenuScreen& ms, const std::vector<int>& alwaysOn = {}) 
     // '*' (42) appears in some maps as a generic "is a button" marker — treat it
     // as a sentinel that means "something is hovered but use ID from nearby pixel"
     if (hoverId == '*') hoverId = 0;
+
+    // Keep focus in sync with mouse so switching input feels natural
+    if (hoverId > 0) s_focusId = hoverId;
 
     // Blend: start from off, replace hovered-button and always-on pixels with on
     bool needBlend = ms.on.lpImage && (hoverId > 0 || !alwaysOn.empty());
@@ -580,6 +730,23 @@ static int RunPlayerSelect(bool& appQuit) {
     int  selected      = -1;
     bool newPlayer     = false;    // did we just create a brand-new player?
 
+    // SOURCEPORT: find OK (id=1) and DELETE (id=2) centroids for controller cursor warp
+    int okRX = -1, okRY = -1, delRX = -1, delRY = -1;
+    if (!ms.map.empty()) {
+        long long sx1=0,sy1=0,n1=0,sx2=0,sy2=0,n2=0;
+        for (int my=0;my<ms.mapH;my++) for (int mx=0;mx<ms.mapW;mx++) {
+            uint8_t id=ms.map[my*ms.mapW+mx];
+            if(id==1){sx1+=mx;sy1+=my;n1++;}
+            if(id==2){sx2+=mx;sy2+=my;n2++;}
+        }
+        if(n1){okRX=(int)(sx1/n1)*WinW/ms.mapW;okRY=(int)(sy1/n1)*WinH/ms.mapH;}
+        if(n2){delRX=(int)(sx2/n2)*WinW/ms.mapW;delRY=(int)(sy2/n2)*WinH/ms.mapH;}
+    }
+    int focusIdx = 0;  // 0-4=player slots, 5=OK, 6=DELETE
+    // SOURCEPORT: put cursor in neutral position so no map button is pre-highlighted on entry
+    gMI.x = lx + WinW*90/800;
+    gMI.y = ly + slH/2;  // center of slot 0 (not in map button area)
+
     while (selected < 0 && !appQuit) {
         if (!PollMenuEvents(appQuit)) break;
 
@@ -591,6 +758,28 @@ static int RunPlayerSelect(bool& appQuit) {
             typedName[0] = 0;
         else if (sc && sc != SDL_SCANCODE_RETURN)
             AppendChar(typedName, 28, sc);
+
+        // SOURCEPORT: controller navigation for player slots and OK/DELETE
+        for (int i = 0; i < 5; i++) {
+            int sy = ly + i * slH;
+            if (gMI.x >= lx && gMI.x < lx + WinW*180/800 &&
+                gMI.y >= sy  && gMI.y < sy + slH) focusIdx = i;
+        }
+        {
+            int prev = focusIdx;
+            if (gMI.padDY > 0) { if (focusIdx < 6) ++focusIdx; gMI.padDX=0; gMI.padDY=0; }
+            if (gMI.padDY < 0) { if (focusIdx > 0) --focusIdx; gMI.padDX=0; gMI.padDY=0; }
+            if (focusIdx != prev && focusIdx >= 0 && focusIdx <= 4) {
+                PlayerSlot ps = ReadSlot(focusIdx);
+                if (ps.exists) { highlightSlot=focusIdx; strncpy(typedName,ps.name,31); typedName[31]=0; }
+                else highlightSlot=-1;
+                // Warp cursor into slot area so map buttons (OK/DELETE) don't stay highlighted
+                gMI.x = lx + WinW*90/800;
+                gMI.y = ly + focusIdx * slH + slH/2;
+            }
+        }
+        if (focusIdx == 5 && okRX  >= 0) { gMI.x = okRX;  gMI.y = okRY; }
+        if (focusIdx == 6 && delRX >= 0) { gMI.x = delRX; gMI.y = delRY; }
 
         int hov = CompositeMenu(ms);
         MenuBegin();
@@ -606,8 +795,8 @@ static int RunPlayerSelect(bool& appQuit) {
         for (int i = 0; i < 5; i++) {
             PlayerSlot ps = ReadSlot(i);
             int sy = ly + i * slH;
-            bool hot = gMI.x >= lx && gMI.x < lx + WinW*180/800 &&
-                       gMI.y >= sy  && gMI.y < sy + slH;
+            bool hot = (gMI.x >= lx && gMI.x < lx + WinW*180/800 &&
+                        gMI.y >= sy  && gMI.y < sy + slH) || (focusIdx == i);
             bool sel = (i == highlightSlot);
 
             if (ps.exists) {
@@ -622,6 +811,15 @@ static int RunPlayerSelect(bool& appQuit) {
                 }
             }
             // Empty slots are shown by the background image itself
+        }
+
+        // SOURCEPORT: controller A on focused slot — first press selects, second confirms (= Return)
+        if (gMI.lClick && hov == 0 && focusIdx >= 0 && focusIdx <= 4) {
+            PlayerSlot fps = ReadSlot(focusIdx);
+            if (fps.exists) {
+                if (highlightSlot == focusIdx) sc = SDL_SCANCODE_RETURN;
+                else { highlightSlot=focusIdx; strncpy(typedName,fps.name,31); typedName[31]=0; }
+            }
         }
 
         // OK / DELETE via map buttons
@@ -1089,7 +1287,7 @@ static void RunOptions(bool& appQuit) {
 
     while (!appQuit) {
         // Custom event poll so we can intercept raw key events for rebinding
-        gMI.lClick = false; gMI.rClick = false; gMI.scancode = 0;
+        gMI.lClick = false; gMI.rClick = false; gMI.scancode = 0; gMI.padDX = 0; gMI.padDY = 0;
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             switch (ev.type) {
@@ -1131,6 +1329,17 @@ static void RunOptions(bool& appQuit) {
                 if (waitIdx >= 0 && waitCol == 1) {
                     *bindings[waitIdx].pad = ev.cbutton.button;
                     waitIdx = -1;
+                } else {
+                    // SOURCEPORT: menu navigation when not rebinding
+                    switch (ev.cbutton.button) {
+                    case SDL_CONTROLLER_BUTTON_A:          gMI.lClick = true; break;
+                    case SDL_CONTROLLER_BUTTON_B:
+                    case SDL_CONTROLLER_BUTTON_START:      gMI.scancode = SDL_SCANCODE_ESCAPE; break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT:  gMI.padDX = -1; break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: gMI.padDX = +1; break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_UP:    gMI.padDY = -1; break;
+                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN:  gMI.padDY = +1; break;
+                    }
                 }
                 break;
             // SOURCEPORT: same rationale as PollMenuEvents — forward hot-plug
@@ -1907,82 +2116,96 @@ static void SaveEnabledMods(const std::vector<std::string>& folders,
     fclose(f);
 }
 
-static void RunModsScreen(bool& appQuit) {
-    std::vector<std::string> folders = EnumerateModFolders();
-    std::set<std::string>    enabled = LoadEnabledMods();
+// Enumerate subdirectories of shaderpacks/ for the addons screen.
+static std::vector<std::string> EnumerateShaderPacks() {
+    std::vector<std::string> out;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path dir = fs::path("shaderpacks");
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return out;
+    for (auto& entry : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        if (entry.is_directory(ec))
+            out.push_back(entry.path().filename().string());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
 
-    // Reuse MENUM background for visual continuity; we overlay our own text on top.
+static std::set<std::string> LoadEnabledPacks() {
+    std::set<std::string> enabled;
+    FILE* f = fopen("shaderpacks\\packs.cfg", "r");
+    if (!f) return enabled;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        int n = (int)strlen(line);
+        while (n > 0 && (line[n-1] == '\n' || line[n-1] == '\r' ||
+                         line[n-1] == ' '  || line[n-1] == '\t')) line[--n] = 0;
+        if (n > 0 && line[0] != '#') enabled.insert(std::string(line));
+    }
+    fclose(f);
+    return enabled;
+}
+
+static void SaveEnabledPacks(const std::vector<std::string>& packs,
+                             const std::set<std::string>& enabled) {
+    FILE* f = fopen("shaderpacks\\packs.cfg", "w");
+    if (!f) return;
+    fprintf(f, "# OpenCarnivores shader pack load order. One pack name per line.\n");
+    fprintf(f, "# Packs apply in order; later packs override earlier for shared keys.\n");
+    for (auto& name : packs)
+        if (enabled.count(name)) fprintf(f, "%s\n", name.c_str());
+    fclose(f);
+}
+
+static void RunModsScreen(bool& appQuit) {
+    // SOURCEPORT: unified addons screen — shows both mods/ directories and
+    // shaderpacks/ directories so all non-engine content is managed in one place.
+    std::vector<std::string> modFolders  = EnumerateModFolders();
+    std::vector<std::string> packFolders = EnumerateShaderPacks();
+    std::set<std::string>    enabledMods  = LoadEnabledMods();
+    std::set<std::string>    enabledPacks = LoadEnabledPacks();
+
+    const int nMods     = (int)modFolders.size();
+    const int nPacks    = (int)packFolders.size();
+    // focusIdx layout: 0..nMods-1 = mod entries, nMods..nMods+nPacks-1 = pack entries,
+    // IDX_APPLY = nMods+nPacks, IDX_BACK = nMods+nPacks+1.
+    const int IDX_APPLY = nMods + nPacks;
+    const int IDX_BACK  = nMods + nPacks + 1;
+
+    int focusIdx = 0;
+
     MenuScreen ms = {};
-    LoadMenuScreen(ms,
-        "HUNTDAT\\MENU\\MENUM.TGA",
-        nullptr,
-        nullptr);
+    LoadMenuScreen(ms, "HUNTDAT\\MENU\\MENUM.TGA", nullptr, nullptr);
 
     while (!appQuit) {
         if (!PollMenuEvents(appQuit)) break;
-        CompositeMenu(ms);
+        CompositeMenu(ms);  // no map on this screen; padDX/padDY pass through untouched
 
-        MenuBegin();
-        DrawMenuScreen(ms);
+        // Controller D-pad / stick: move focus through the item list
+        if (gMI.padDY > 0) { if (focusIdx < IDX_BACK)  ++focusIdx; gMI.padDX = 0; gMI.padDY = 0; }
+        if (gMI.padDY < 0) { if (focusIdx > 0)          --focusIdx; gMI.padDX = 0; gMI.padDY = 0; }
 
-        // SOURCEPORT: all content lives on the right half of the screen so MENUM's
-        // baked art on the left remains visible behind it.
-        int colX    = WinW * 420 / 800;
-        int colRight = WinW * 780 / 800;
+        // Layout constants
+        const int colX     = WinW * 420 / 800;
+        const int colRight = WinW * 780 / 800;
+        const int listX    = colX;
+        const int listY    = WinH * 140 / 600;
+        const int rowH     = WinH * 28  / 600;
 
-        // Header
-        MTBig("MODS", colX, WinH * 70 / 600, 0x00FFD040);
-
-        // List area
-        int listX = colX;
-        int listY = WinH * 140 / 600;
-        int rowH  = WinH * 28  / 600;
-
-        if (folders.empty()) {
-            MT("No mods installed.",                               listX, listY,           0x00C0C0C0);
-            MT("Create a folder at ./mods/<name>/ to add one.",    listX, listY + rowH,     0x00909090);
-            MT("Folder contents should mirror the game layout",    listX, listY + rowH*2,   0x00909090);
-            MT("(e.g. mods/MyPack/HUNTDAT/TREX.png).",             listX, listY + rowH*3,   0x00909090);
-        } else {
-            for (size_t i = 0; i < folders.size(); ++i) {
-                int ry = listY + (int)i * rowH;
-                bool en = enabled.count(folders[i]) > 0;
-                int rowX0 = listX;
-                int rowX1 = colRight;
-                bool hot = (gMI.x >= rowX0 && gMI.x < rowX1 &&
-                            gMI.y >= ry     && gMI.y < ry + rowH);
-                uint32_t col = en ? 0x00FFE080 : 0x00A0A0A0;
-                if (hot) col = 0x00FFFFFF;
-                char line[320];
-                wsprintf(line, "[%s]  %s", en ? "X" : " ", folders[i].c_str());
-                MT(line, listX, ry, col);
-
-                if (hot && gMI.lClick) {
-                    if (en) enabled.erase(folders[i]);
-                    else    enabled.insert(folders[i]);
-                    if (fxMenuGo.lpData)
-                        AddVoicev(fxMenuGo.length, fxMenuGo.lpData, 200);
-                }
-            }
-        }
-
-        // Bottom-right buttons: [APPLY]  [BACK]
-        // BACK discards changes and returns; APPLY persists mods.cfg and restarts
-        // the exe so the new mount stack takes effect immediately.
+        // Button pixel bounds (needed for pre-pass hover detection below)
         const char* kBack  = "BACK";
         const char* kApply = "APPLY";
-        int backW   = g_glRenderer->MeasureTextBig(kBack);
-        int applyW  = g_glRenderer->MeasureTextBig(kApply);
-        int btnH    = WinH * 44 / 600;
-        int gap     = WinW * 30 / 800;
-
-        int backLX  = WinW - backW - WinW * 20 / 800;
-        int backLY  = WinH - btnH - WinH * 12 / 600;
-        int backX0  = backLX - WinW * 6 / 800;
-        int backY0  = backLY - WinH * 4 / 600;
-        int backX1  = backLX + backW + WinW * 6 / 800;
-        int backY1  = backLY + btnH;
-
+        int backW  = g_glRenderer->MeasureTextBig(kBack);
+        int applyW = g_glRenderer->MeasureTextBig(kApply);
+        int btnH   = WinH * 44 / 600;
+        int gap    = WinW * 30 / 800;
+        int backLX  = WinW - backW  - WinW * 20 / 800;
+        int backLY  = WinH - btnH   - WinH * 12 / 600;
+        int backX0  = backLX  - WinW * 6 / 800;
+        int backY0  = backLY  - WinH * 4 / 600;
+        int backX1  = backLX  + backW  + WinW * 6 / 800;
+        int backY1  = backLY  + btnH;
         int applyLX = backLX - gap - applyW;
         int applyLY = backLY;
         int applyX0 = applyLX - WinW * 6 / 800;
@@ -1990,26 +2213,97 @@ static void RunModsScreen(bool& appQuit) {
         int applyX1 = applyLX + applyW + WinW * 6 / 800;
         int applyY1 = backY1;
 
-        bool backHot  = (gMI.x >= backX0  && gMI.x < backX1  &&
-                         gMI.y >= backY0  && gMI.y < backY1);
-        bool applyHot = (gMI.x >= applyX0 && gMI.x < applyX1 &&
-                         gMI.y >= applyY0 && gMI.y < applyY1);
+        // Pre-pass: update focusIdx from mouse position so mouse and controller
+        // stay in sync. Runs before rendering so 'hot' is computed from final focusIdx.
+        {
+            int row = 0;
+            if (nMods > 0) {
+                row++;  // section header row (not interactive)
+                for (int i = 0; i < nMods; ++i, ++row) {
+                    int ry = listY + row * rowH;
+                    if (gMI.x >= listX && gMI.x < colRight && gMI.y >= ry && gMI.y < ry + rowH)
+                        focusIdx = i;
+                }
+            }
+            if (nPacks > 0) {
+                if (nMods > 0) row++;   // blank gap row
+                row++;                  // section header row
+                for (int j = 0; j < nPacks; ++j, ++row) {
+                    int ry = listY + row * rowH;
+                    if (gMI.x >= listX && gMI.x < colRight && gMI.y >= ry && gMI.y < ry + rowH)
+                        focusIdx = nMods + j;
+                }
+            }
+            if (gMI.x >= backX0  && gMI.x < backX1  && gMI.y >= backY0  && gMI.y < backY1)  focusIdx = IDX_BACK;
+            if (gMI.x >= applyX0 && gMI.x < applyX1 && gMI.y >= applyY0 && gMI.y < applyY1) focusIdx = IDX_APPLY;
+        }
 
+        MenuBegin();
+        DrawMenuScreen(ms);
+        MTBig("ADDONS", colX, WinH * 70 / 600, 0x00FFD040);
+
+        // Rendering pass — hot is derived solely from focusIdx (updated by pre-pass above)
+        if (nMods == 0 && nPacks == 0) {
+            MT("No mods or shader packs installed.",       listX, listY,         0x00C0C0C0);
+            MT("Mods: create a mods/<name>/ folder.",      listX, listY + rowH,   0x00909090);
+            MT("Packs: create shaderpacks/<name>/ folder.",listX, listY + rowH*2, 0x00909090);
+        } else {
+            int row = 0;
+            if (nMods > 0) {
+                MT("-- MODS --", listX, listY + row * rowH, 0x00707070);
+                row++;
+                for (int i = 0; i < nMods; ++i, ++row) {
+                    bool en  = enabledMods.count(modFolders[i]) > 0;
+                    bool hot = (focusIdx == i);
+                    uint32_t col = en ? 0x00FFE080 : 0x00A0A0A0;
+                    if (hot) col = 0x00FFFFFF;
+                    char line[320];
+                    wsprintf(line, "[%s]  [M]  %s", en ? "X" : " ", modFolders[i].c_str());
+                    MT(line, listX, listY + row * rowH, col);
+                    if (hot && gMI.lClick) {
+                        if (en) enabledMods.erase(modFolders[i]);
+                        else    enabledMods.insert(modFolders[i]);
+                        if (fxMenuGo.lpData) AddVoicev(fxMenuGo.length, fxMenuGo.lpData, 200);
+                    }
+                }
+            }
+            if (nPacks > 0) {
+                if (nMods > 0) row++;  // blank gap
+                MT("-- SHADER PACKS --", listX, listY + row * rowH, 0x00707070);
+                row++;
+                for (int j = 0; j < nPacks; ++j, ++row) {
+                    bool en  = enabledPacks.count(packFolders[j]) > 0;
+                    bool hot = (focusIdx == nMods + j);
+                    uint32_t col = en ? 0x00FFE080 : 0x00A0A0A0;
+                    if (hot) col = 0x00FFFFFF;
+                    char line[320];
+                    wsprintf(line, "[%s]  [SP] %s", en ? "X" : " ", packFolders[j].c_str());
+                    MT(line, listX, listY + row * rowH, col);
+                    if (hot && gMI.lClick) {
+                        if (en) enabledPacks.erase(packFolders[j]);
+                        else    enabledPacks.insert(packFolders[j]);
+                        if (fxMenuGo.lpData) AddVoicev(fxMenuGo.length, fxMenuGo.lpData, 200);
+                    }
+                }
+            }
+        }
+
+        bool backHot  = (focusIdx == IDX_BACK);
+        bool applyHot = (focusIdx == IDX_APPLY);
         MTBig(kApply, applyLX, applyLY, applyHot ? 0x00FFE080 : 0x00AC6D24);
         MTBig(kBack,  backLX,  backLY,  backHot  ? 0x00FFE080 : 0x00AC6D24);
 
-        bool doApply = (gMI.lClick && applyHot);
+        bool doApply = gMI.lClick && applyHot;
         bool doBack  = (gMI.lClick && backHot) || gMI.scancode == SDL_SCANCODE_ESCAPE;
 
         MenuEnd();
         SDL_Delay(16);
 
         if (doApply) {
-            SaveEnabledMods(folders, enabled);
+            SaveEnabledMods(modFolders, enabledMods);
+            SaveEnabledPacks(packFolders, enabledPacks);
             FreeMenuScreen(ms);
-            // SOURCEPORT: relaunch ourselves so VFS::Init picks up the new mount
-            // stack. CreateProcess + ExitProcess is simpler than tearing down SDL
-            // / GL / audio cleanly and re-initialising in-place.
+            // SOURCEPORT: relaunch so VFS::Init and ShaderPackManager pick up new config.
             char exePath[MAX_PATH] = {};
             GetModuleFileNameA(nullptr, exePath, MAX_PATH);
             STARTUPINFOA si = { sizeof(si) };
@@ -2024,7 +2318,6 @@ static void RunModsScreen(bool& appQuit) {
         if (doBack) break;
     }
 
-    // BACK / ESC path: discard any toggles — do NOT persist to mods.cfg.
     FreeMenuScreen(ms);
 }
 

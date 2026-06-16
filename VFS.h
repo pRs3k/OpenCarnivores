@@ -36,4 +36,7 @@ std::FILE* fopen(const char* path, const char* mode);
 // For dev builds: returns the number of mods currently mounted.
 int MountCount();
 
+// Returns true if the named mod (directory under mods/) is currently active.
+bool IsMounted(const char* modName);
+
 } // namespace VFS

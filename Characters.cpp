@@ -1,3 +1,5 @@
+#include <cmath>
+
 #include "Hunt.h"
 #include "Scripting.h"
 #include "stdio.h"
@@ -184,8 +186,8 @@ void ResetCharacter(TCharacter *cptr)
 	 cptr->BloodTTime = 0;
 	 cptr->BloodTime  = 0;
 
-	 cptr->lookx = (float)cos(cptr->alpha);
-     cptr->lookz = (float)sin(cptr->alpha);
+	 cptr->lookx = (float)std::cos(cptr->alpha);
+     cptr->lookz = (float)std::sin(cptr->alpha);
 	 
 	 cptr->Health = DinoInfo[cptr->CType].Health0;
 	 if (OptAgres>128) cptr->Health= (cptr->Health*OptAgres)/128;
@@ -208,7 +210,7 @@ void AddDeadBody(TCharacter *cptr, int phase)
    Characters[ChCount].alpha = CameraAlpha;
    ResetCharacter(&Characters[ChCount]);
 
-   if (phase != HUNT_BREATH)
+   if (phase != HUNT_BREATH && !KidsMode)
       AddVoicev(fxScream[r].length, fxScream[r].lpData, 256);
 
    Characters[ChCount].Health = 0;
@@ -229,6 +231,12 @@ void AddDeadBody(TCharacter *cptr, int phase)
    
    Characters[ChCount].Phase = phase;
    Characters[ChCount].PrevPhase = phase;
+   // KIDSMODE: override phase before FX fires so ActivateCharacterFx plays Phase 2
+   // (silent final-dead-pose) instead of Phase 1 (drowning gurgle)
+   if (KidsMode && phase == HUNT_BREATH) {
+       Characters[ChCount].Phase = 2;
+       Characters[ChCount].PrevPhase = 2;
+   }
 
    ActivateCharacterFx(&Characters[ChCount]);
    
@@ -245,14 +253,14 @@ void AddDeadBody(TCharacter *cptr, int phase)
 float AngleDifference(float a, float b)
 {
  a-=b;
- a = (float)fabs(a);
+ a = (float)std::fabs(a);
  if (a > pi) a = 2*pi - a;
  return a;
 }
 
 float CorrectedAlpha(float a, float b)
 {
-	float d = (float)fabs(a-b);
+	float d = (float)std::fabs(a-b);
 	if (d<pi) return (a+b)/2;
 	     else d = (a+pi*2-b);
 
@@ -309,10 +317,10 @@ int CheckPlaceCollisionP(Vector3d &v)
    float h = GetLandH(v.x, v.z);
    v.y = h;
 
-   float hh = GetLandH(v.x-164, v.z-164); if ( fabs(hh-h) > 160 ) return 1;
-         hh = GetLandH(v.x+164, v.z-164); if ( fabs(hh-h) > 160 ) return 1;
-		 hh = GetLandH(v.x-164, v.z+164); if ( fabs(hh-h) > 160 ) return 1;
-		 hh = GetLandH(v.x+164, v.z+164); if ( fabs(hh-h) > 160 ) return 1;
+   float hh = GetLandH(v.x-164, v.z-164); if ( std::fabs(hh-h) > 160 ) return 1;
+         hh = GetLandH(v.x+164, v.z-164); if ( std::fabs(hh-h) > 160 ) return 1;
+		 hh = GetLandH(v.x-164, v.z+164); if ( std::fabs(hh-h) > 160 ) return 1;
+		 hh = GetLandH(v.x+164, v.z+164); if ( std::fabs(hh-h) > 160 ) return 1;
   
    for (int z=-2; z<=2; z++)
     for (int x=-2; x<=2; x++) 
@@ -324,7 +332,7 @@ int CheckPlaceCollisionP(Vector3d &v)
         float oz = (ccz+z) * 256.f + 128.f;
         float ox = (ccx+x) * 256.f + 128.f;
         
-        float r = (float) sqrt( (ox-v.x)*(ox-v.x) + (oz-v.z)*(oz-v.z) );
+        float r = (float) std::sqrt( (ox-v.x)*(ox-v.x) + (oz-v.z)*(oz-v.z) );
         if (r<CR) return 1;
 	  }
 
@@ -350,14 +358,14 @@ int CheckPlaceCollision(Vector3d &v, BOOL wc, BOOL mc)
 
    float h = GetLandH(v.x, v.z);
    if (! (FMap[ccz][ccx] & fmWater) )
-     if (fabs(h - v.y) > 64) return 1;
+     if (std::fabs(h - v.y) > 64) return 1;
    
    v.y = h;
 
-   float hh = GetLandH(v.x-64, v.z-64); if ( fabs(hh-h) > 100 ) return 1;
-         hh = GetLandH(v.x+64, v.z-64); if ( fabs(hh-h) > 100 ) return 1;
-		 hh = GetLandH(v.x-64, v.z+64); if ( fabs(hh-h) > 100 ) return 1;
-		 hh = GetLandH(v.x+64, v.z+64); if ( fabs(hh-h) > 100 ) return 1;
+   float hh = GetLandH(v.x-64, v.z-64); if ( std::fabs(hh-h) > 100 ) return 1;
+         hh = GetLandH(v.x+64, v.z-64); if ( std::fabs(hh-h) > 100 ) return 1;
+		 hh = GetLandH(v.x-64, v.z+64); if ( std::fabs(hh-h) > 100 ) return 1;
+		 hh = GetLandH(v.x+64, v.z+64); if ( std::fabs(hh-h) > 100 ) return 1;
 
   if (mc)
    for (int z=-2; z<=2; z++)
@@ -370,7 +378,7 @@ int CheckPlaceCollision(Vector3d &v, BOOL wc, BOOL mc)
         float oz = (ccz+z) * 256.f + 128.f;
         float ox = (ccx+x) * 256.f + 128.f;
         
-        float r = (float) sqrt( (ox-v.x)*(ox-v.x) + (oz-v.z)*(oz-v.z) );
+        float r = (float) std::sqrt( (ox-v.x)*(ox-v.x) + (oz-v.z)*(oz-v.z) );
         if (r<CR) return 1;
 	  }
 
@@ -400,10 +408,10 @@ int CheckPlaceCollision2(Vector3d &v, BOOL wc)
      if (fabs(h - v.y) > 64) return 1;*/
    v.y = h;
 
-   float hh = GetLandH(v.x-64, v.z-64); if ( fabs(hh-h) > 100 ) return 1;
-         hh = GetLandH(v.x+64, v.z-64); if ( fabs(hh-h) > 100 ) return 1;
-		 hh = GetLandH(v.x-64, v.z+64); if ( fabs(hh-h) > 100 ) return 1;
-		 hh = GetLandH(v.x+64, v.z+64); if ( fabs(hh-h) > 100 ) return 1;
+   float hh = GetLandH(v.x-64, v.z-64); if ( std::fabs(hh-h) > 100 ) return 1;
+         hh = GetLandH(v.x+64, v.z-64); if ( std::fabs(hh-h) > 100 ) return 1;
+		 hh = GetLandH(v.x-64, v.z+64); if ( std::fabs(hh-h) > 100 ) return 1;
+		 hh = GetLandH(v.x+64, v.z+64); if ( std::fabs(hh-h) > 100 ) return 1;
 
    return 0;
 }
@@ -413,8 +421,8 @@ int CheckPlaceCollision2(Vector3d &v, BOOL wc)
 int CheckPossiblePath(TCharacter *cptr, BOOL wc, BOOL mc)
 {
   Vector3d p = cptr->pos;
-  float lookx = (float)cos(cptr->tgalpha);
-  float lookz = (float)sin(cptr->tgalpha);
+  float lookx = (float)std::cos(cptr->tgalpha);
+  float lookz = (float)std::sin(cptr->tgalpha);
   int c=0;
   for (int t=0; t<20; t++) {    
     p.x+=lookx * 64.f;
@@ -465,8 +473,8 @@ void LookForAWay(TCharacter *cptr, BOOL wc, BOOL mc)
 BOOL ReplaceCharacterForward(TCharacter *cptr)
 {
   float al = CameraAlpha + (float)siRand(2048) / 2048.f;
-  float sa = (float)sin(al);
-  float ca = (float)cos(al);
+  float sa = (float)std::sin(al);
+  float ca = (float)std::cos(al);
   Vector3d p;
   p.x = PlayerX + sa * (ctViewR+rRand(10))*256;
   p.z = PlayerZ - ca * (ctViewR+rRand(10))*256;
@@ -506,8 +514,8 @@ replace1:
 
 	 if (CheckPlaceCollisionP(Characters[ChCount].pos)) goto replace1;
 
-	 if ( fabs(Characters[ChCount].pos.x - PlayerX) + 
-	      fabs(Characters[ChCount].pos.z - PlayerZ) < 256 * 40 )
+	 if ( std::fabs(Characters[ChCount].pos.x - PlayerX) + 
+	      std::fabs(Characters[ChCount].pos.z - PlayerZ) < 256 * 40 )
 		  goto replace1;		  
 
      Characters[ChCount].tgx = Characters[ChCount].pos.x;
@@ -522,7 +530,7 @@ replace1:
 
 
 
-void MoveCharacter(TCharacter *cptr, float dx, float dz, BOOL wc, BOOL mc)
+void MoveCharacter(TCharacter *cptr, float dx, float dz, BOOL wc, BOOL  /*mc*/)
 {
    Vector3d p = cptr->pos;
 
@@ -573,7 +581,7 @@ replace:
 	 p.y = GetLandH(p.x, p.z);
 	 tr++;
 	 if (tr<128) 
-	  if ( fabs(p.x - cptr->pos.x) + fabs(p.z - cptr->pos.z) < R / 2.f) goto replace;
+	  if ( std::fabs(p.x - cptr->pos.x) + std::fabs(p.z - cptr->pos.z) < R / 2.f) goto replace;
 	 	 
 	 R+=512;
 
@@ -596,7 +604,7 @@ replace:
      p.z = cptr->pos.z + siRand((int)R); if (p.z<512) p.z = 512; if (p.z>1018*256) p.z = 1018*256;	 
 	 tr++;
 	 if (tr<16)
-	   if ( fabs(p.x - cptr->pos.x) + fabs(p.z - cptr->pos.z) < R / 2.f) goto replace;	 	 
+	   if ( std::fabs(p.x - cptr->pos.x) + std::fabs(p.z - cptr->pos.z) < R / 2.f) goto replace;	 	 
 
 	 p.y = GetLandH(p.x, p.z);
 	 float wy = GetLandUpH(p.x, p.z) - p.y;
@@ -698,7 +706,7 @@ void AnimateRaptorDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime) 
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = RAP_SLP;
 			ActivateCharacterFx(cptr);
@@ -734,7 +742,7 @@ void AnimateVeloDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = VEL_SLP;
 			ActivateCharacterFx(cptr);
@@ -771,7 +779,7 @@ void AnimateSpinDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = SPN_SLP;
 			ActivateCharacterFx(cptr);
@@ -807,7 +815,7 @@ void AnimateCeraDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = CER_SLP;
 			ActivateCharacterFx(cptr);
@@ -830,21 +838,27 @@ void AnimateCeraDead(TCharacter *cptr)
 void AnimateTRexDead(TCharacter *cptr)
 {    
 
-  if (cptr->Phase!=REX_DIE) {    
+  if (cptr->Phase!=REX_DIE && cptr->Phase!=REX_SLP) {
     if (cptr->PPMorphTime>128) {
      cptr->PrevPhase = cptr->Phase;
      cptr->PrevPFTime  = cptr->FTime;
-     cptr->PPMorphTime = 0; }    
+     cptr->PPMorphTime = 0; }
 
     cptr->FTime = 0;
-    cptr->Phase = REX_DIE;   
+    cptr->Phase = REX_DIE;
 	ActivateCharacterFx(cptr);
-  } else {    
+  } else {
     ProcessPrevPhase(cptr);
 
-    cptr->FTime+=TimeDt;      
+    cptr->FTime+=TimeDt;
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-        cptr->FTime = cptr->pinfo->Animation[cptr->Phase].AniTime-1;
+        // KIDSMODE: T-Rex sleeps like other dinos (original code had no Tranq support for T-Rex)
+        if (Tranq || KidsMode) {
+            cptr->FTime = 0;
+            cptr->Phase = REX_SLP;
+            ActivateCharacterFx(cptr);
+        } else
+            cptr->FTime = cptr->pinfo->Animation[cptr->Phase].AniTime-1;
   }
 
 //======= movement ===========//
@@ -875,7 +889,7 @@ void AnimateMoshDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = MOS_SLP;
 			ActivateCharacterFx(cptr);
@@ -912,7 +926,7 @@ void AnimateDimetDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = DMT_SLP;
 			ActivateCharacterFx(cptr);
@@ -948,7 +962,7 @@ void AnimateGallDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = GAL_SLP;
 			ActivateCharacterFx(cptr);
@@ -1068,7 +1082,7 @@ void AnimateTricDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = TRI_SLP;
 			ActivateCharacterFx(cptr);
@@ -1106,7 +1120,7 @@ void AnimatePacDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = PAC_SLP;
 			ActivateCharacterFx(cptr);
@@ -1142,7 +1156,7 @@ void AnimateAnkyDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = ANK_SLP;
 			ActivateCharacterFx(cptr);
@@ -1179,7 +1193,7 @@ void AnimateStegDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = STG_SLP;
 			ActivateCharacterFx(cptr);
@@ -1216,7 +1230,7 @@ void AnimateParDead(TCharacter *cptr)
 
     cptr->FTime+=TimeDt;      
     if (cptr->FTime >= cptr->pinfo->Animation[cptr->Phase].AniTime)
-		if (Tranq) {
+		if (Tranq || KidsMode) {
 			cptr->FTime=0;
 			cptr->Phase = PAR_SLP;
 			ActivateCharacterFx(cptr);
@@ -1260,8 +1274,8 @@ void AnimateParDead(TCharacter *cptr)
 void AnimateRaptor(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
@@ -1271,11 +1285,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );    
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );    
 
    float playerdx = PlayerX - cptr->pos.x - cptr->lookx * 100 * cptr->scale;
    float playerdz = PlayerZ - cptr->pos.z - cptr->lookz * 100 * cptr->scale;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    if (cptr->State==2) { if (cptr->Phase!=RAP_JUMP) NewPhase=TRUE; cptr->State=1; }
 
    
@@ -1310,14 +1324,16 @@ TBEGIN:
 	   if (AngleDifference(cptr->alpha, FindVectorAlpha(playerdx, playerdz)) < 0.2f)
 	    cptr->Phase = RAP_JUMP;
 
-	 if (pdist<256) 
-	 if (fabs(PlayerY - cptr->pos.y - 160) < 256) { 	    	   
+	 if (pdist<256)
+	 if (std::fabs(PlayerY - cptr->pos.y - 160) < 256) {
 		 if (!(cptr->StateF & csONWATER)) {
 	        cptr->vspeed/= 8.0f;
-	        cptr->State = 1;
-	        cptr->Phase = RAP_EAT;	   
+	        // KIDSMODE: dino walks away instead of eating
+	        if (KidsMode) { cptr->State = 0; cptr->Phase = RAP_WALK; }
+	        else           { cptr->State = 1; cptr->Phase = RAP_EAT; }
 		 }
 	   AddDeadBody(cptr, HUNT_EAT);
+	   if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
 	 }
    }
 
@@ -1333,7 +1349,7 @@ NOTHINK:
    {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   	  
 	if (cptr->State && pdist>1648) { 
-		cptr->tgalpha += (float)sin(RealTime/824.f) / 2.f;
+		cptr->tgalpha += (float)std::sin(RealTime/824.f) / 2.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -1359,15 +1375,15 @@ NOTHINK:
        NewPhase = TRUE; }
    
    if (cptr->Phase==RAP_EAT)  goto ENDPSELECT; 
-   if (NewPhase && _Phase==RAP_JUMP) { cptr->Phase = RAP_RUN; goto ENDPSELECT; }
+   if (NewPhase && Phase==RAP_JUMP) { cptr->Phase = RAP_RUN; goto ENDPSELECT; }
    
 
    if (cptr->Phase== RAP_JUMP) goto ENDPSELECT;    
             
    // SOURCEPORT: consolidated duplicate branch — both non-running paths set RAP_WALK
    cptr->Phase = (cptr->State &&
-                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                  (std::fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   std::fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
                  ? RAP_RUN : RAP_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = RAP_SWIM;
@@ -1377,19 +1393,19 @@ NOTHINK:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {     
+   if (Phase != cptr->Phase) {     
     //==== set proportional FTime for better morphing =//       
    if (MORPHP)
-    if (_Phase<=3 && cptr->Phase<=3)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+    if (Phase<=3 && cptr->Phase<=3)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -1400,7 +1416,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
    if (cptr->Phase==RAP_JUMP || cptr->Phase==RAP_EAT) goto SKIPROT;
@@ -1421,12 +1437,12 @@ ENDPSELECT:
    if (tgbend>pi/5) tgbend = pi/5;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 600.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -1447,8 +1463,8 @@ SKIPROT:
 
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == RAP_RUN ) curspeed = 1.2f;
@@ -1465,6 +1481,7 @@ SKIPROT:
     if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 500.f);    
    
@@ -1518,8 +1535,8 @@ SKIPROT:
 void AnimateVelo(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
@@ -1529,11 +1546,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );    
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );    
 
    float playerdx = PlayerX - cptr->pos.x - cptr->lookx * 108;
    float playerdz = PlayerZ - cptr->pos.z - cptr->lookz * 108;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    if (cptr->State==2) { if (cptr->Phase!=VEL_JUMP) NewPhase=TRUE; cptr->State=1; }
 
    
@@ -1567,15 +1584,16 @@ TBEGIN:
 	   if (AngleDifference(cptr->alpha, FindVectorAlpha(playerdx, playerdz)) < 0.2f)
 	    cptr->Phase = VEL_JUMP;
 
-	 if (pdist<256) 
-	  if (fabs(PlayerY - cptr->pos.y - 120) < 256) { 	    
+	 if (pdist<256)
+	  if (std::fabs(PlayerY - cptr->pos.y - 120) < 256) {
 		  if (!(cptr->StateF & csONWATER)) {
 	        cptr->vspeed/= 8.0f;
-	        cptr->State = 1;
-	        cptr->Phase = VEL_EAT;	   
+	        // KIDSMODE: dino walks away instead of eating
+	        if (KidsMode) { cptr->State = 0; cptr->Phase = VEL_WALK; }
+	        else           { cptr->State = 1; cptr->Phase = VEL_EAT; }
 		 }
-	   
-	   AddDeadBody(cptr, HUNT_EAT);	   
+	   AddDeadBody(cptr, HUNT_EAT);
+	   if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
 	 }
    }
 
@@ -1592,7 +1610,7 @@ NOTHINK:
    {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   	  
 	if (cptr->State && pdist>1648) { 
-		cptr->tgalpha += (float)sin(RealTime/824.f) / 2.f;
+		cptr->tgalpha += (float)std::sin(RealTime/824.f) / 2.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -1618,15 +1636,15 @@ NOTHINK:
        NewPhase = TRUE; }
    
    if (cptr->Phase==VEL_EAT)  goto ENDPSELECT; 
-   if (NewPhase && _Phase==VEL_JUMP) { cptr->Phase = VEL_RUN; goto ENDPSELECT; }
+   if (NewPhase && Phase==VEL_JUMP) { cptr->Phase = VEL_RUN; goto ENDPSELECT; }
    
 
    if (cptr->Phase== VEL_JUMP) goto ENDPSELECT;    
             
    // SOURCEPORT: consolidated duplicate branch — both non-running paths set VEL_WALK
    cptr->Phase = (cptr->State &&
-                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                  (std::fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   std::fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
                  ? VEL_RUN : VEL_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = VEL_SWIM;
@@ -1636,19 +1654,19 @@ NOTHINK:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {     
+   if (Phase != cptr->Phase) {     
     //==== set proportional FTime for better morphing =//       
    if (MORPHP)
-    if (_Phase<=3 && cptr->Phase<=3)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+    if (Phase<=3 && cptr->Phase<=3)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -1659,7 +1677,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
    if (cptr->Phase==VEL_JUMP || cptr->Phase==VEL_EAT) goto SKIPROT;
@@ -1680,12 +1698,12 @@ ENDPSELECT:
    if (tgbend>pi/5) tgbend = pi/5;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 600.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -1706,8 +1724,8 @@ SKIPROT:
 
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == VEL_RUN ) curspeed = 1.2f;
@@ -1724,6 +1742,7 @@ SKIPROT:
     if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 500.f);    
    
@@ -1776,8 +1795,8 @@ SKIPROT:
 void AnimateSpin(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
@@ -1787,11 +1806,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );    
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );    
 
    float playerdx = PlayerX - cptr->pos.x - cptr->lookx * 108;
    float playerdz = PlayerZ - cptr->pos.z - cptr->lookz * 108;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    if (cptr->State==2) { if (cptr->Phase!=SPN_JUMP) NewPhase=TRUE; cptr->State=1; cptr->Phase=SPN_RUN;}
 
    
@@ -1825,22 +1844,23 @@ TBEGIN:
 	   if (AngleDifference(cptr->alpha, FindVectorAlpha(playerdx, playerdz)) < 0.2f)
 	    cptr->Phase = SPN_JUMP;
 
-	 if (pdist<300) 
-	  if (fabs(PlayerY - cptr->pos.y - 120) < 256) { 	    
+	 if (pdist<300)
+	  if (std::fabs(PlayerY - cptr->pos.y - 120) < 256) {
 		  if (!(cptr->StateF & csONWATER)) {
 	        cptr->vspeed/= 8.0f;
-	        cptr->State = 1;
-	        cptr->Phase = SPN_EAT;	   
+	        // KIDSMODE: dino walks away instead of eating
+	        if (KidsMode) { cptr->State = 0; cptr->Phase = SPN_WALK; }
+	        else           { cptr->State = 1; cptr->Phase = SPN_EAT; }
 		 }
-	   
-	   AddDeadBody(cptr, HUNT_EAT);	   
+	   AddDeadBody(cptr, HUNT_EAT);
+	   if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
 	 }
    }
 
-   if (!cptr->State) {    
+   if (!cptr->State) {
 	cptr->AfraidTime = 0;
 	if (tdist<456) {
-       SetNewTargetPlace(cptr, 8048.f);	   	
+       SetNewTargetPlace(cptr, 8048.f);
 	   goto TBEGIN; }
    }
 
@@ -1850,7 +1870,7 @@ NOTHINK:
    {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   	  
 	if (cptr->State && pdist>1648) { 
-		cptr->tgalpha += (float)sin(RealTime/824.f) / 4.f;
+		cptr->tgalpha += (float)std::sin(RealTime/824.f) / 4.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -1876,7 +1896,7 @@ NOTHINK:
        NewPhase = TRUE; }
    
    if (cptr->Phase==SPN_EAT)  goto ENDPSELECT; 
-   if (NewPhase && _Phase==SPN_JUMP) { cptr->Phase = SPN_RUN; goto ENDPSELECT; }   
+   if (NewPhase && Phase==SPN_JUMP) { cptr->Phase = SPN_RUN; goto ENDPSELECT; }   
 
    if (cptr->Phase== SPN_JUMP) goto ENDPSELECT;    
    
@@ -1890,8 +1910,8 @@ NOTHINK:
    if (cptr->Phase!=SPN_IDLE1 && cptr->Phase!=SPN_IDLE2)
    // SOURCEPORT: consolidated duplicate branch — both non-running paths set SPN_WALK
    cptr->Phase = (cptr->State &&
-                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                  (std::fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   std::fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
                  ? SPN_RUN : SPN_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = SPN_SWIM;
@@ -1901,19 +1921,19 @@ NOTHINK:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {     
+   if (Phase != cptr->Phase) {     
     //==== set proportional FTime for better morphing =//       
    if (MORPHP)
-    if (_Phase<=3 && cptr->Phase<=3)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+    if (Phase<=3 && cptr->Phase<=3)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -1924,7 +1944,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
    if (cptr->Phase==SPN_JUMP  || cptr->Phase==SPN_EAT ||
@@ -1946,12 +1966,12 @@ ENDPSELECT:
    if (tgbend>pi/5) tgbend = pi/5;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 600.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -1972,8 +1992,8 @@ SKIPROT:
 
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == SPN_RUN ) curspeed = 1.6f;
@@ -1990,6 +2010,7 @@ SKIPROT:
     if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 500.f);    
    
@@ -2045,8 +2066,8 @@ SKIPROT:
 void AnimateCera(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
 
 
@@ -2056,11 +2077,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );    
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );    
 
    float playerdx = PlayerX - cptr->pos.x - cptr->lookx * 108;
    float playerdz = PlayerZ - cptr->pos.z - cptr->lookz * 108;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; cptr->Phase=CER_RUN;}
 
    
@@ -2091,15 +2112,16 @@ TBEGIN:
      
 	 
 
-	 if (pdist<350) 
-	  if (fabs(PlayerY - cptr->pos.y - 120) < 256) { 	    
+	 if (pdist<350)
+	  if (std::fabs(PlayerY - cptr->pos.y - 120) < 256) {
 		  if (!(cptr->StateF & csONWATER)) {
 	        cptr->vspeed/= 8.0f;
-	        cptr->State = 1;
-	        cptr->Phase = CER_EAT;	   
+	        // KIDSMODE: dino walks away instead of eating
+	        if (KidsMode) { cptr->State = 0; cptr->Phase = CER_WALK; }
+	        else           { cptr->State = 1; cptr->Phase = CER_EAT; }
 		 }
-	   
-	   AddDeadBody(cptr, HUNT_EAT);	   
+	   AddDeadBody(cptr, HUNT_EAT);
+	   if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
 	 }
    }
 
@@ -2116,7 +2138,7 @@ NOTHINK:
    {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   	  
 	if (cptr->State && pdist>1648) { 
-		cptr->tgalpha += (float)sin(RealTime/824.f) / 4.f;
+		cptr->tgalpha += (float)std::sin(RealTime/824.f) / 4.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -2154,8 +2176,8 @@ NOTHINK:
    if (cptr->Phase!=CER_IDLE1 && cptr->Phase!=CER_IDLE2 && cptr->Phase!=CER_IDLE3)
    // SOURCEPORT: consolidated duplicate branch — both non-running paths set CER_WALK
    cptr->Phase = (cptr->State &&
-                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                  (std::fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   std::fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
                  ? CER_RUN : CER_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = CER_SWIM;
@@ -2164,19 +2186,19 @@ NOTHINK:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {     
+   if (Phase != cptr->Phase) {     
     //==== set proportional FTime for better morphing =//       
    if (MORPHP)
-    if (_Phase<=3 && cptr->Phase<=3)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+    if (Phase<=3 && cptr->Phase<=3)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -2187,7 +2209,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
    if (cptr->Phase==CER_IDLE1 || cptr->Phase==CER_EAT ||
@@ -2209,12 +2231,12 @@ ENDPSELECT:
    if (tgbend>pi/5) tgbend = pi/5;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 600.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -2227,8 +2249,8 @@ SKIPROT:
 
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == CER_RUN ) curspeed = 2.2f;   
@@ -2238,6 +2260,7 @@ SKIPROT:
    //if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 500.f);    
    
@@ -2277,8 +2300,8 @@ SKIPROT:
 void AnimateTRex(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    BOOL LookMode = FALSE;
 
@@ -2290,11 +2313,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );    
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );    
 
    float playerdx = PlayerX - cptr->pos.x - cptr->lookx * 108;
    float playerdz = PlayerZ - cptr->pos.z - cptr->lookz * 108;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    float palpha = FindVectorAlpha(playerdx, playerdz);
    //if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }      
    if (cptr->State==5) { 
@@ -2324,14 +2347,16 @@ TBEGIN:
 		cptr->rspeed=0;
 	   }
 
-	 if (pdist<380) 
-	  if (fabs(PlayerY - cptr->pos.y) < 256) { 	    
+	 if (pdist<380)
+	  if (std::fabs(PlayerY - cptr->pos.y) < 256) {
 	   cptr->vspeed/= 8.0f;
-	   cptr->State = 1;
-	   cptr->Phase = REX_EAT;	   
+	   // KIDSMODE: T-Rex walks away instead of eating
+	   if (KidsMode) { cptr->State = 0; cptr->Phase = REX_WALK; }
+	   else           { cptr->State = 1; cptr->Phase = REX_EAT; }
 	   AddDeadBody(cptr, HUNT_KILL);
 	   Characters[ChCount-1].scale = cptr->scale;
-	   Characters[ChCount-1].alpha = cptr->alpha;	   
+	   Characters[ChCount-1].alpha = cptr->alpha;
+	   if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
 	   cptr->bend = 0;
 	   DemoPoint.CIndex = CurDino;
 	 }
@@ -2349,7 +2374,7 @@ NOTHINK:
    {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   	  
 	if (cptr->State && pdist>5648) { 
-		cptr->tgalpha += (float)sin(RealTime/824.f) / 6.f;
+		cptr->tgalpha += (float)std::sin(RealTime/824.f) / 6.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -2401,8 +2426,8 @@ NOTHINK:
 
    // SOURCEPORT: consolidated duplicate branch — both non-running paths set REX_WALK
    cptr->Phase = (cptr->State == 1 &&
-                  (fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
-                   fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
+                  (std::fabs(cptr->tgalpha - cptr->alpha)<1.0 ||
+                   std::fabs(cptr->tgalpha - cptr->alpha)>2*pi-1.0))
                  ? REX_RUN : REX_WALK;
 
    if (cptr->StateF & csONWATER) cptr->Phase = REX_SWIM;
@@ -2410,19 +2435,19 @@ NOTHINK:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {     
+   if (Phase != cptr->Phase) {     
     //==== set proportional FTime for better morphing =//       
    if (MORPHP)
-    if (_Phase<=1 && cptr->Phase<=1)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+    if (Phase<=1 && cptr->Phase<=1)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -2433,7 +2458,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
    if (cptr->Phase==REX_SCREAM || cptr->Phase==REX_EAT) goto SKIPROT;
@@ -2460,7 +2485,7 @@ ENDPSELECT:
 								   
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -2470,8 +2495,8 @@ ENDPSELECT:
 SKIPROT:
    
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == REX_RUN ) curspeed = 2.49f;   
@@ -2481,6 +2506,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 200.f);    
       
@@ -2525,8 +2551,8 @@ SKIPROT:
 void AnimateMosh(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -2537,11 +2563,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -2622,17 +2648,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=1 && cptr->Phase<=1)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=1 && cptr->Phase<=1)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -2643,7 +2669,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -2663,12 +2689,12 @@ ENDPSELECT:
    if (tgbend>pi/2) tgbend = pi/2;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 400.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -2678,8 +2704,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == MOS_RUN ) curspeed = 0.6f;   
@@ -2688,6 +2714,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
       
@@ -2708,8 +2735,8 @@ SKIPROT:
 void AnimateBrahi(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)   
 
 TBEGIN:
@@ -2719,7 +2746,7 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
      
    if (tdist<256) {      	   
@@ -2760,14 +2787,14 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {                 
+   if (Phase != cptr->Phase) {                 
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -2778,7 +2805,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -2799,7 +2826,7 @@ ENDPSELECT:
    DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 3200.f);
       
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
    if (cptr->alpha > pi * 2) cptr->alpha-= pi * 2;
@@ -2808,8 +2835,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;   
    if (cptr->Phase == BRA_WALK) curspeed = 0.2f;   
@@ -2817,6 +2844,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
    cptr->pos.x+=cptr->lookx * cptr->vspeed * TimeDt;
@@ -2842,8 +2870,8 @@ SKIPROT:
 void AnimateDimet(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -2854,11 +2882,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -2940,17 +2968,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=1 && cptr->Phase<=1)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=1 && cptr->Phase<=1)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -2961,7 +2989,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -2981,12 +3009,12 @@ ENDPSELECT:
    if (tgbend>pi/2) tgbend = pi/2;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 400.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -2996,8 +3024,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == DMT_RUN ) curspeed = 0.6f;   
@@ -3006,6 +3034,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
       
@@ -3031,8 +3060,8 @@ SKIPROT:
 void AnimateTric(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -3043,7 +3072,7 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    //float playerdx = PlayerX - cptr->pos.x;
    //float playerdz = PlayerZ - cptr->pos.z;
@@ -3051,7 +3080,7 @@ TBEGIN:
    float playerdx = PlayerX - cptr->pos.x - cptr->lookx * 300 * cptr->scale;
    float playerdz = PlayerZ - cptr->pos.z - cptr->lookz * 300 * cptr->scale;
 
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -3079,10 +3108,12 @@ TBEGIN:
    }
 
    if (MyHealth)
-   if (pdist<300) 
-	 if (fabs(PlayerY - cptr->pos.y - 160) < 256) { 	    	   		 	        
-	   cptr->State = 0;	        		 
-	   AddDeadBody(cptr, HUNT_EAT);	   
+   if (pdist<300)
+	 if (std::fabs(PlayerY - cptr->pos.y - 160) < 256) {
+	   cptr->State = 0;
+	   AddDeadBody(cptr, HUNT_EAT);
+	   // KIDSMODE: skip being-eaten animation on the player body
+	   if (KidsMode && ChCount > 0) { Characters[ChCount-1].Phase = 2; Characters[ChCount-1].PrevPhase = 2; }
 	 }
 
    //======== exploring area ===============//
@@ -3101,7 +3132,7 @@ TBEGIN:
    else {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   
     if (cptr->AfraidTime) { 
-		cptr->tgalpha += (float)sin(RealTime/1024.f) / 3.f;
+		cptr->tgalpha += (float)std::sin(RealTime/1024.f) / 3.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -3141,17 +3172,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=1 && cptr->Phase<=1)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=1 && cptr->Phase<=1)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -3162,7 +3193,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -3182,12 +3213,12 @@ ENDPSELECT:
    if (tgbend>pi/2.f) tgbend = pi/2.f;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1600.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1600.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1200.f);
 
    
    rspd=cptr->rspeed * TimeDt / 612.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -3197,8 +3228,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == TRI_RUN ) curspeed = 1.2f;   
@@ -3207,6 +3238,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    if (curspeed>cptr->vspeed) DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
                          else DeltaFunc(cptr->vspeed, curspeed, TimeDt / 256.f);    
@@ -3228,8 +3260,8 @@ SKIPROT:
 void AnimatePac(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -3240,11 +3272,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -3287,7 +3319,7 @@ TBEGIN:
    else {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   
     if (cptr->AfraidTime) { 
-		cptr->tgalpha += (float)sin(RealTime/1024.f) / 3.f;
+		cptr->tgalpha += (float)std::sin(RealTime/1024.f) / 3.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -3327,17 +3359,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=2 && cptr->Phase<=2)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=2 && cptr->Phase<=2)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -3348,7 +3380,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -3368,12 +3400,12 @@ ENDPSELECT:
    if (tgbend>pi/2.f) tgbend = pi/2.f;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1600.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1600.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1200.f);
 
    
    rspd=cptr->rspeed * TimeDt / 612.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -3383,8 +3415,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == PAC_RUN ) curspeed = 1.6f;   
@@ -3393,6 +3425,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    if (curspeed>cptr->vspeed) DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
                          else DeltaFunc(cptr->vspeed, curspeed, TimeDt / 256.f);    
@@ -3420,8 +3453,8 @@ SKIPROT:
 void AnimateAnky(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -3432,11 +3465,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -3479,7 +3512,7 @@ TBEGIN:
    else {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   
     if (cptr->AfraidTime) { 
-		cptr->tgalpha += (float)sin(RealTime/1024.f) / 3.f;
+		cptr->tgalpha += (float)std::sin(RealTime/1024.f) / 3.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -3519,17 +3552,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=2 && cptr->Phase<=2)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=2 && cptr->Phase<=2)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -3540,7 +3573,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -3565,7 +3598,7 @@ ENDPSELECT:
 
    
    rspd=cptr->rspeed * TimeDt / 612.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -3575,8 +3608,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == ANK_RUN ) curspeed = 0.75f;   
@@ -3585,6 +3618,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    if (curspeed>cptr->vspeed) DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
                          else DeltaFunc(cptr->vspeed, curspeed, TimeDt / 256.f);    
@@ -3611,8 +3645,8 @@ SKIPROT:
 void AnimateSteg(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -3623,11 +3657,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -3670,7 +3704,7 @@ TBEGIN:
    else {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   
     if (cptr->AfraidTime) { 
-		cptr->tgalpha += (float)sin(RealTime/1024.f) / 3.f;
+		cptr->tgalpha += (float)std::sin(RealTime/1024.f) / 3.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -3710,17 +3744,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=2 && cptr->Phase<=2)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=2 && cptr->Phase<=2)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -3731,7 +3765,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -3756,7 +3790,7 @@ ENDPSELECT:
 
    
    rspd=cptr->rspeed * TimeDt / 612.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -3766,8 +3800,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == STG_RUN ) curspeed = 0.96f;   
@@ -3776,6 +3810,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    if (curspeed>cptr->vspeed) DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
                          else DeltaFunc(cptr->vspeed, curspeed, TimeDt / 256.f);    
@@ -3795,8 +3830,8 @@ SKIPROT:
 void AnimatePar(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -3807,11 +3842,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -3854,7 +3889,7 @@ TBEGIN:
    else {
     cptr->tgalpha = CorrectedAlpha(FindVectorAlpha(targetdx, targetdz), cptr->alpha);//FindVectorAlpha(targetdx, targetdz);   
     if (cptr->AfraidTime) { 
-		cptr->tgalpha += (float)sin(RealTime/1024.f) / 3.f;
+		cptr->tgalpha += (float)std::sin(RealTime/1024.f) / 3.f;
 		if (cptr->tgalpha < 0) cptr->tgalpha+=2*pi;
         if (cptr->tgalpha > 2*pi) cptr->tgalpha-=2*pi;
 	}
@@ -3894,17 +3929,17 @@ TBEGIN:
 ENDPSELECT:
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=2 && cptr->Phase<=2)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=2 && cptr->Phase<=2)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -3915,7 +3950,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
 
@@ -3935,12 +3970,12 @@ ENDPSELECT:
    if (tgbend>pi/2.f) tgbend = pi/2.f;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1600.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1600.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 1200.f);
 
    
    rspd=cptr->rspeed * TimeDt / 612.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -3950,8 +3985,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == PAR_RUN ) curspeed = 1.6f;   
@@ -3960,6 +3995,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    if (curspeed>cptr->vspeed) DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
                          else DeltaFunc(cptr->vspeed, curspeed, TimeDt / 256.f);    
@@ -3982,8 +4018,8 @@ SKIPROT:
 void AnimateGall(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
    if (cptr->AfraidTime) cptr->AfraidTime = max(0, cptr->AfraidTime - TimeDt);
    if (cptr->State==2) { NewPhase=TRUE; cptr->State=1; }
@@ -3994,11 +4030,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//
@@ -4077,17 +4113,17 @@ ENDPSELECT:
 
 //====== process phase changing ===========//
 
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {         
-    if (_Phase<=2 && cptr->Phase<=2)
-        cptr->FTime = _FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[_Phase].AniTime + 64;
+   if (Phase != cptr->Phase) {         
+    if (Phase<=2 && cptr->Phase<=2)
+        cptr->FTime = FTime * cptr->pinfo->Animation[cptr->Phase].AniTime / cptr->pinfo->Animation[Phase].AniTime + 64;
     else if (!NewPhase) cptr->FTime = 0;
 
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
   
@@ -4098,7 +4134,7 @@ ENDPSELECT:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
    
    if (cptr->Phase == GAL_IDLE1 || cptr->Phase == GAL_IDLE2) goto SKIPROT;
@@ -4117,12 +4153,12 @@ ENDPSELECT:
    if (tgbend>pi/2) tgbend = pi/2;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 400.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -4132,8 +4168,8 @@ ENDPSELECT:
 SKIPROT:   
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == GAL_RUN ) curspeed = 0.9f;   
@@ -4142,6 +4178,7 @@ SKIPROT:
    if (drspd > pi / 2.f) curspeed*=2.f - 2.f*drspd / pi;
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 1024.f);    
       
@@ -4162,8 +4199,8 @@ SKIPROT:
 void AnimateDimor(TCharacter *cptr)
 {
    NewPhase = FALSE;
-   int _Phase = cptr->Phase;
-   int _FTime = cptr->FTime;
+   int Phase = cptr->Phase;
+   int FTime = cptr->FTime;
    // SOURCEPORT: removed dead _tgalpha local (assigned from cptr->tgalpha but never read)
       
 
@@ -4173,11 +4210,11 @@ TBEGIN:
    float targetdx = targetx - cptr->pos.x;
    float targetdz = targetz - cptr->pos.z;
 
-   float tdist = (float)sqrt( targetdx * targetdx + targetdz * targetdz );       
+   float tdist = (float)std::sqrt( targetdx * targetdx + targetdz * targetdz );       
 
    float playerdx = PlayerX - cptr->pos.x;
    float playerdz = PlayerZ - cptr->pos.z;
-   float pdist = (float)sqrt( playerdx * playerdx + playerdz * playerdz );    
+   float pdist = (float)std::sqrt( playerdx * playerdx + playerdz * playerdz );    
    
 
    //=========== run away =================//   
@@ -4225,15 +4262,15 @@ TBEGIN:
 
 
 //====== process phase changing ===========//
-   if ( (_Phase != cptr->Phase) || NewPhase)
+   if ( (Phase != cptr->Phase) || NewPhase)
 	 if ( (rand() & 1023) > 980 )
 	   ActivateCharacterFx(cptr);	   
    
-   if (_Phase != cptr->Phase) {
+   if (Phase != cptr->Phase) {
     if (!NewPhase) cptr->FTime = 0;   
     if (cptr->PPMorphTime>128) {
-     cptr->PrevPhase = _Phase;
-     cptr->PrevPFTime  = _FTime;
+     cptr->PrevPhase = Phase;
+     cptr->PrevPFTime  = FTime;
      cptr->PPMorphTime = 0; }
    }
    
@@ -4244,7 +4281,7 @@ TBEGIN:
    //========== rotation to tgalpha ===================//
    
    float rspd, currspeed, tgbend;
-   float dalpha = (float)fabs(cptr->tgalpha - cptr->alpha);   
+   float dalpha = (float)std::fabs(cptr->tgalpha - cptr->alpha);   
    float drspd = dalpha; if (drspd>pi) drspd = 2*pi - drspd;
 
    
@@ -4260,12 +4297,12 @@ TBEGIN:
    if (tgbend>pi/2) tgbend = pi/2;
 
    tgbend*= SGN(currspeed);
-   if (fabs(tgbend) > fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
+   if (std::fabs(tgbend) > std::fabs(cptr->bend)) DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 800.f);
                                    else DeltaFunc(cptr->bend, tgbend, (float)TimeDt / 400.f);
 
    
    rspd=cptr->rspeed * TimeDt / 1024.f;
-   if (drspd < fabs(rspd)) cptr->alpha = cptr->tgalpha;
+   if (drspd < std::fabs(rspd)) cptr->alpha = cptr->tgalpha;
                       else cptr->alpha+=rspd;
    
 
@@ -4273,8 +4310,8 @@ TBEGIN:
    if (cptr->alpha < 0     ) cptr->alpha+= pi * 2;
 
 //========== movement ==============================//
-   cptr->lookx = (float)cos(cptr->alpha);
-   cptr->lookz = (float)sin(cptr->alpha);
+   cptr->lookx = (float)std::cos(cptr->alpha);
+   cptr->lookz = (float)std::sin(cptr->alpha);
 
    float curspeed = 0;
    if (cptr->Phase == DIM_FLY ) curspeed = 1.5f;   
@@ -4294,6 +4331,7 @@ TBEGIN:
    
 
 //========== process speed =============//
+   if (KidsMode) curspeed *= 0.5f;  // KIDSMODE: all dinos move at half speed
    curspeed*=cptr->scale;
    DeltaFunc(cptr->vspeed, curspeed, TimeDt / 2024.f);    
       
@@ -4332,8 +4370,11 @@ void AnimateCharacters()
 		   cptr->BloodTime+=(int)((float)TimeDt * k);
 		   if (cptr->BloodTime>600) {
 			   cptr->BloodTime=rRand(228);
-			   AddBloodTrail(cptr);
-			   if (rRand(128) > 96) AddBloodTrail(cptr);
+			   // KIDSMODE: no blood trail decals
+			   if (!KidsMode) {
+				   AddBloodTrail(cptr);
+				   if (rRand(128) > 96) AddBloodTrail(cptr);
+			   }
 		   }
 	   }
 
@@ -4414,8 +4455,8 @@ void CheckAfraid()
    if (DEBUG || UNDERWATER || ObservMode) return;
 
    plook.y = 0;
-   plook.x = (float) sin(CameraAlpha);
-   plook.z = (float)-cos(CameraAlpha);     
+   plook.x = (float) std::sin(CameraAlpha);
+   plook.z = (float)-std::cos(CameraAlpha);     
 
    wlook = Wind.nv;
    
@@ -4629,8 +4670,8 @@ replace2:
 	 tr++;
 	 if (tr>10240) break;
 
-	 if ( fabs(Characters[ChCount].pos.x - PlayerX) + 
-	      fabs(Characters[ChCount].pos.z - PlayerZ) < 256 * 40 )
+	 if ( std::fabs(Characters[ChCount].pos.x - PlayerX) + 
+	      std::fabs(Characters[ChCount].pos.z - PlayerZ) < 256 * 40 )
 		  goto replace2;		  
 	 
 	 if (CheckPlaceCollisionP(Characters[ChCount].pos)) goto replace2;
@@ -4697,10 +4738,10 @@ void CreateChMorphedModel(TCharacter *cptr)
    short int* adptr  =  aptr->aniData + CurFrame*VCount*3;
    short int* padptr = paptr->aniData + PCurFrame*VCount*3;
 
-   float sb = (float)sin(cptr->beta) * scale;
-   float cb = (float)cos(cptr->beta) * scale;
-   float sg = (float)sin(cptr->gamma);
-   float cg = (float)cos(cptr->gamma);
+   float sb = (float)std::sin(cptr->beta) * scale;
+   float cb = (float)std::cos(cptr->beta) * scale;
+   float sg = (float)std::sin(cptr->gamma);
+   float cg = (float)std::cos(cptr->gamma);
 
    for (int v=0; v<VCount; v++) {
     float x = *(adptr+v*3+0) * k1 + *(adptr+(v+VCount)*3+0) * k2;
@@ -4735,8 +4776,8 @@ void CreateChMorphedModel(TCharacter *cptr)
     
     fi*=cptr->bend;
     
-	float bendc = (float)cos(fi);
-    float bends = (float)sin(fi);
+	float bendc = (float)std::cos(fi);
+    float bends = (float)std::sin(fi);
     
     float bx = bendc * xx - bends * zz;
     float bz = bendc * zz + bends * xx;

@@ -315,17 +315,20 @@ Comfort features include 6DoF roomscale locomotion (physical movement in play sp
 
 ## Bundled content
 
-### Default shader pack (`shaderpacks/default/`)
-Ships enabled by default. Provides cinematic enhancement without changing the game's character:
-- ACES filmic tone mapping (lifts shadows, compresses highlights)
-- Additive bloom on bright surfaces (sun, water, sky)
-- Subtle colour grading (saturation +20%, contrast +10%)
-- Unsharp-mask sharpening (strength 0.6)
-- Full cascaded shadow mapping at strength 0.45
-- Screen-space crepuscular god rays from the sun (correctly aligned to the sun disk position)
-- Volumetric height fog pooling in valleys with warm Mie forward scattering toward the sun
-- Depth-only screen-space ambient occlusion (SSAO) — darkens crevices, contact points, and dense foliage
-- Animated refractive water with depth absorption, Fresnel sky reflection, and shoreline foam
+### Shader packs (`shaderpacks/`)
+
+Visual enhancements are split into individual packs that can be enabled or disabled independently by editing `shaderpacks/packs.cfg`. All six packs ship enabled by default:
+
+| Pack | What it does |
+|---|---|
+| `cinematic` | ACES tone mapping, bloom, color grading (+20% sat, +10% contrast), unsharp-mask sharpening |
+| `shadows` | Full cascaded shadow mapping at strength 0.45 (all geometry casts and receives shadows) |
+| `god-rays` | Screen-space crepuscular rays from the sun disk, warm sunlight tint |
+| `heightfog` | Volumetric height fog pooling in valleys with warm Mie forward scattering toward the sun |
+| `ssao` | Depth-only SSAO — darkens crevices, contact points, and dense foliage |
+| `water` | Animated refractive water with depth absorption, Fresnel sky reflection, and shoreline foam |
+
+To disable an effect, comment out its line in `shaderpacks/packs.cfg`. See [SHADER_PACKS.md](SHADER_PACKS.md) for how to create your own packs and tune individual parameters.
 
 ### pbr-auto mod (`mods/pbr-auto/`)
 Auto-generated normal maps for all five playable areas and all dinosaurs — adds depth and surface detail to every piece of game geometry without touching original textures. Enable in the MODS menu. Works with or without the default shader pack.

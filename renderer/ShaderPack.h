@@ -2,10 +2,13 @@
 // SOURCEPORT: Shader pack system — JSON-driven post-process configuration for modders.
 // A pack is a directory under shaderpacks/ containing pack.json.
 // pack.json declares which built-in effects to enable and what parameters to use.
-// Apply() pushes those parameters to RendererGL via its public setters.
+// Apply() pushes only the parameters *present* in that pack's JSON to RendererGL,
+// so multiple packs can be active simultaneously without resetting each other's settings.
+// Active packs are listed in shaderpacks/packs.cfg (one name per line, # comments ok).
 
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include <memory>
 
 class RendererGL;
@@ -59,11 +62,11 @@ struct PostFXConfig {
 
     // Water material (GL path only; no-op on D3D and in VR/underwater)
     bool  waterEnabled      = true;
-    float waterWaveStrength = 0.35f;
-    float waterClarity      = 0.0025f;
+    float waterWaveStrength = 0.18f;
+    float waterClarity      = 0.005f;
     float waterDeepColor[3] = {0.07f, 0.18f, 0.22f};
     float waterFoamWidth    = 50.0f;
-    float waterReflectivity = 0.85f;
+    float waterReflectivity = 0.35f;
 };
 
 class ShaderPack {
@@ -73,8 +76,10 @@ public:
     // Load and parse shaderpacks/<name>/pack.json.
     bool Load();
 
-    // Push config to renderer.
+    // Push only the parameters explicitly present in this pack's JSON to renderer.
     void Apply(RendererGL* renderer) const;
+
+    bool HasKey(const std::string& key) const { return m_presentKeys.count(key) > 0; }
 
     const std::string&  GetName()   const { return m_name; }
     const PostFXConfig& GetConfig() const { return m_config; }
@@ -83,24 +88,35 @@ private:
     std::string  m_name;
     std::string  m_packDir;
     PostFXConfig m_config;
+    // SOURCEPORT: tracks which JSON keys were present so Apply() only touches
+    // the renderer settings that this pack explicitly configures.
+    std::unordered_set<std::string> m_presentKeys;
 };
 
 class ShaderPackManager {
 public:
     static ShaderPackManager& Get();
 
-    // Scan shaderpacks/ and populate available list.
+    // Scan shaderpacks/ and populate the available list.
     void DiscoverPacks();
 
-    // Load pack by name and immediately apply it to renderer.
-    // Returns false if pack.json is missing or malformed.
+    // Read shaderpacks/packs.cfg and load all listed packs.
+    // Falls back to "default" if packs.cfg is absent.
+    void LoadActivePacks();
+
+    // Apply all loaded active packs to renderer in order (each pack is sparse
+    // so earlier packs' settings are not reset by later ones unless overridden).
+    void ApplyAll(RendererGL* renderer);
+
+    // Legacy single-pack helper (still usable for scripted reload).
     bool ApplyPack(const std::string& name, RendererGL* renderer);
 
-    const std::vector<std::string>& GetAvailable() const { return m_available; }
-    const std::string& GetActiveName() const { return m_activeName; }
+    const std::vector<std::string>& GetAvailable()    const { return m_available; }
+    const std::vector<std::string>& GetActiveNames()  const { return m_activeNames; }
 
 private:
     ShaderPackManager() = default;
     std::vector<std::string> m_available;
-    std::string              m_activeName;
+    std::vector<std::string> m_activeNames;
+    std::vector<ShaderPack>  m_loadedPacks;
 };

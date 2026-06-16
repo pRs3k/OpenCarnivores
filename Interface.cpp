@@ -112,6 +112,8 @@ TPicture LoadWall;
 
 void UpdateLoadingWindow()
 {
+    // SOURCEPORT: EndLoading() frees LoadWall.lpImage; guard prevents use-after-free crash.
+    if (!LoadWall.lpImage) return;
 
     HBITMAP hbmpOld = (HBITMAP)SelectObject(hdcCMain, hbmpVideoBuf);
     HFONT   hfntOld = (HFONT)SelectObject(hdcCMain, fnt_Small);
@@ -158,6 +160,7 @@ void EndLoading()
 {	  
     FillMemory(lpVideoBuf, 1024*768*2, 0);	
 	HeapFree_(Heap, 0, (void*)LoadWall.lpImage);
+	LoadWall.lpImage = nullptr; // SOURCEPORT: prevent use-after-free in UpdateLoadingWindow
 }
 
 

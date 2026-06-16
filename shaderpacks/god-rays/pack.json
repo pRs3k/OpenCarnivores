@@ -1,0 +1,13 @@
+{
+  "name": "God Rays",
+  "description": "Screen-space crepuscular rays radiating from the sun. Disable if you find the effect distracting.",
+  "author": "OpenCarnivores",
+
+  "godrays_enabled": true,
+  "godrays_intensity": 0.5,
+  "godrays_density": 0.9,
+  "godrays_decay": 0.96,
+  "godrays_color_r": 1.0,
+  "godrays_color_g": 0.92,
+  "godrays_color_b": 0.75
+}

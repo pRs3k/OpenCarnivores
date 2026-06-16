@@ -17,7 +17,7 @@ struct Entry {
     Materials::Material mat;
 };
 
-std::unordered_map<uintptr_t, Entry> g_registry;
+std::unordered_map<uintptr_t, Entry> g_registry; // NOLINT(bugprone-throwing-static-initialization)
 
 GLuint UploadRGBA(const unsigned char* rgba, int w, int h, bool srgb) {
     GLuint tex = 0;

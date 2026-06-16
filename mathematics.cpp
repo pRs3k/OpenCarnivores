@@ -938,7 +938,6 @@ void CalcEnvMapping(TModel* mptr, Vector3d *nv)
 	tx = RotateVector(tx);
 	ty = RotateVector(ty);
 
-    NormVector(l, 1.0f);
 	for (int i=0; i<mptr->VCount; i++) {
 		v.x = mptr->gVertex[i].x;
 		v.y = mptr->gVertex[i].y;

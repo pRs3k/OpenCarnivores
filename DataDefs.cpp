@@ -32,7 +32,7 @@ struct JValue;
 using JObject = std::vector<std::pair<std::string, std::shared_ptr<JValue>>>;
 using JArray  = std::vector<std::shared_ptr<JValue>>;
 
-enum class JKind { Null, Bool, Num, Str, Arr, Obj };
+enum class JKind : uint8_t { Null, Bool, Num, Str, Arr, Obj };
 
 struct JValue {
     JKind kind = JKind::Null;

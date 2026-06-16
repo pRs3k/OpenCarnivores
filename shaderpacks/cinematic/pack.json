@@ -1,0 +1,24 @@
+{
+  "name": "Cinematic",
+  "description": "Bloom, ACES tone mapping, color grading, and sharpening. Disable to revert to vanilla color rendering.",
+  "author": "OpenCarnivores",
+
+  "bloom_enabled": true,
+  "bloom_threshold": 0.78,
+  "bloom_intensity": 1.5,
+
+  "tonemap_mode": "aces",
+  "exposure": 1.0,
+
+  "colorgrade_enabled": true,
+  "colorgrade_saturation": 1.2,
+  "colorgrade_contrast": 1.1,
+  "colorgrade_lift_r": 0.0,
+  "colorgrade_lift_g": 0.0,
+  "colorgrade_lift_b": 0.0,
+  "colorgrade_gain_r": 1.0,
+  "colorgrade_gain_g": 1.0,
+  "colorgrade_gain_b": 1.0,
+
+  "sharpen_strength": 0.6
+}

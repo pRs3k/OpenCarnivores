@@ -575,16 +575,15 @@ bool RendererGL::Init(void* /*windowHandle*/, int width, int height) {
         glUniform1f(m_locShadowStrength, m_shadowStrength);
     }
 
-    // SOURCEPORT: auto-load shader pack named "default" if present in shaderpacks/
+    // SOURCEPORT: load active packs from shaderpacks/packs.cfg and apply them in order.
+    // Each pack is sparse — only JSON keys present in that file are pushed to the renderer,
+    // so multiple packs compose additively without resetting each other's settings.
+    // Falls back to "default" pack if packs.cfg is absent (backward compat).
     {
         auto& spm = ShaderPackManager::Get();
         spm.DiscoverPacks();
-        for (const auto& name : spm.GetAvailable()) {
-            if (name == "default") {
-                spm.ApplyPack("default", this);
-                break;
-            }
-        }
+        spm.LoadActivePacks();
+        spm.ApplyAll(this);
     }
 
     // SOURCEPORT: pre-warm the bloom/tone-map post-process pipeline.
@@ -2340,7 +2339,9 @@ void RendererGL::BeginWorldShadowPass(int cascade) {
     glDepthMask(GL_TRUE);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(2.f, 4.f);
+    // SOURCEPORT: raised slope/units from (2,4) to (4,8) — steeper terrain quads
+    // were self-shadowing and producing isolated dark patches at shallow sun angles.
+    glPolygonOffset(4.f, 8.f);
 
     m_shadowPassActive     = true;
     m_shadowGeomSuppressed = false;

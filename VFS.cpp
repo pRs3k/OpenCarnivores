@@ -81,6 +81,15 @@ void Init() {
 
 int MountCount() { return (int)g_mounts.size(); }
 
+bool IsMounted(const char* modName) {
+    // SOURCEPORT: check whether a specific named mod directory is active so
+    // engine code can enable behavioural features tied to a particular mod.
+    std::string target = std::string("mods/") + modName;
+    for (const auto& m : g_mounts)
+        if (m == target) return true;
+    return false;
+}
+
 std::string ResolveRead(const char* path) {
     if (!path || !*path) return std::string();
     if (g_mounts.empty()) return std::string(path);

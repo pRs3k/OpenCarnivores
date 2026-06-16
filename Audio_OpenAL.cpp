@@ -72,7 +72,7 @@ struct BufKeyEq {
         return a.data == b.data && a.len == b.len;
     }
 };
-static std::unordered_map<BufKey, ALuint, BufKeyHash, BufKeyEq> g_bufCache;
+static std::unordered_map<BufKey, ALuint, BufKeyHash, BufKeyEq> g_bufCache; // NOLINT(bugprone-throwing-static-initialization)
 
 static Uint32 g_lastTick = 0;
 

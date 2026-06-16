@@ -3519,9 +3519,6 @@ void _RenderObject(int x, int y) // NOLINT(bugprone-reserved-identifier)
       v[0].z = y*256+128 - CameraZ;                   
       v[0].y = (float)(HMapO[y][x]) * ctHScale - CameraY;
 
-	  float zs = VectorLength(v[0]);
-
-
       //if (v[0].y + MObjects[ob].info.YHi < (int)(HMap[y][x]+HMap[y+1][x+1]) / 2 * ctHScale - CameraY) return;
         
 	  CalcFogLevel_Gradient(v[0]);
@@ -3529,11 +3526,21 @@ void _RenderObject(int x, int y) // NOLINT(bugprone-reserved-identifier)
 	        
 	  v[0] = RotateVector(v[0]);
 	  GlassL = 0;
-      
-      if (zs > 256 * (ctViewR-8))
-	   GlassL=min(255,(int)(zs - 256 * (ctViewR-8)) / 4);
 
-	  if (GlassL==255) return;      
+      // SOURCEPORT: fade static objects by Chebyshev tile ring distance so every object
+      // at the same radial ring fades together — prevents random per-object section popping
+      // caused by terrain height variation skewing 3D VectorLength distance.
+      // Zone = 25% of view range; quadratic curve keeps the outer edge nearly invisible
+      // so the advancing boundary looks like fog rolling in rather than a hard pop.
+      {
+          int r_tile = (std::max)(std::abs(x - CCX), std::abs(y - CCY));
+          int kFadeZ = ctViewR / 4;
+          if (r_tile > ctViewR - kFadeZ) {
+              float t = (float)(r_tile - (ctViewR - kFadeZ)) / (float)kFadeZ;
+              GlassL = (int)(t * t * 255.f);
+              if (GlassL >= 255) return;
+          }
+      }
       
 	  if (MObjects[ob].info.flags & ofANIMATED) 
 	   if (MObjects[ob].info.LastAniTime!=RealTime) {
@@ -3546,14 +3553,13 @@ void _RenderObject(int x, int y) // NOLINT(bugprone-reserved-identifier)
 	  
 
 #ifndef _opengl
-	  // SOURCEPORT: guard ofNOBMP zs reset — in OpenGL the unconditional zs=0 below makes this a dead store
-	  if (MObjects[ob].info.flags & ofNOBMP) zs = 0;
-#endif
-#ifdef _opengl
-	  // SOURCEPORT: disable BMP sprite LOD in GL path — the hard switch from 3D model to
-	  // a flat pre-rendered billboard at ctViewRM*256 units causes a jarring visual change
-	  // ("leaf texture changes completely"). Modern GPUs handle 3D objects at any distance.
-	  zs = 0;
+      // D3D path: compute actual 3D distance for BMP sprite LOD threshold.
+      float zs = VectorLength(v[0]);
+      if (MObjects[ob].info.flags & ofNOBMP) zs = 0;
+#else
+      // SOURCEPORT: GL path skips BMP sprite LOD — modern GPUs handle 3D models at any
+      // distance; the billboard switch causes a jarring texture-change artefact.
+      constexpr float zs = 0.f;
 #endif
 	  if (zs>ctViewRM*256)
 		  RenderBMPModel(&MObjects[ob].bmpmodel, v[0].x, v[0].y, v[0].z, mlight-16);
@@ -5670,9 +5676,16 @@ void RenderCharacterPost(TCharacter *cptr)
    float zs = (float)sqrt( cptr->rpos.x*cptr->rpos.x  +  cptr->rpos.y*cptr->rpos.y  +  cptr->rpos.z*cptr->rpos.z);  
    if (zs > ctViewR*256) return;      
 
-   GlassL = 0;      
-   if (zs > 256 * (ctViewR-4)) 
-	   GlassL = min(255, (zs/4 - 64*(ctViewR-4)));
+   GlassL = 0;
+   // SOURCEPORT: fade creatures over outer 25% of view range; quadratic curve so the
+   // outer boundary is nearly invisible and solidifies smoothly as the player approaches.
+   {
+       int kFadeZ = ctViewR / 4;
+       if (zs > 256.f * (ctViewR - kFadeZ)) {
+           float t = (zs - 256.f * (ctViewR - kFadeZ)) / (256.f * kFadeZ);
+           GlassL = (int)(t * t * 255.f);
+       }
+   }
 	
 
    waterclip = FALSE;     
@@ -5692,14 +5705,17 @@ void RenderCharacterPost(TCharacter *cptr)
       
    if (!SHADOWS3D) return;
    if (OptDayNight == 2) return;  // SOURCEPORT: no shadows at night
-   if (zs > 256 * (ctViewR-8)) return;
+   if (zs > 256 * ctViewR) return;
    
    int Al = 0x60;
    
    if (cptr->Health==0) {
     int at = cptr->pinfo->Animation[cptr->Phase].AniTime;
 	if (Tranq) return;
-    Al = Al * (at-cptr->FTime) / at;  }
+    // SOURCEPORT: KidsMode loops the knocked-out animation, so (at-FTime)/at pulses 0→1
+    // each breath cycle.  Skip the fade; the creature is alive and its shadow should be steady.
+    if (!KidsMode)
+        Al = Al * (at-cptr->FTime) / at;  }
    	if (cptr->AI==0) Al = 0x50;
 
     GlassL = (Al<<24) + 0x00222222;

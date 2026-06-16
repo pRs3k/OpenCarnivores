@@ -35,8 +35,8 @@
 
 namespace {
 struct Entry { uint32_t* rgba; int w; int h; };
-std::unordered_map<void*, Entry> g_reg;
-std::unordered_map<void*, TextureOverrides::CompressedTex> g_regDDS;
+std::unordered_map<void*, Entry> g_reg;                              // NOLINT(bugprone-throwing-static-initialization)
+std::unordered_map<void*, TextureOverrides::CompressedTex> g_regDDS; // NOLINT(bugprone-throwing-static-initialization)
 
 void Log(const char* msg) { PrintLog(const_cast<char*>(msg)); }
 
@@ -330,8 +330,8 @@ void Unregister(void* key)
 
 void Shutdown()
 {
-    for (auto& kv : g_reg)    delete[] kv.second.rgba;
-    for (auto& kv : g_regDDS) std::free(kv.second.data);
+    for (auto& kv : g_reg)    delete[] kv.second.rgba;    // NOLINT(bugprone-nondeterministic-pointer-iteration-order)
+    for (auto& kv : g_regDDS) std::free(kv.second.data); // NOLINT(bugprone-nondeterministic-pointer-iteration-order)
     g_reg.clear();
     g_regDDS.clear();
 }

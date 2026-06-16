@@ -76,9 +76,7 @@ float sampleCascade(int cas, vec3 worldPos, float biasScale) {
     bias *= biasScale;
     vec4 lsPos = uLightSpaceArr[cas] * vec4(worldPos, 1.0);
     vec3 proj  = lsPos.xyz / lsPos.w * 0.5 + 0.5;
-    if (proj.z < 0.0 || proj.z >= 1.0 ||
-        proj.x < 0.0 || proj.x >  1.0 ||
-        proj.y < 0.0 || proj.y >  1.0) return 0.0;
+    if (proj.x < 0.0 || proj.x >= 1.0 || proj.y < 0.0 || proj.y >= 1.0 || proj.z < 0.0 || proj.z >= 1.0) return 0.0;
     vec2 ts = 1.0 / vec2(textureSize(uShadowMapArray, 0).xy);
     float shadow = 0.0;
     for (int ox = -1; ox <= 1; ++ox)

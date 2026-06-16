@@ -1,0 +1,8 @@
+{
+  "name": "Shadows",
+  "description": "Cascaded shadow maps for world geometry and dinosaurs. Disable for vanilla (dino-only baked shadows).",
+  "author": "OpenCarnivores",
+
+  "shadows_mode": "full",
+  "shadow_strength": 0.45
+}

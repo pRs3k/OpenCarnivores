@@ -4,24 +4,64 @@ Modders can create custom shader packs to extend the visual appearance of OpenCa
 
 ## Directory Structure
 
-Shader packs live in `shaderpacks/` directory:
+Packs live in `shaderpacks/` and are activated by `shaderpacks/packs.cfg`:
 
 ```
 shaderpacks/
-├── mypack/
-│   ├── pack.json          # Pack metadata
-│   ├── materials/         # Custom material shaders
-│   │   ├── terrain.vert
-│   │   ├── terrain.frag
-│   │   ├── object.vert
-│   │   └── object.frag
-│   ├── effects/           # Post-process screen effects
-│   │   ├── tonemap.frag
-│   │   ├── bloom.frag
-│   │   └── color_grade.frag
-│   └── textures/          # Optional: replacement textures
-│       └── (PNG/TGA files)
+├── packs.cfg              # Active pack list (one name per line, # = comment)
+├── cinematic/
+│   └── pack.json          # Bloom, tone mapping, color grade, sharpen
+├── shadows/
+│   └── pack.json          # Cascaded shadow maps
+├── god-rays/
+│   └── pack.json          # Screen-space crepuscular rays
+├── heightfog/
+│   └── pack.json          # Volumetric height fog
+├── ssao/
+│   └── pack.json          # Screen-space ambient occlusion
+├── water/
+│   └── pack.json          # Refractive animated water
+└── mypack/
+    └── pack.json          # Your custom pack
 ```
+
+## Enabling and Disabling Packs (`packs.cfg`)
+
+Edit `shaderpacks/packs.cfg` to control which packs are active:
+
+```
+# shaderpacks/packs.cfg
+# One pack directory name per line.  # lines are comments.
+# Packs apply in order — later entries override earlier ones for shared keys.
+
+cinematic
+shadows
+god-rays
+heightfog
+ssao
+water
+```
+
+To **disable** an effect, comment out its line or delete it:
+
+```
+cinematic
+shadows
+# god-rays     ← disabled
+heightfog
+ssao
+water
+```
+
+If `packs.cfg` is absent, the engine falls back to loading `shaderpacks/default/` for backward compatibility.
+
+### Composition rules
+
+Each pack is **sparse** — it only touches the renderer settings whose keys appear in its `pack.json`. Absent keys leave the current value unchanged. This means:
+
+- Packs compose additively: `cinematic` sets bloom/color-grade; `water` sets water params; neither resets the other.
+- Later packs win for shared keys: if both `cinematic` and `mypack` set `bloom_intensity`, the last-listed value wins.
+- You can create override packs that tweak individual parameters without rewriting a whole pack.
 
 ## Pack Metadata (pack.json)
 
@@ -129,11 +169,11 @@ void main() {
 }
 ```
 
-## Loading and Using Packs
+## Creating a Custom Pack
 
-1. Place your shader pack in `shaderpacks/yourname/`
-2. Run the game — packs are loaded automatically
-3. Use the **Shaders** menu to enable/disable effects and adjust parameters
+1. Create `shaderpacks/mypack/pack.json` with only the keys you want to set.
+2. Add `mypack` to `shaderpacks/packs.cfg` (last line = highest priority).
+3. Run the game — packs are loaded and applied in order at startup.
 
 ## Actual pack.json Format (current)
 
@@ -296,6 +336,17 @@ surface. Tree and terrain shadows are already visible through the refracted scen
 capture; applying CSM again would double-count the darkness and cause
 precision-boundary flicker on the flat water geometry.
 
+## Shipped packs
+
+| Pack directory | What it does | Disable to get… |
+|---|---|---|
+| `cinematic` | Bloom, ACES tone mapping, color grade, sharpen | Vanilla flat rendering |
+| `shadows` | Cascaded shadow maps on all geometry | Original dino-only baked shadows |
+| `god-rays` | Sun shaft crepuscular rays | No screen-space light scattering |
+| `heightfog` | Valley mist and horizon haze | No atmospheric perspective |
+| `ssao` | Contact shadows and crevice darkening | Fully flat ambient lighting |
+| `water` | Refractive animated water with foam | Original flat retro water |
+
 ---
 
-**Questions?** See the reference pack in `shaderpacks/default/pack.json`.
+**Questions?** See any pack in `shaderpacks/*/pack.json` as a worked example.

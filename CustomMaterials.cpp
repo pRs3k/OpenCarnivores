@@ -72,8 +72,8 @@ struct Material {
 
 namespace {
 
-std::unordered_map<uintptr_t, CustomMaterials::Material*> g_reg;
-std::unordered_map<std::string, Program>                  g_progCache;   // keyed by shaderName
+std::unordered_map<uintptr_t, CustomMaterials::Material*> g_reg;       // NOLINT(bugprone-throwing-static-initialization)
+std::unordered_map<std::string, Program>                  g_progCache;  // NOLINT(bugprone-throwing-static-initialization)
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -378,7 +378,7 @@ void Reload(void* key) {
 void ReloadByBasePath(const char* basePath) {
     std::string target = MaterialPathForBase(basePath);
     for (auto& kv : g_reg) {
-        if (kv.second->basePath == target) { Reload((void*)kv.first); return; }
+        if (kv.second->basePath == target) { Reload(reinterpret_cast<void*>(kv.first)); return; } // NOLINT(performance-no-int-to-ptr)
     }
 }
 

@@ -2077,15 +2077,15 @@ void ReadWeapons(FILE *stream)
 				if (!value) DoHalt("Script loading error");
 				value++;
 				
-				if (strstr(line, "power"))  WeapInfo[TotalW].Power = (float)atof(value);
-				if (strstr(line, "prec"))   WeapInfo[TotalW].Prec  = (float)atof(value);
-				if (strstr(line, "loud"))   WeapInfo[TotalW].Loud  = (float)atof(value);
-				if (strstr(line, "rate"))   WeapInfo[TotalW].Rate  = (float)atof(value);
-				if (strstr(line, "shots"))  WeapInfo[TotalW].Shots =        atoi(value);
-				if (strstr(line, "reload")) WeapInfo[TotalW].Reload=        atoi(value);
-				if (strstr(line, "trace"))  WeapInfo[TotalW].TraceC=        atoi(value)-1;
-				if (strstr(line, "optic"))  WeapInfo[TotalW].Optic =        atoi(value);
-				if (strstr(line, "fall"))   WeapInfo[TotalW].Fall  =        atoi(value);
+				if (strstr(line, "power"))  WeapInfo[TotalW].Power = (float)strtod(value, nullptr);
+				if (strstr(line, "prec"))   WeapInfo[TotalW].Prec  = (float)strtod(value, nullptr);
+				if (strstr(line, "loud"))   WeapInfo[TotalW].Loud  = (float)strtod(value, nullptr);
+				if (strstr(line, "rate"))   WeapInfo[TotalW].Rate  = (float)strtod(value, nullptr);
+				if (strstr(line, "shots"))  WeapInfo[TotalW].Shots = (int)strtol(value, nullptr, 10);
+				if (strstr(line, "reload")) WeapInfo[TotalW].Reload= (int)strtol(value, nullptr, 10);
+				if (strstr(line, "trace"))  WeapInfo[TotalW].TraceC= (int)strtol(value, nullptr, 10)-1;
+				if (strstr(line, "optic"))  WeapInfo[TotalW].Optic = (int)strtol(value, nullptr, 10);
+				if (strstr(line, "fall"))   WeapInfo[TotalW].Fall  = (int)strtol(value, nullptr, 10);
 				//if (strstr(line, "price")) WeapInfo[TotalW].Price =        atoi(value);
 
 				if (strstr(line, "name")) {
@@ -2137,18 +2137,18 @@ void ReadCharacters(FILE *stream)
 					DoHalt("Script loading error");
 				value++;
 				
-				if (strstr(line, "mass"     )) DinoInfo[TotalC].Mass      = (float)atof(value);
-				if (strstr(line, "length"   )) DinoInfo[TotalC].Length    = (float)atof(value);
-				if (strstr(line, "radius"   )) DinoInfo[TotalC].Radius    = (float)atof(value);
-				if (strstr(line, "health"   )) DinoInfo[TotalC].Health0   = atoi(value);
-				if (strstr(line, "basescore")) DinoInfo[TotalC].BaseScore = atoi(value);
-				if (strstr(line, "ai"       )) DinoInfo[TotalC].AI        = atoi(value);
-				if (strstr(line, "smell"    )) DinoInfo[TotalC].SmellK    = (float)atof(value);
-				if (strstr(line, "hear"     )) DinoInfo[TotalC].HearK     = (float)atof(value);
-				if (strstr(line, "look"     )) DinoInfo[TotalC].LookK     = (float)atof(value);
-				if (strstr(line, "shipdelta")) DinoInfo[TotalC].ShDelta   = (float)atof(value);
-				if (strstr(line, "scale0"   )) DinoInfo[TotalC].Scale0    = atoi(value);
-				if (strstr(line, "scaleA"   )) DinoInfo[TotalC].ScaleA    = atoi(value);
+				if (strstr(line, "mass"     )) DinoInfo[TotalC].Mass      = (float)strtod(value, nullptr);
+				if (strstr(line, "length"   )) DinoInfo[TotalC].Length    = (float)strtod(value, nullptr);
+				if (strstr(line, "radius"   )) DinoInfo[TotalC].Radius    = (float)strtod(value, nullptr);
+				if (strstr(line, "health"   )) DinoInfo[TotalC].Health0   = (int)strtol(value, nullptr, 10);
+				if (strstr(line, "basescore")) DinoInfo[TotalC].BaseScore = (int)strtol(value, nullptr, 10);
+				if (strstr(line, "ai"       )) DinoInfo[TotalC].AI        = (int)strtol(value, nullptr, 10);
+				if (strstr(line, "smell"    )) DinoInfo[TotalC].SmellK    = (float)strtod(value, nullptr);
+				if (strstr(line, "hear"     )) DinoInfo[TotalC].HearK     = (float)strtod(value, nullptr);
+				if (strstr(line, "look"     )) DinoInfo[TotalC].LookK     = (float)strtod(value, nullptr);
+				if (strstr(line, "shipdelta")) DinoInfo[TotalC].ShDelta   = (float)strtod(value, nullptr);
+				if (strstr(line, "scale0"   )) DinoInfo[TotalC].Scale0    = (int)strtol(value, nullptr, 10);
+				if (strstr(line, "scaleA"   )) DinoInfo[TotalC].ScaleA    = (int)strtol(value, nullptr, 10);
 				if (strstr(line, "danger"   )) DinoInfo[TotalC].DangerCall= TRUE;
 
 				if (strstr(line, "name")) {

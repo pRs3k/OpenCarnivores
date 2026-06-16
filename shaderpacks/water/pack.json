@@ -1,0 +1,14 @@
+{
+  "name": "Water",
+  "description": "Refraction, Fresnel reflections, depth absorption, and shoreline foam for water surfaces. Disable to use vanilla flat water.",
+  "author": "OpenCarnivores",
+
+  "water_enabled": true,
+  "water_wave_strength": 0.18,
+  "water_clarity": 0.005,
+  "water_deep_color_r": 0.07,
+  "water_deep_color_g": 0.18,
+  "water_deep_color_b": 0.22,
+  "water_foam_width": 50.0,
+  "water_reflectivity": 0.35
+}
