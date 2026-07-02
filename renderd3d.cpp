@@ -259,6 +259,8 @@ void d3dClearBuffers()
 #elif defined(_opengl)
   if (g_glRenderer) {
       uint32_t fogColor = ((SkyR & 0xFF) << 16) | ((SkyG & 0xFF) << 8) | (SkyB & 0xFF);
+      // SOURCEPORT: nighthunt — override green night sky with near-black moonlit blue
+      if (OptDayNight == 2 && g_glRenderer->GetNightHuntMode()) fogColor = 0x08080F;
       g_glRenderer->SetFogColor(fogColor);
       g_glRenderer->ClearBuffers();
   }
@@ -361,6 +363,7 @@ void d3dStartBufferG()
            uint32_t fc = CurFogColor
                          ? CurFogColor
                          : (uint32_t)(((SkyR & 0xFF) << 16) | ((SkyG & 0xFF) << 8) | (SkyB & 0xFF));
+           if (OptDayNight == 2 && g_glRenderer->GetNightHuntMode()) fc = 0x08080F;
            g_glRenderer->SetFogColor(fc);
        }
    }
@@ -445,6 +448,7 @@ void d3dStartBufferGBMP()
            uint32_t fc = CurFogColor
                          ? CurFogColor
                          : (uint32_t)(((SkyR & 0xFF) << 16) | ((SkyG & 0xFF) << 8) | (SkyB & 0xFF));
+           if (OptDayNight == 2 && g_glRenderer->GetNightHuntMode()) fc = 0x08080F;
            g_glRenderer->SetFogColor(fc);
        }
    }
@@ -2425,9 +2429,9 @@ void ShowVideo()
    RenderFSRect(0xFFFFC0 + ((int)SunLight<<24));
   }
 
-  // SOURCEPORT: Night vision overlay (original game changes sky/fog to green via SkyR=0/SkyB=0;
-  // this overlay adds a subtle additional green film on top of that effect)
-  if (OptDayNight == 2)
+  // SOURCEPORT: Night vision overlay — suppressed in GL when nighthunt pack is active,
+  // which replaces it with a flashlight post-process effect instead.
+  if (OptDayNight == 2 && !(g_glRenderer && g_glRenderer->GetNightHuntMode()))
       RenderFSRect(0x3000C800);  // semi-transparent green night vision film for Night
 
   RenderHealthBar();
@@ -2871,6 +2875,7 @@ void DrawTPlaneClip(BOOL SECONT)
    if (ReverseOn) 
     if (SECONT) {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        cp[0].tx = TCMIN;   cp[0].ty = TCMAX;
        cp[1].tx = TCMAX;   cp[1].ty = TCMIN;
@@ -2894,6 +2899,7 @@ void DrawTPlaneClip(BOOL SECONT)
      }
     } else {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        cp[0].tx = TCMIN;   cp[0].ty = TCMIN;
        cp[1].tx = TCMAX;   cp[1].ty = TCMIN;
@@ -2919,6 +2925,7 @@ void DrawTPlaneClip(BOOL SECONT)
    else
     if (SECONT) {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        cp[0].tx = TCMIN;   cp[0].ty = TCMIN;
        cp[1].tx = TCMAX;   cp[1].ty = TCMAX;
@@ -2942,6 +2949,7 @@ void DrawTPlaneClip(BOOL SECONT)
      } 
     } else {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        cp[0].tx = TCMIN;   cp[0].ty = TCMIN;
        cp[1].tx = TCMAX;   cp[1].ty = TCMIN;
@@ -3104,6 +3112,7 @@ void DrawTPlane(BOOL SECONT)
    if (ReverseOn) 
     if (SECONT) {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMAX;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMIN;
@@ -3127,6 +3136,7 @@ void DrawTPlane(BOOL SECONT)
      }
     } else {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMIN;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMIN;
@@ -3152,6 +3162,7 @@ void DrawTPlane(BOOL SECONT)
    else
    if (SECONT) {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMIN;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMAX;
@@ -3175,6 +3186,7 @@ void DrawTPlane(BOOL SECONT)
      } 
     } else {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMIN;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMIN;
@@ -3302,6 +3314,7 @@ void DrawTPlaneW(BOOL SECONT)
    if (ReverseOn) 
     if (SECONT) {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMAX;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMIN;
@@ -3325,6 +3338,7 @@ void DrawTPlaneW(BOOL SECONT)
      }
     } else {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMIN;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMIN;
@@ -3350,6 +3364,7 @@ void DrawTPlaneW(BOOL SECONT)
    else
    if (SECONT) {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMIN;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMAX;
@@ -3373,6 +3388,7 @@ void DrawTPlaneW(BOOL SECONT)
      } 
     } else {
      switch (TDirection) {
+      default:  // SOURCEPORT: TDirection is masked &3 at every producer; default keeps UVs deterministic
       case 0:
        scrp[0].tx = TCMIN;   scrp[0].ty = TCMIN;
        scrp[1].tx = TCMAX;   scrp[1].ty = TCMIN;
@@ -5091,7 +5107,8 @@ void RenderModelClipEnvMap(TModel* _mptr, float x0, float y0, float z0, float al
    float cb = (float)cos(bt);
    float sb = (float)sin(bt);   
    
-   DWORD PHCOLOR = 0xFFFFFFFF;
+   // SOURCEPORT: reduced from 0xFFFFFFFF — full white was too intense/strobing
+   DWORD PHCOLOR = 0xFF555555;
    // SOURCEPORT: removed dead BL flag — set inside loop but never read after it (EnvMap path)
 
    for (int s=0; s<mptr->VCount; s++) {
@@ -5233,9 +5250,10 @@ void RenderModelClipPhongMap(TModel* _mptr, float x0, float y0, float z0, float 
    float cb = (float)cos(bt);
    float sb = (float)sin(bt);   
 
-   int   rv = SkyR +64; if (rv>255) rv = 255;
-   int   gv = SkyG +64; if (gv>255) gv = 255;
-   int   bv = SkyB +64; if (bv>255) bv = 255;
+   // SOURCEPORT: reduced sky boost from +64 to +24 — was too bright and strobing
+   int   rv = SkyR +24; if (rv>255) rv = 255;
+   int   gv = SkyG +24; if (gv>255) gv = 255;
+   int   bv = SkyB +24; if (bv>255) bv = 255;
    DWORD PHCOLOR = 0xFF000000 + (rv<<16) + (gv<<8) + bv;
    // SOURCEPORT: removed dead BL flag — set inside loop but never read after it (PhongMap path)
 

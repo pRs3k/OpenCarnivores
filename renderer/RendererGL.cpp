@@ -974,7 +974,7 @@ void RendererGL::EndFrame() {
 // compass, wind meter, health bar, etc. are composited clean on top.
 void RendererGL::ApplyPostProcess() {
     if (m_postOverlayEnabled || m_toneMappingMode != 0 || m_cgEnabled || m_godRaysEnabled
-        || m_heightFogEnabled || m_ssaoEnabled) {
+        || m_heightFogEnabled || m_ssaoEnabled || m_nightHuntMode) {
         RunPostOverlay();
     }
 }
@@ -2743,6 +2743,11 @@ uniform float uContrast;     // 1=neutral, >1 punchy, <1 flat
 uniform vec3  uLift;         // shadow color offset  (0,0,0 = neutral)
 uniform vec3  uGain;         // highlight color scale (1,1,1 = neutral)
 uniform float uSharpen;      // 0=off, >0 = unsharp mask strength
+uniform float uFlashlight;          // 0=off, 1=nighthunt flashlight active
+uniform float uFlashlightRadius;    // spotlight edge radius (aspect-corrected, 0..0.5)
+uniform float uFlashlightSoftness;  // falloff width around the edge
+uniform float uFlashlightAspect;    // width/height for circle-to-ellipse correction
+uniform float uFlashlightBrightness;// centre brightness multiplier (>1 boosts scene)
 
 // ACES filmic approximation (Hill/Narkowicz).
 // On LDR input [0,1]: lifts shadows, compresses highlights, adds mid contrast.
@@ -2789,6 +2794,16 @@ void main() {
     // shaft highlights instead of letting them clip to white.
     if (uGodRayIntensity > 0.0) {
         result += texture(uGodRays, vTexCoord).rgb * uGodRayIntensity;
+    }
+    // SOURCEPORT: nighthunt flashlight applied in HDR space before tone mapping so
+    // ACES/Reinhard compresses bright surfaces (water, sky) instead of clipping them.
+    if (uFlashlight > 0.5) {
+        vec2 fc = vTexCoord - 0.5;
+        fc.x *= uFlashlightAspect;
+        float d = length(fc);
+        float cone = 1.0 - smoothstep(uFlashlightRadius - uFlashlightSoftness,
+                                       uFlashlightRadius + uFlashlightSoftness, d);
+        result *= cone * uFlashlightBrightness;
     }
     // SOURCEPORT: tone mapping applied after bloom composite.
     result *= uExposure;
@@ -2840,6 +2855,7 @@ void main() {
     static GLint s_locCmpSat = -1,    s_locCmpContrast = -1;
     static GLint s_locCmpLift = -1,   s_locCmpGain = -1,     s_locCmpSharpen = -1;
     static GLint s_locCmpGodRays = -1, s_locCmpGRIntensity = -1, s_locCmpAODebug = -1;
+    static GLint s_locCmpFlashlight = -1, s_locCmpFlashlightR = -1, s_locCmpFlashlightS = -1, s_locCmpFlashlightA = -1, s_locCmpFlashlightB = -1;
     static GLint s_locGRMaskDepth = -1, s_locGRMaskSunPos = -1, s_locGRMaskColor = -1, s_locGRMaskAspect = -1;
     static GLint s_locGRBlurTex = -1,   s_locGRBlurSunPos = -1, s_locGRBlurDensity = -1, s_locGRBlurDecay = -1;
     static GLint s_locHFScene = -1, s_locHFDepth = -1, s_locHFScreenSize = -1;
@@ -2934,7 +2950,12 @@ void main() {
             s_locCmpSharpen   = glGetUniformLocation(s_progComposite,  "uSharpen");
             s_locCmpGodRays     = glGetUniformLocation(s_progComposite, "uGodRays");
             s_locCmpGRIntensity = glGetUniformLocation(s_progComposite, "uGodRayIntensity");
-            s_locCmpAODebug     = glGetUniformLocation(s_progComposite, "uAODebug");
+            s_locCmpAODebug      = glGetUniformLocation(s_progComposite, "uAODebug");
+            s_locCmpFlashlight   = glGetUniformLocation(s_progComposite, "uFlashlight");
+            s_locCmpFlashlightR  = glGetUniformLocation(s_progComposite, "uFlashlightRadius");
+            s_locCmpFlashlightS  = glGetUniformLocation(s_progComposite, "uFlashlightSoftness");
+            s_locCmpFlashlightA  = glGetUniformLocation(s_progComposite, "uFlashlightAspect");
+            s_locCmpFlashlightB  = glGetUniformLocation(s_progComposite, "uFlashlightBrightness");
             s_locGRMaskDepth  = glGetUniformLocation(s_progGRMask, "uDepth");
             s_locGRMaskSunPos = glGetUniformLocation(s_progGRMask, "uSunPos");
             s_locGRMaskColor  = glGetUniformLocation(s_progGRMask, "uSunColor");
@@ -3223,7 +3244,12 @@ void main() {
     glUniform1f(s_locCmpContrast, m_cgContrast);
     glUniform3f(s_locCmpLift,     m_cgLift[0],  m_cgLift[1],  m_cgLift[2]);
     glUniform3f(s_locCmpGain,     m_cgGain[0],  m_cgGain[1],  m_cgGain[2]);
-    glUniform1f(s_locCmpSharpen,  m_sharpenStrength);
+    glUniform1f(s_locCmpSharpen,     m_sharpenStrength);
+    glUniform1f(s_locCmpFlashlight,  m_nightHuntMode ? 1.0f : 0.0f);
+    glUniform1f(s_locCmpFlashlightR, m_flashlightRadius);
+    glUniform1f(s_locCmpFlashlightS, m_flashlightSoftness);
+    glUniform1f(s_locCmpFlashlightA, m_height > 0 ? (float)m_width / (float)m_height : 1.0f);
+    glUniform1f(s_locCmpFlashlightB, m_flashlightBrightness);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // ── Restore GL state ──────────────────────────────────────────────────────

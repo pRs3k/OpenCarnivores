@@ -53,19 +53,27 @@ jobs:
           TAG="${{ steps.tag.outputs.name }}"
           STAGE="OpenCarnivores-${TAG}-win64"
           mkdir -p "dist/${STAGE}"
-          cp build/OpenCarnivores.exe "dist/${STAGE}/"
-          cp build/SDL2.dll           "dist/${STAGE}/"
-          cp build/OpenAL32.dll       "dist/${STAGE}/"
+          cp build/OpenCarnivores.exe  "dist/${STAGE}/"
+          cp build/SDL2.dll            "dist/${STAGE}/"
+          cp build/OpenAL32.dll        "dist/${STAGE}/"
+          cp build/openxr_loader.dll   "dist/${STAGE}/"
+          cp -r build/shaders          "dist/${STAGE}/shaders"
+          cp -r build/shaderpacks      "dist/${STAGE}/shaderpacks"
           cat > "dist/${STAGE}/README.txt" <<'EOF'
           OpenCarnivores — Carnivores 2 source port
           =========================================
 
           Installation
           ------------
-          1. Copy OpenCarnivores.exe, SDL2.dll, and OpenAL32.dll into your
-             Carnivores 2 game folder (the one containing HUNTDAT\ and the
-             retail AREA*.MAP / AREA*.RSC files).
+          1. Copy everything in this zip (OpenCarnivores.exe, the .dll files,
+             and the shaders\ and shaderpacks\ folders) into your Carnivores 2
+             game folder (the one containing HUNTDAT\ and the retail
+             AREA*.MAP / AREA*.RSC files).
           2. Double-click OpenCarnivores.exe.
+
+          Visual effects (bloom, shadows, water, night-hunt flashlight mode)
+          are configured per pack in shaderpacks\ — edit shaderpacks\packs.cfg
+          to turn packs on or off.
 
           You must own a legal copy of Carnivores 2. No game assets are
           shipped with this engine.

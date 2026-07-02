@@ -21,6 +21,8 @@ shaderpacks/
 │   └── pack.json          # Screen-space ambient occlusion
 ├── water/
 │   └── pack.json          # Refractive animated water
+├── nighthunt/
+│   └── pack.json          # Night-only flashlight + dense fog horror mode
 └── mypack/
     └── pack.json          # Your custom pack
 ```
@@ -62,6 +64,19 @@ Each pack is **sparse** — it only touches the renderer settings whose keys app
 - Packs compose additively: `cinematic` sets bloom/color-grade; `water` sets water params; neither resets the other.
 - Later packs win for shared keys: if both `cinematic` and `mypack` set `bloom_intensity`, the last-listed value wins.
 - You can create override packs that tweak individual parameters without rewriting a whole pack.
+
+### When packs apply
+
+The active pack chain is (re)applied at **every hunt load**, preceded by a full reset
+to engine defaults — so editing `packs.cfg` or a `pack.json` takes effect on the next
+hunt, and a pack that is skipped for a given hunt leaves nothing behind.
+
+### Night-only packs
+
+A pack containing `"nighthunt_mode": true` applies **only when the player selects the
+night time slot**; dawn and day hunts are completely unaffected by it (all of its
+keys, not just the flashlight). Use this to build alternate night experiences without
+touching daytime visuals.
 
 ## Pack Metadata (pack.json)
 
@@ -239,7 +254,12 @@ The real `pack.json` is a flat JSON file with these top-level keys:
   "water_deep_color_g": 0.18,
   "water_deep_color_b": 0.22,
   "water_foam_width": 50.0,
-  "water_reflectivity": 0.35
+  "water_reflectivity": 0.35,
+
+  "nighthunt_mode": true,
+  "flashlight_radius": 0.42,
+  "flashlight_softness": 0.18,
+  "flashlight_brightness": 3.5
 }
 ```
 
@@ -282,6 +302,10 @@ The real `pack.json` is a flat JSON file with these top-level keys:
 | `water_deep_color_r/g/b` | 0.0–1.0 | Color of fully absorbed deep water |
 | `water_foam_width` | 0–200 | Shoreline foam band in GU (0 = disabled) |
 | `water_reflectivity` | 0.0–1.0 | Scales Fresnel sky reflection; 0.35 = subtle shimmer |
+| `nighthunt_mode` | true/false | Marks the pack night-only and enables the flashlight (see below) |
+| `flashlight_radius` | 0.1–0.6 | Spotlight cone edge radius in screen space (aspect-corrected) |
+| `flashlight_softness` | 0.05–0.3 | Falloff width around the cone edge |
+| `flashlight_brightness` | 1.0–5.0 | Center brightness multiplier; >1 boosts the lit area (pair with `tonemap_mode: "aces"`) |
 
 ### shadows_mode
 
@@ -294,8 +318,11 @@ The real `pack.json` is a flat JSON file with these top-level keys:
 Screen-space crepuscular rays: sky pixels around the sun's screen position are
 extracted using the captured depth buffer, then radially blurred toward the sun
 and added to the scene before tone mapping. Rays fade automatically when the sun
-moves behind the camera or off-screen, and are inactive at night and in VR
-(post-processing runs flatscreen-only).
+moves behind the camera or off-screen, and are inactive in VR (post-processing
+runs flatscreen-only). Inactive at night in normal play; do **not** enable
+`godrays_*` in or alongside a night-only pack — the sun disc is suppressed at
+night but the projected sun position still exists, so rays would emanate from an
+invisible sun.
 
 ### heightfog
 
@@ -304,8 +331,8 @@ depth buffer and an exponential height-density fog is integrated analytically al
 each view ray. Fog is anchored at the map's lowest terrain, so it pools in valleys
 and thins with altitude; looking toward the sun tints the fog with `heightfog_suncolor`
 (Mie-style forward scattering). Applied before bloom and tone mapping. Layers on top
-of the game's retro distance fog — keep `heightfog_density` subtle. Inactive at night
-and in VR, like all post effects.
+of the game's retro distance fog — keep `heightfog_density` subtle. Inactive in VR;
+inactive at night unless a night-only pack (`nighthunt_mode`) is active.
 
 ### ssao
 
@@ -336,6 +363,30 @@ surface. Tree and terrain shadows are already visible through the refracted scen
 capture; applying CSM again would double-count the darkness and cause
 precision-boundary flicker on the flat water geometry.
 
+**Note for dark scenes:** the water refracts a scene capture taken *before*
+post-processing, so heavy post darkening (e.g. nighthunt fog) does not dim the
+refracted image by itself — the flashlight/tonemap pass runs after the water is
+drawn and handles it.
+
+### nighthunt (night-only packs)
+
+`"nighthunt_mode": true` makes the whole pack apply only to night hunts and switches
+the night presentation from the retro green NV overlay to a flashlight spotlight:
+
+- A screen-space cone from the view center is the only lit area
+  (`flashlight_radius/softness/brightness`); everything outside falls to black.
+- The green fullscreen tint and baked green texture desaturation are replaced by a
+  near-black moonlit-blue fog color.
+- The engine additionally suppresses the sun disc/flare, sun-cast CSM shadows, and
+  the baked object shadows in the terrain lightmap — a flashlight-only night has no
+  directional sun/moon light to cast them.
+- Pair `flashlight_brightness > 1` with `"tonemap_mode": "aces"` — the boost runs in
+  HDR before tone mapping, so bright surfaces (water, sky) compress instead of
+  clipping to white.
+- Combine with dense `heightfog_*` (density ~0.1, near-black color) to limit the
+  flashlight's effective range; see `shaderpacks/nighthunt/pack.json` for tuned
+  values.
+
 ## Shipped packs
 
 | Pack directory | What it does | Disable to get… |
@@ -346,6 +397,7 @@ precision-boundary flicker on the flat water geometry.
 | `heightfog` | Valley mist and horizon haze | No atmospheric perspective |
 | `ssao` | Contact shadows and crevice darkening | Fully flat ambient lighting |
 | `water` | Refractive animated water with foam | Original flat retro water |
+| `nighthunt` | Night-only flashlight + dense fog horror mode | Original green night vision |
 
 ---
 

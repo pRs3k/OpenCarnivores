@@ -67,6 +67,12 @@ struct PostFXConfig {
     float waterDeepColor[3] = {0.07f, 0.18f, 0.22f};
     float waterFoamWidth    = 50.0f;
     float waterReflectivity = 0.35f;
+
+    // Night hunt mode: flashlight spotlight replaces the green NV overlay
+    bool  nightHuntMode        = false;
+    float flashlightRadius     = 0.22f;  // spotlight edge radius (aspect-corrected, ~half-width)
+    float flashlightSoftness   = 0.10f;  // falloff width around the edge
+    float flashlightBrightness = 1.0f;   // center brightness multiplier (>1 boosts scene)
 };
 
 class ShaderPack {
@@ -78,6 +84,11 @@ public:
 
     // Push only the parameters explicitly present in this pack's JSON to renderer.
     void Apply(RendererGL* renderer) const;
+
+    // SOURCEPORT: push every PostFXConfig default to the renderer unconditionally.
+    // Used by ApplyAll() to reset state before re-applying packs, so a pack that is
+    // skipped this hunt (e.g. a night-only pack during a day hunt) leaves nothing behind.
+    static void ApplyDefaults(RendererGL* renderer);
 
     bool HasKey(const std::string& key) const { return m_presentKeys.count(key) > 0; }
 
@@ -106,7 +117,11 @@ public:
 
     // Apply all loaded active packs to renderer in order (each pack is sparse
     // so earlier packs' settings are not reset by later ones unless overridden).
-    void ApplyAll(RendererGL* renderer);
+    // SOURCEPORT: resets the renderer to PostFXConfig defaults first, then skips
+    // packs flagged nighthunt_mode unless nightHuntActive — night-only packs must
+    // not change dawn/day hunts at all.  Re-invoked at every map load with the
+    // hunt's selected time of day.
+    void ApplyAll(RendererGL* renderer, bool nightHuntActive = false);
 
     // Legacy single-pack helper (still usable for scripted reload).
     bool ApplyPack(const std::string& name, RendererGL* renderer);

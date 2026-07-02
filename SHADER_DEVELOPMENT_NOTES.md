@@ -484,6 +484,38 @@ quantized block and produce a zero tangent → NaN normal.
 
 `DrawTextWithFont` and `DrawBitmap` bind `m_bitmapTexture` to `GL_TEXTURE0` and did not restore the previous binding. `FlushWorldSpaceShadow` (called at `EndWorldShadowPass`) reads `GL_TEXTURE0` for alpha-testing foliage geometry in the world-space shadow batch. The frame after any text or HUD draw, the foliage in the shadow pass was alpha-tested against the text/bitmap texture instead of its own foliage texture — changing which tree pixels wrote shadow depth, and therefore changing tree shadow patterns on the terrain. **Fix**: save/restore `GL_TEXTURE0` in `DrawTextWithFont` and `DrawBitmap` (`glGetIntegerv(GL_TEXTURE_BINDING_2D)` + restore after draw). Additionally, the object render loop in `renderd3d.cpp` now explicitly calls `glBindTexture` on unit 0 immediately after each `d3dSetTexture`, so `FlushWorldSpaceShadow` always uses the correct model texture even before the first HUD draw of the session.
 
+## Weapon Reflection Strobing (fixed)
+
+**Symptom:** Triangular reflection patches on weapon surfaces strobing rapidly with
+any head movement — individual polygon faces flashing independently to different
+brightnesses.
+
+**Root cause:** `Hunt2.cpp` calls `Sun3dPos = RotateVector(Sun3dPos)` before
+`CalcNormals`, permanently replacing the world-space sun vector with a
+camera-space one for that frame. `wptr->normals` (used by both `CalcPhongMapping`
+and `CalcEnvMapping`) are therefore recomputed in camera space every frame.
+`CalcEnvMapping` additionally called `RotateVector(tx/ty)` to bake the camera
+orientation into the tangent frame. Result: every per-vertex UV in the
+PhongMap/EnvMap overlay is fully camera-dependent — any head movement sends each
+triangle's UV to a different hot-spot on the specular texture independently, causing
+per-face strobing at head-movement frequency.
+
+These passes (`RenderModelClipPhongMap`, `RenderModelClipEnvMap`) are legacy D3D
+additive overlay effects from the software-renderer era. The GL renderer already
+provides proper per-vertex Gouraud lighting on the weapon model; the overlays are
+redundant and cannot be made stable without replacing the normal-computation
+pipeline.
+
+**Fix:** Guard both passes behind `if (!g_glRenderer)` in `Hunt2.cpp` so they only
+execute on the D3D/software path. `CalcEnvMapping` in `mathematics.cpp` was also
+updated to use fixed world-space axes (removing `RotateVector`) for correctness if
+the pass is ever re-enabled.
+
+**Future:** If a metallic sheen on weapons is desired in GL mode, the right approach
+is a stable specular term computed in `basic.frag` from a fixed world-space sun
+direction (`uSunDirWorld`) rather than these view-space overlay passes. The weapon
+already has a face-normal available via `dFdx/dFdy(vWorldPos)`.
+
 ## Phase 7: Water Material
 
 Animated refractive water that replaces the flat retro water texture. Active only on
@@ -539,3 +571,79 @@ double-counts the shadow (the captured scene already has the shadow on the terra
 and causes precision-boundary flicker because a flat horizontal surface sits on the
 exact decision boundary of the depth comparison. The shadow on the underwater
 terrain is already visible through refraction.
+
+## Phase 8: Night Hunt Mode
+
+A pack-driven horror overhaul of night hunts (`shaderpacks/nighthunt/`): the green
+NV overlay is replaced by a flashlight spotlight cone, dense height fog limits
+visibility, and desaturated color grading sells the darkness. `nighthunt_mode: true`
+in pack.json flips `RendererGL::m_nightHuntMode`, which game code queries via
+`GetNightHuntMode()`.
+
+### What the mode touches (checklist for future night work)
+
+1. **Composite shader** — aspect-corrected spotlight cone multiplies the scene
+   (`cone × uFlashlightBrightness`), radius/softness/brightness from pack keys.
+2. **Green NV overlay** (`ShowControlElements`, renderd3d.cpp) — `RenderFSRect(0x3000C800)`
+   suppressed when nighthunt is active.
+3. **Legacy fog/clear color** — overridden to near-black moonlit blue `0x08080F` at all
+   three `SetFogColor` sites in renderd3d.cpp (night + nighthunt only).
+4. **Sun disc/flare** (`RenderSun` call site) — additionally suppressed when nighthunt
+   is active (the stock gate is `OptDayNight != 2` only).
+5. **CSM shadow pass** (Hunt2.cpp) — pack sets `shadows_mode: "none"`; sun-cast shadows
+   contradict a flashlight-only night.
+6. **Baked lightmap object shadows** (`RenderLightMap`, Resources.cpp) — skipped
+   entirely under nighthunt. The stock game bakes object shadows at ALL times of day
+   (at night with direction flipped, s=−1 "moon shadows"); invisible in stock darkness,
+   they read as phantom daylight shadows once the flashlight brightens the terrain.
+7. **Camera/sun/fog uniforms** (Hunt2.cpp flatscreen path) — the stock gate skips
+   `SetCameraWorldUniforms`/`SetHeightFogWorldParams` at night; nighthunt extends it
+   (`OptDayNight != 2 || GetNightHuntMode()`) because the height fog now runs at night
+   and stale camera uniforms freeze the fog reconstruction.
+
+### Lesson: multiplicative brighteners belong in HDR, before tone mapping
+
+The first flashlight implementation multiplied AFTER tone mapping + grading. Any
+already-bright surface (the vivid water TGA, sky texture) × 3.5 clipped straight to
+saturated white — the water glowed against the dark world. Moving the cone multiply
+**before** `uExposure`/ACES (like bloom and god rays already are) lets the tone curve
+compress boosted highlights back into range. The nighthunt pack enables
+`tonemap_mode: "aces"` for exactly this reason. Same rule as bloom: anything that can
+push scene values above 1.0 must run pre-tonemap.
+
+### Lesson: post-process placement vs. HUD layers
+
+`ApplyPostProcess()` must run after the 3D world but **before** `DrawPostObjects()`
+(weapon, exit popup, pause screen), `DrawHMap()` (map), and `ShowControlElements()`
+(health bar, NV overlay). Running it later "to fix the weapon tint" amplified the map
+and exit popup by the flashlight brightness (3.5×) — every HUD layer drawn before the
+post pass gets post-processed. If a HUD element ever needs post-processing, the fix is
+moving that element, not the post pass.
+
+### Lesson: screen-capture effects see the pre-post scene
+
+The water shader refracts `uWaterScene`, captured **before** `ApplyPostProcess` — so
+in nighthunt the refraction showed the unfogged, un-graded (bright) world through the
+water. Any future capture-based effect (mirrors, portals, scopes) has the same
+property: captures happen at scene time, not final-frame time.
+
+### Night-only pack gating (per-hunt application)
+
+Packs were originally applied once at renderer init; nighthunt must not touch
+dawn/day hunts, so application moved to per-hunt:
+
+- `LoadResources()` calls `ShaderPackManager::ApplyAll(renderer, OptDayNight == 2)`
+  **before `RenderLightMap()`** (which reads `GetNightHuntMode()`).
+- `ApplyAll` first calls `ShaderPack::ApplyDefaults()` — an unconditional mirror of
+  `Apply()`'s setter list using `PostFXConfig` member-initializer defaults — so a pack
+  skipped this hunt can't leave settings behind from a previous hunt. **Keep
+  ApplyDefaults in sync when adding pack keys.**
+- Packs with `nighthunt_mode: true` are skipped unless the night slot was selected.
+
+### Related engine fix: baked night tint vs. the character cache
+
+Night hunts bake a green desaturation into .CAR textures at load
+(`BrightenTexture`), but `LoadCharacters()` caches dinos/weapons for the whole
+session — night→day transitions kept green dinos. Fixed with a `LoadedDayNight`
+stamp on `TCharacterInfo` (see ARCHITECTURE.md, "Session-cached characters and baked
+texture tints").

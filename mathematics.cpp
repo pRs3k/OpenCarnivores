@@ -920,23 +920,23 @@ void CalcPhongMapping(TModel* mptr, Vector3d *nv)
 		MulVectorsVect(m, tx, ty); NormVector(ty, 1.0f);
 		MulVectorsScal(tx, nv[i], x);
 		MulVectorsScal(ty, nv[i], y);
-		PhongMapping[i].x = 128 + x *127;
-		PhongMapping[i].y = 128 + y *127;
+		// SOURCEPORT: compressed from ±127 — smaller range reduces UV sweep per head movement
+		PhongMapping[i].x = 128 + x * 55;
+		PhongMapping[i].y = 128 + y * 55;
 	}    
 }
 
 
-void CalcEnvMapping(TModel* mptr, Vector3d *nv) 
+void CalcEnvMapping(TModel* mptr, Vector3d *nv)
 {
-    Vector3d l,v,m, tx, ty;
+    Vector3d v,m, tx, ty;
 	float x,y,s;
-	float cc = cosf((PlayerX + PlayerZ) / 500.0f);
-	float ss = sinf((PlayerX + PlayerZ) / 500.0f);
-	tx.x = cc; tx.y = 0.0f; tx.z =-ss;
-	ty.x = ss; ty.y = 0.0f; ty.z = cc;
-
-	tx = RotateVector(tx);
-	ty = RotateVector(ty);
+	// SOURCEPORT: use fixed world-space axes instead of RotateVector(camera-relative frame).
+	// Original formula baked the camera orientation into tx/ty via RotateVector, so every
+	// head movement swept all vertex UVs across the specular texture independently per face,
+	// producing triangular strobing.  Fixed axes give a stable surface-normal-based sheen.
+	tx.x = 1.0f; tx.y = 0.0f; tx.z = 0.0f;
+	ty.x = 0.0f; ty.y = 1.0f; ty.z = 0.0f;
 
 	for (int i=0; i<mptr->VCount; i++) {
 		v.x = mptr->gVertex[i].x;
@@ -947,12 +947,12 @@ void CalcEnvMapping(TModel* mptr, Vector3d *nv)
 		NormVector(m, s*2);
 		m = AddVectors(m, v);
 		NormVector(m, 1.0f);
-		
+
 		MulVectorsScal(tx, m, x);
 		MulVectorsScal(ty, m, y);
-		PhongMapping[i].x = 128 + x * 122;
-		PhongMapping[i].y = 128 + y * 122;
-	}    
+		PhongMapping[i].x = 128 + x * 55;
+		PhongMapping[i].y = 128 + y * 55;
+	}
 }
 
 

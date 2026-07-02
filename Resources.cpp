@@ -3,6 +3,7 @@
 namespace XR { bool StereoActive(); }
 #ifdef _opengl
 #include "renderer/RendererGL.h"
+#include "renderer/ShaderPack.h"
 #include "TextureOverrides.h"
 #include "Materials.h"
 #include "CustomMaterials.h"
@@ -112,7 +113,9 @@ BOOL HeapFree_(HANDLE hHeap,
 
 void AddMessage(LPSTR mt)
 {
-  MessageList.timeleft = timeGetTime() + 2 * 1000;
+  // SOURCEPORT: use the sim clock, not wall clock — RealTime is rebased to 0 at hunt
+  // start (see ProcessGame), so a timeGetTime() deadline would never expire in-hunt.
+  MessageList.timeleft = RealTime + 2 * 1000;
   lstrcpy(MessageList.mtext, mt);
 }
 
@@ -1582,6 +1585,12 @@ void LoadResources()
 
 //======= Post load rendering ==============//
 	PrintLoad("Prepearing maps...");
+    // SOURCEPORT: re-apply shader packs for this hunt's time of day — night-only
+    // packs (nighthunt_mode) activate only when the night slot was selected, and
+    // the defaults reset clears anything a skipped pack set on a previous hunt.
+    // Must run before RenderLightMap(), which reads GetNightHuntMode().
+    if (g_glRenderer)
+        ShaderPackManager::Get().ApplyAll(g_glRenderer, OptDayNight == 2);
     CreateTMap();
     RenderLightMap();
 	
@@ -1639,7 +1648,10 @@ void LoadCharacters()
 	}
 
 	for (c=0; c<TotalC; c++) if (pres[c]) {
-        if (!ChInfo[c].mptr) {
+        // SOURCEPORT: reload cached characters whose baked night tint (BrightenTexture)
+        // doesn't match this hunt's time of day — otherwise a night hunt leaves green
+        // textures on dinos in subsequent dawn/day hunts.
+        if (!ChInfo[c].mptr || (ChInfo[c].LoadedDayNight == 2) != (OptDayNight == 2)) {
 		 wsprintf(logt, "HUNTDAT\\%s", DinoInfo[c].FName);
          LoadCharacterInfo(ChInfo[c], logt);
 		 PrintLog("Loading: ");	PrintLog(logt);	PrintLog("\n");
@@ -1655,12 +1667,13 @@ void LoadCharacters()
 			}
 
 
-	for (c=0; c<TotalW; c++) 
-		if (WeaponPres & (1<<c)) 	{			
-			if (!Weapon.chinfo[c].mptr) {
+	for (c=0; c<TotalW; c++)
+		if (WeaponPres & (1<<c)) 	{
+			// SOURCEPORT: same baked-tint mismatch reload as dinos above.
+			if (!Weapon.chinfo[c].mptr || (Weapon.chinfo[c].LoadedDayNight == 2) != (OptDayNight == 2)) {
 			  wsprintf(logt, "HUNTDAT\\WEAPONS\\%s", WeapInfo[c].FName);
               LoadCharacterInfo(Weapon.chinfo[c], logt);
-			  PrintLog("Loading: ");  PrintLog(logt);  PrintLog("\n");			  
+			  PrintLog("Loading: ");  PrintLog(logt);  PrintLog("\n");
 			}
 		    
 				
@@ -1819,6 +1832,7 @@ void LoadCharacterInfo(TCharacterInfo &chinfo, char* FName)
 
     ReadFile(hfile, chinfo.mptr->lpTexture, ts, &l, nullptr);
 	BrightenTexture(chinfo.mptr->lpTexture, ts/2);
+	chinfo.LoadedDayNight = OptDayNight;  // SOURCEPORT: remember baked tint (see Hunt.h)
     
     DATASHIFT(chinfo.mptr->lpTexture, chinfo.mptr->TextureSize);
     GenerateModelMipMaps(chinfo.mptr);
@@ -1942,7 +1956,10 @@ void RenderShadowCircle(int x, int y, int R, int D)
 
 void RenderLightMap()
 {
-   
+  // SOURCEPORT: nighthunt = overcast, flashlight-only — skip baking the sun/moon
+  // object shadows (streaks + circles) into the terrain lightmap; the flashlight
+  // boost makes them clearly visible and they read as phantom daylight shadows.
+  if (g_glRenderer && g_glRenderer->GetNightHuntMode()) return;
 
   Vector3d lv;
   int x,y;

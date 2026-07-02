@@ -1,0 +1,34 @@
+{
+    "_comment": "Night Hunt — flashlight-only illumination with heavy atmospheric fog. Load with: shaderpacks/packs.cfg",
+
+    "nighthunt_mode":        true,
+    "flashlight_radius":     0.42,
+    "flashlight_softness":   0.18,
+    "flashlight_brightness": 3.5,
+
+    "heightfog_enabled":    true,
+    "heightfog_density":    0.120,
+    "heightfog_falloff":    0.0008,
+    "heightfog_sun_power":  1.0,
+    "heightfog_color_r":    0.03,
+    "heightfog_color_g":    0.03,
+    "heightfog_color_b":    0.05,
+    "heightfog_suncolor_r": 0.04,
+    "heightfog_suncolor_g": 0.04,
+    "heightfog_suncolor_b": 0.06,
+
+    "colorgrade_enabled":    true,
+    "colorgrade_saturation": 0.55,
+    "colorgrade_contrast":   1.25,
+    "colorgrade_lift_r":     0.00,
+    "colorgrade_lift_g":     0.00,
+    "colorgrade_lift_b":     0.02,
+    "colorgrade_gain_r":     0.90,
+    "colorgrade_gain_g":     0.88,
+    "colorgrade_gain_b":     1.05,
+
+    "tonemap_mode": "aces",
+
+    "shadows_mode": "none",
+    "godrays_enabled": false
+}

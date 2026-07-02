@@ -52,7 +52,7 @@ static volatile float g_ca, g_sa;   // cos/sin of camera yaw (CameraAlpha)
 // Computes L/R volume (0–256 each) for a world-space point.
 // Camera-right vector in world XZ = (ca, sa).
 // Matching the original Audio.cpp range: left ∈ [32,256], right ∈ [32,256].
-static void CalcPan(float sx, float sy, float sz, int volume,
+static void CalcPan(float sx, float /*sy — height unused, pan is XZ-only*/, float sz, int volume,
                     int& volL, int& volR)
 {
     if (sx == 0.f && sz == 0.f) {

@@ -65,7 +65,8 @@ To play in VR (Meta Quest 3, HTC Vive, Valve Index, etc.):
 - **Adaptive VSync** and uncapped framerate, with 90 FPS VR mode for stable HMD performance
 - **OpenGL 3.3 renderer** with hardware trilinear mipmapping, anisotropic filtering, and per-texture LOD bias tuning (no more terrain texture pop, no more foliage shimmer)
 - **Cascaded Shadow Maps** — 3-cascade PCF world-space shadow mapping (8× sharper shadows near the player, seamless cross-fade between cascades); semi-transparent dinosaur flat shadows blend naturally with terrain; toggleable in Options → Video
-- **Cinematic post-processing** — ACES tone mapping, bloom, color grading, sharpen, screen-space god rays (aligned to the visual sun), volumetric height fog, SSAO, and animated refractive water; all driven by the shader pack system and tunable via `shaderpacks/default/pack.json`
+- **Cinematic post-processing** — ACES tone mapping, bloom, color grading, sharpen, screen-space god rays (aligned to the visual sun), volumetric height fog, SSAO, and animated refractive water; all driven by the shader pack system — enable/disable packs in `shaderpacks/packs.cfg`, tune parameters in each pack's `pack.json`
+- **Night Hunt mode** — night hunts trade the retro green night-vision overlay for a flashlight beam and dense atmospheric fog: a narrow cone of light in front of you, near-black moonless darkness everywhere else, and dinosaurs you hear before you see. Ships as the night-only `nighthunt` shader pack (on by default; dawn/day hunts are untouched, and deleting one line in `packs.cfg` restores the classic green night vision)
 - **Graphics settings** — adjustable anisotropic filtering (2x/4x/8x/max), render distance, and supersampling for VR
 - **OpenAL Soft audio** — 3D positional audio, terrain occlusion, ready for HRTF and EFX reverb
 - **PNG / TGA / BMP / JPEG / DDS texture overrides** at any resolution with true 8-bit alpha (see below)
@@ -317,7 +318,7 @@ Comfort features include 6DoF roomscale locomotion (physical movement in play sp
 
 ### Shader packs (`shaderpacks/`)
 
-Visual enhancements are split into individual packs that can be enabled or disabled independently by editing `shaderpacks/packs.cfg`. All six packs ship enabled by default:
+Visual enhancements are split into individual packs that can be enabled or disabled independently by editing `shaderpacks/packs.cfg`. All seven packs ship enabled by default:
 
 | Pack | What it does |
 |---|---|
@@ -327,8 +328,9 @@ Visual enhancements are split into individual packs that can be enabled or disab
 | `heightfog` | Volumetric height fog pooling in valleys with warm Mie forward scattering toward the sun |
 | `ssao` | Depth-only SSAO — darkens crevices, contact points, and dense foliage |
 | `water` | Animated refractive water with depth absorption, Fresnel sky reflection, and shoreline foam |
+| `nighthunt` | **Night hunts only** — replaces the green night vision with a flashlight cone, pitch-black surroundings, and heavy fog for a horror-style hunt |
 
-To disable an effect, comment out its line in `shaderpacks/packs.cfg`. See [SHADER_PACKS.md](SHADER_PACKS.md) for how to create your own packs and tune individual parameters.
+Packs re-apply at every hunt load, and the night-only `nighthunt` pack activates only when you pick the night time slot — daytime visuals are never affected by it. To disable an effect, comment out its line in `shaderpacks/packs.cfg`. See [SHADER_PACKS.md](SHADER_PACKS.md) for how to create your own packs and tune individual parameters.
 
 ### pbr-auto mod (`mods/pbr-auto/`)
 Auto-generated normal maps for all five playable areas and all dinosaurs — adds depth and surface detail to every piece of game geometry without touching original textures. Enable in the MODS menu. Works with or without the default shader pack.

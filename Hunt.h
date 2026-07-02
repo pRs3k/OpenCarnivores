@@ -271,6 +271,10 @@ typedef struct TCharacterInfo_ {
   TAni Animation[64];
   TSFX SoundFX[64];
   int  Anifx[64];
+  // SOURCEPORT: OptDayNight at load time. Night hunts bake a green desaturation
+  // into lpTexture (BrightenTexture); LoadCharacters() reloads a cached entry
+  // when its baked night-ness no longer matches the current hunt's time of day.
+  int  LoadedDayNight;
 } TCharacterInfo;
 
 typedef struct TWeapon_ {

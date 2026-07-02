@@ -78,7 +78,7 @@ void PrintText(LPSTR s, int x, int y, int rgb)
 	PrintLog("ABNORMAL_HALT: ");
 	PrintLog(Mess);
 	PrintLog("\n");
-    MessageBox(NULL, Mess, "Carnivores Termination", IDOK | MB_SYSTEMMODAL | MB_ICONEXCLAMATION);
+    MessageBox(nullptr, Mess, "Carnivores Termination", IDOK | MB_SYSTEMMODAL | MB_ICONEXCLAMATION);
   }
 
   CloseLog();

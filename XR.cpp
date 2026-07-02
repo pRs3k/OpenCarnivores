@@ -132,12 +132,16 @@ typedef enum XrStructureType {
     XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR     = 1000010001,
 } XrStructureType;
 
+// SOURCEPORT: the _MAX_ENUM = 0x7FFFFFFF sentinels below mirror the official
+// openxr.h — OpenXR ABI requires every enum field to be exactly 32-bit.
 typedef enum XrFormFactor {
     XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY = 1,
+    XR_FORM_FACTOR_MAX_ENUM = 0x7FFFFFFF,
 } XrFormFactor;
 
 typedef enum XrViewConfigurationType {
     XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO = 2,
+    XR_VIEW_CONFIGURATION_TYPE_MAX_ENUM = 0x7FFFFFFF,
 } XrViewConfigurationType;
 
 typedef enum XrSessionState {
@@ -150,16 +154,19 @@ typedef enum XrSessionState {
     XR_SESSION_STATE_STOPPING     = 6,
     XR_SESSION_STATE_LOSS_PENDING = 7,
     XR_SESSION_STATE_EXITING      = 8,
+    XR_SESSION_STATE_MAX_ENUM     = 0x7FFFFFFF,
 } XrSessionState;
 
 typedef enum XrReferenceSpaceType {
     XR_REFERENCE_SPACE_TYPE_VIEW  = 1,
     XR_REFERENCE_SPACE_TYPE_LOCAL = 2,
     XR_REFERENCE_SPACE_TYPE_STAGE = 3,
+    XR_REFERENCE_SPACE_TYPE_MAX_ENUM = 0x7FFFFFFF,
 } XrReferenceSpaceType;
 
 typedef enum XrEnvironmentBlendMode {
     XR_ENVIRONMENT_BLEND_MODE_OPAQUE = 1,
+    XR_ENVIRONMENT_BLEND_MODE_MAX_ENUM = 0x7FFFFFFF,
 } XrEnvironmentBlendMode;
 
 // ─── Math primitives ─────────────────────────────────────────────────────────
@@ -417,7 +424,7 @@ typedef struct XrCompositionLayerProjection {
 } XrCompositionLayerProjection;
 
 // ─── Menu quad layer types ────────────────────────────────────────────────────
-typedef enum XrEyeVisibility { XR_EYE_VISIBILITY_BOTH = 0 } XrEyeVisibility;
+typedef enum XrEyeVisibility { XR_EYE_VISIBILITY_BOTH = 0, XR_EYE_VISIBILITY_MAX_ENUM = 0x7FFFFFFF } XrEyeVisibility;  // 32-bit per OpenXR ABI
 typedef struct XrExtent2Df { float width, height; } XrExtent2Df;
 
 typedef struct XrCompositionLayerQuad {
@@ -472,6 +479,7 @@ typedef enum XrActionType {
     XR_ACTION_TYPE_BOOLEAN_INPUT  = 1,
     XR_ACTION_TYPE_VECTOR2F_INPUT = 3,
     XR_ACTION_TYPE_POSE_INPUT     = 4,
+    XR_ACTION_TYPE_MAX_ENUM       = 0x7FFFFFFF,  // 32-bit per OpenXR ABI
 } XrActionType;
 
 typedef struct XrActionSetCreateInfo {

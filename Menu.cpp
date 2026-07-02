@@ -1005,6 +1005,7 @@ static int RunMainMenu(bool& appQuit) {
             case 4: result = 3; break;   // CREDITS
             case 5: result = 4; break;   // QUIT
             // id=6 = name/account display area — not a navigation button
+            default: break;
             }
         }
         if (gMI.scancode == SDL_SCANCODE_ESCAPE) result = 4;
@@ -1339,6 +1340,7 @@ static void RunOptions(bool& appQuit) {
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: gMI.padDX = +1; break;
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:    gMI.padDY = -1; break;
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:  gMI.padDY = +1; break;
+                    default: break;  // other pad buttons don't navigate the menu
                     }
                 }
                 break;
@@ -1360,6 +1362,7 @@ static void RunOptions(bool& appQuit) {
                     }
                 }
                 break;
+            default: break;  // other SDL events are intentionally ignored here
             }
         }
         if (appQuit) break;
@@ -1828,6 +1831,7 @@ static bool RunHuntSetup(bool& appQuit) {
         // give it its own preview case so hovering the tab shows the NFO.
         case 4: { SafeLoadTGA(previewPic, "HUNTDAT\\MENU\\PICS\\EQUIP4.TGA");
                   previewText = ReadTextFile("HUNTDAT\\MENU\\TXT\\TRANQ.NFO", 256); } break;
+        default: break;  // viewPanel < 0 = no preview loaded
         }
     };
     loadPreview();
@@ -2010,6 +2014,7 @@ static bool RunHuntSetup(bool& appQuit) {
                 }
                 break;
             }
+            default: break;  // p is 0..3 by the loop bound
             }
         }
 

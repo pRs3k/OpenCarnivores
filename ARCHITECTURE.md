@@ -90,6 +90,57 @@ Vector3d SubVectors(Vector3d& v1, Vector3d& v2);  // returns temporary
 
 **Pattern**: Input vectors are const references (accepting temporaries from SubVectors). Output is passed by non-const reference. This allows chaining like `MulVectorsVect(SubVectors(a, b), SubVectors(c, d), result)` without intermediate variables.
 
+## Fixed-timestep simulation and render interpolation (Hunt2.cpp)
+
+`ProcessGame()` runs the sim in fixed 16 ms ticks (`FIXED_DT_MS`, ~62.5 Hz) peeled off a
+wall-clock accumulator, then renders once per outer frame. The camera pose is lerped
+between the last two sim snapshots using the accumulator residue as alpha, and the
+authoritative (un-interpolated) pose is restored right after drawing so the next tick
+integrates from real state.
+
+**Hard-won rules:**
+- **Interpolate on EVERY render frame, not just frames that ran a sim tick.** When the
+  display outruns the sim, tickless frames must keep lerping with the growing residue
+  alpha — an early `steps > 0` gate froze the camera at the raw newest pose between
+  ticks, quantizing head-bob to sim rate (stuttery, robotic walk).
+- **Anything sampled per-frame for rendering must use the interpolated pose.** The
+  post-process camera uniforms (`SetCameraWorldUniforms`, height fog, god rays) are
+  uploaded inside the render block while `Camera*` still holds the lerped values.
+
+## Sim clock domains and float trig precision
+
+There are two clock domains and they must not be mixed:
+- **Menus** (`ProcessSyncro`, Game.cpp): `RealTime = timeGetTime()` — wall clock.
+- **Hunts** (`ProcessGame`, Hunt2.cpp): `RealTime` is **rebased to 0 at hunt start** and
+  advances +16 ms per fixed tick. The hunt↔menu base switch is absorbed by
+  ProcessSyncro's `TimeDt > 10000 → 10` clamp.
+
+**Why the rebase exists:** all procedural sway evaluates `sin(RealTime/K.f)` in float
+(head-bob `stepdy`, weapon sway, water waves, dino tail sway, underwater warp). Once
+RealTime carries Windows-uptime milliseconds past 2^24 (~4.6 h), consecutive
+milliseconds collapse to the same float and the phase advances in 32–128 ms
+stair-steps — the bob turns visibly robotic on any machine that hasn't rebooted for a
+few days. A zero base keeps millisecond-exact phase for ~4.6 h of continuous play.
+
+**Rules:** never feed wall-clock-magnitude integers through float trig; and any
+deadline compared against `RealTime` must be *set* from `RealTime`, not
+`timeGetTime()` (see `MessageList.timeleft` in `AddMessage`).
+
+## Session-cached characters and baked texture tints (Resources.cpp)
+
+`LoadCharacters()` caches dino (`ChInfo[]`) and weapon (`Weapon.chinfo[]`) .CAR data for
+the whole session (`if (!mptr)` guard) to avoid reload stutter between hunts. But
+`BrightenTexture()` **bakes the night-vision green desaturation into the texture data
+at load time** when `OptDayNight == 2`. Each `TCharacterInfo` therefore stamps
+`LoadedDayNight` at load, and the cache guard reloads on a night↔day mismatch —
+without it, a night hunt leaves green dinos/weapons in later dawn/day hunts.
+
+**Rule:** any new load-time bake keyed on per-hunt settings (time of day, weather,
+mods) must either move to a live shader uniform or invalidate every cache that holds
+the baked data. Per-map assets (terrain, sky, RSC objects) reload every hunt via
+`ReleaseResources()` + `ResetTextureMap()`, so only session-lifetime caches need
+stamps.
+
 ## Code Quality & Modern C++ Improvements (May 2026)
 
 Recent clang-tidy cleanup pass systematized non-stylistic issues:

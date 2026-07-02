@@ -205,6 +205,16 @@ bool ShaderPack::Load() {
     track("water_reflectivity");
     m_config.waterReflectivity = JsonFloat(json, "water_reflectivity",  0.35f);
 
+    // Night hunt mode
+    track("nighthunt_mode");
+    m_config.nightHuntMode      = JsonBool (json, "nighthunt_mode",      false);
+    track("flashlight_radius");
+    m_config.flashlightRadius   = JsonFloat(json, "flashlight_radius",   0.22f);
+    track("flashlight_softness");
+    m_config.flashlightSoftness   = JsonFloat(json, "flashlight_softness",   0.10f);
+    track("flashlight_brightness");
+    m_config.flashlightBrightness = JsonFloat(json, "flashlight_brightness", 1.0f);
+
     fprintf(stdout, "[ShaderPack] Loaded '%s' (%zu key(s) set)\n",
             m_name.c_str(), m_presentKeys.size());
     return true;
@@ -291,6 +301,12 @@ void ShaderPack::Apply(RendererGL* renderer) const {
         renderer->SetWaterDeepColor(m_config.waterDeepColor[0], m_config.waterDeepColor[1], m_config.waterDeepColor[2]);
     if (has("water_foam_width"))    renderer->SetWaterFoamWidth(m_config.waterFoamWidth);
     if (has("water_reflectivity"))  renderer->SetWaterReflectivity(m_config.waterReflectivity);
+
+    // Night hunt mode
+    if (has("nighthunt_mode"))      renderer->SetNightHuntMode(m_config.nightHuntMode);
+    if (has("flashlight_radius"))   renderer->SetFlashlightRadius(m_config.flashlightRadius);
+    if (has("flashlight_softness"))   renderer->SetFlashlightSoftness(m_config.flashlightSoftness);
+    if (has("flashlight_brightness")) renderer->SetFlashlightBrightness(m_config.flashlightBrightness);
 }
 
 // ── ShaderPackManager ─────────────────────────────────────────────────────────
@@ -362,9 +378,66 @@ void ShaderPackManager::LoadActivePacks() {
             m_activeNames.size());
 }
 
-void ShaderPackManager::ApplyAll(RendererGL* renderer) {
-    for (const auto& pack : m_loadedPacks)
+void ShaderPack::ApplyDefaults(RendererGL* renderer) {
+    if (!renderer) return;
+    // SOURCEPORT: unconditional mirror of Apply()'s setter list using the
+    // PostFXConfig member-initializer defaults.  Keep in sync when adding keys.
+    PostFXConfig def;
+    renderer->EnablePostOverlay(def.bloomEnabled);
+    renderer->SetBloomThreshold(def.bloomThreshold);
+    renderer->SetBloomIntensity(def.bloomIntensity);
+    renderer->SetToneMappingMode(0);
+    renderer->SetExposure(def.exposure);
+    renderer->SetColorGradingEnabled(def.cgEnabled);
+    renderer->SetCGSaturation(def.cgSaturation);
+    renderer->SetCGContrast(def.cgContrast);
+    renderer->SetCGLift(def.cgLift[0], def.cgLift[1], def.cgLift[2]);
+    renderer->SetCGGain(def.cgGain[0], def.cgGain[1], def.cgGain[2]);
+    renderer->SetSharpenStrength(def.sharpenStrength);
+    renderer->SetShadowMode(0);
+    renderer->SetShadowStrength(def.shadowStrength);
+    renderer->SetGodRaysEnabled(def.godRaysEnabled);
+    renderer->SetGodRayIntensity(def.godRayIntensity);
+    renderer->SetGodRayDensity(def.godRayDensity);
+    renderer->SetGodRayDecay(def.godRayDecay);
+    renderer->SetGodRayColor(def.godRayColor[0], def.godRayColor[1], def.godRayColor[2]);
+    renderer->SetHeightFogEnabled(def.heightFogEnabled);
+    renderer->SetHeightFogDensity(def.heightFogDensity);
+    renderer->SetHeightFogFalloff(def.heightFogFalloff);
+    renderer->SetHeightFogSunPower(def.heightFogSunPower);
+    renderer->SetHeightFogColor(def.heightFogColor[0], def.heightFogColor[1], def.heightFogColor[2]);
+    renderer->SetHeightFogSunColor(def.heightFogSunColor[0], def.heightFogSunColor[1], def.heightFogSunColor[2]);
+    renderer->SetSSAOEnabled(def.ssaoEnabled);
+    renderer->SetSSAOStrength(def.ssaoStrength);
+    renderer->SetSSAORadius(def.ssaoRadius);
+    renderer->SetSSAOIntensity(def.ssaoIntensity);
+    renderer->SetSSAODebug(def.ssaoDebug);
+    renderer->SetWaterFXEnabled(def.waterEnabled);
+    renderer->SetWaterWaveStrength(def.waterWaveStrength);
+    renderer->SetWaterClarity(def.waterClarity);
+    renderer->SetWaterDeepColor(def.waterDeepColor[0], def.waterDeepColor[1], def.waterDeepColor[2]);
+    renderer->SetWaterFoamWidth(def.waterFoamWidth);
+    renderer->SetWaterReflectivity(def.waterReflectivity);
+    renderer->SetNightHuntMode(def.nightHuntMode);
+    renderer->SetFlashlightRadius(def.flashlightRadius);
+    renderer->SetFlashlightSoftness(def.flashlightSoftness);
+    renderer->SetFlashlightBrightness(def.flashlightBrightness);
+}
+
+void ShaderPackManager::ApplyAll(RendererGL* renderer, bool nightHuntActive) {
+    // SOURCEPORT: reset first so per-hunt re-application is deterministic — a pack
+    // skipped this hunt must not leave settings behind from a previous hunt.
+    ShaderPack::ApplyDefaults(renderer);
+    for (const auto& pack : m_loadedPacks) {
+        // SOURCEPORT: night-only packs apply exclusively when the player selected
+        // the night time slot; dawn/day hunts are completely unaffected by them.
+        if (pack.GetConfig().nightHuntMode && !nightHuntActive) {
+            fprintf(stdout, "[ShaderPackManager] Skipping night-only pack '%s' (not a night hunt)\n",
+                    pack.GetName().c_str());
+            continue;
+        }
         pack.Apply(renderer);
+    }
 }
 
 bool ShaderPackManager::ApplyPack(const std::string& name, RendererGL* renderer) {

@@ -772,14 +772,19 @@ SKIPWIND:
 
 #ifdef _soft
 #else
-   if (PHONG) {
-    CalcPhongMapping(wptr->chinfo[CurrentWeapon].mptr, wptr->normals);
-    RenderModelClipPhongMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
-   }
-
-   if (ENVMAP) {
-	   CalcEnvMapping(wptr->chinfo[CurrentWeapon].mptr, wptr->normals);
-	   RenderModelClipEnvMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
+   // SOURCEPORT: PhongMap/EnvMap overlays are legacy additive D3D effects that strobe
+   // in GL mode because wptr->normals are view-space (recomputed from RotateVector(Sun3dPos)
+   // each frame), so every head movement changes every vertex UV independently per triangle.
+   // The GL renderer provides proper Gouraud lighting on the weapon already; skip these passes.
+   if (!g_glRenderer) {
+    if (PHONG) {
+     CalcPhongMapping(wptr->chinfo[CurrentWeapon].mptr, wptr->normals);
+     RenderModelClipPhongMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
+    }
+    if (ENVMAP) {
+     CalcEnvMapping(wptr->chinfo[CurrentWeapon].mptr, wptr->normals);
+     RenderModelClipEnvMap(wptr->chinfo[CurrentWeapon].mptr, 0, wpshy, wpshz, -wpnDAlpha, -wpnDBeta+wpnb);
+    }
    }
 #endif
    d3dSetHUDMode(FALSE);
@@ -1938,8 +1943,15 @@ void ProcessGame()
 		while (ShowCursor(FALSE)>=0);
 		// Seed sim timers so the first frame doesn't see a huge accumulator
 		// built from whatever stale wall-clock PrevTime had sitting around.
-		RealTime       = (int)timeGetTime();
-		PrevTime       = RealTime;
+		// SOURCEPORT: rebase the sim clock to 0 instead of timeGetTime(). Every
+		// procedural sway evaluates sin(RealTime/K) in float; once RealTime carries
+		// multi-hour Windows uptime (> 2^24 ms) consecutive milliseconds collapse to
+		// the same float and the head-bob/weapon-sway phase advances in 32-128 ms
+		// stair-steps (robotic bob). A zero base keeps ms-exact phase for ~4.6 h of
+		// play. Menu code (ProcessSyncro) still runs wall-clock RealTime; its
+		// TimeDt>10000 clamp absorbs the base switch on hunt<->menu transitions.
+		RealTime       = 0;
+		PrevTime       = 0;
 		g_simLastMs    = (int)timeGetTime();
 		g_simAccumMs   = 0;
 		g_prevCamValid = false;
@@ -1990,9 +2002,15 @@ void ProcessGame()
     // Interpolated render pose. The real Camera* is restored right
     // after DrawScene so the next TickSimulation integrates from the
     // authoritative (un-interpolated) state.
+    // SOURCEPORT: lerp on EVERY render frame, not just frames that ran a sim tick.
+    // When the display outruns the 62.5 Hz sim, tickless frames used to skip the
+    // lerp and show the raw newest pose — freezing the camera between ticks and
+    // quantizing head-bob to sim rate (stuttery, robotic walk). The residue alpha
+    // keeps growing between ticks, so lerping unconditionally stays smooth and
+    // monotonic from the pre-tick snapshot toward the current pose.
     float saveX = CameraX, saveY = CameraY, saveZ = CameraZ;
     float saveA = CameraAlpha, saveB = CameraBeta, saveG = CameraGamma;
-    if (g_prevCamValid && steps > 0) {
+    if (g_prevCamValid) {
         float alpha = (float)g_simAccumMs / (float)FIXED_DT_MS;
         if (alpha < 0.f) alpha = 0.f;
         if (alpha > 1.f) alpha = 1.f;
@@ -2263,7 +2281,9 @@ void ProcessGame()
         // SOURCEPORT: camera + sun uniforms are consumed by both the shadow pass and the
         // post-process god rays (sun screen projection), so upload them every flatscreen
         // frame regardless of shadow mode.
-        if (g_glRenderer && OptDayNight != 2) {
+        // SOURCEPORT: nighthunt runs the height fog post pass at night too, which
+        // needs fresh camera + fog-anchor uniforms — stale values freeze the fog.
+        if (g_glRenderer && (OptDayNight != 2 || g_glRenderer->GetNightHuntMode())) {
             float _ca = cosf(CameraAlpha), _sa = sinf(CameraAlpha);
             float _cb = cosf(CameraBeta),  _sb = sinf(CameraBeta);
             float _cg = cosf(CameraGamma), _sg = sinf(CameraGamma);
@@ -2303,24 +2323,21 @@ void ProcessGame()
     CameraAlpha = saveA; CameraBeta = saveB; CameraGamma = saveG;  // SOURCEPORT: include head tilt
 
     // SOURCEPORT: apply bloom + tone mapping to the 3D scene before any UI is drawn.
-    // UI elements (compass, wind meter, health bar, weapon sprite) are rendered on
-    // top of the post-processed image and are intentionally unaffected.
-    // Skipped in VR — each eye is composited by the XR runtime independently.
-    // Skipped at night — night-vision is already a stylised green overlay effect;
-    // bloom/tone-mapping would create artificial dark halos and contrast artefacts
-    // on top of it, making terrain look shadow-patched.
+    // All HUD layers (weapon, exit popup, map, health bar) render on top unaffected.
     { extern RendererGL* g_glRenderer;
-      if (!XR::StereoActive() && g_glRenderer && OptDayNight != 2) g_glRenderer->ApplyPostProcess(); }
+      if (!XR::StereoActive() && g_glRenderer &&
+          (OptDayNight != 2 || g_glRenderer->GetNightHuntMode()))
+          g_glRenderer->ApplyPostProcess(); }
 
     // SOURCEPORT: in VR, DrawHMap/DrawPostObjects/ShowControlElements already ran
     // per-eye inside the eye loop and are captured in the eye 1 companion blit.
     // Rendering them again here would overdraw the blit on the companion window
     // and double-render the weapon.  Skip entirely for VR; run normally for flat-screen.
     if (!XR::StereoActive()) {
-        drawSceneStage = "DrawHMap";
-        if (!TrophyMode) if (MapMode) DrawHMap();
         drawSceneStage = "PostObj";
         DrawPostObjects();
+        drawSceneStage = "DrawHMap";
+        if (!TrophyMode) if (MapMode) DrawHMap();
         drawSceneStage = "Controls";
         ShowControlElements();
     }

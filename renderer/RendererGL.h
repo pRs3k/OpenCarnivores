@@ -228,6 +228,12 @@ public:
     void SetWaterFoamWidth(float w)       { m_waterFoamWidth = w; }
     void SetWaterReflectivity(float r)    { m_waterReflectivity = r; }
 
+    void SetNightHuntMode(bool e)         { m_nightHuntMode = e; }
+    bool GetNightHuntMode() const         { return m_nightHuntMode; }
+    void SetFlashlightRadius(float r)     { m_flashlightRadius = r; }
+    void SetFlashlightSoftness(float s)   { m_flashlightSoftness = s; }
+    void SetFlashlightBrightness(float b) { m_flashlightBrightness = b; }
+
 private:
     void CompileShaders();
     void CreateBuffers();
@@ -412,6 +418,12 @@ private:
     float    m_heightFogSunColor[3] = {1.0f, 0.85f, 0.65f};  // warm glow toward the sun
     float    m_fogAnchorY   = 0.0f;       // lowest terrain height (GU)
     float    m_fogViewRange = 12000.0f;   // view radius (GU); sky rays use 2× this
+
+    // SOURCEPORT: night hunt mode — flashlight spotlight replaces green NV overlay
+    bool  m_nightHuntMode          = false;
+    float m_flashlightRadius       = 0.22f;
+    float m_flashlightSoftness     = 0.10f;
+    float m_flashlightBrightness   = 1.0f;
 
     // SOURCEPORT: SSAO state (driven by ShaderPack::Apply)
     bool     m_ssaoEnabled   = false;
