@@ -34,17 +34,17 @@ jobs:
       - name: Install Ninja
         run: choco install ninja -y --no-progress
 
-      - name: Configure (CMake + Ninja + MSVC)
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          cmake -B build -G Ninja -DRENDERER=opengl -DCMAKE_BUILD_TYPE=Release
+      # The compiler is pinned to clang++ (the toolchain the project is developed
+      # and tested with). The previous vcvars64.bat approach failed silently on
+      # runner image changes and CMake fell back to MinGW GCC, which cannot build
+      # this code.
+      - name: Configure (CMake + Ninja + clang)
+        shell: pwsh
+        run: cmake -B build -G Ninja -DRENDERER=opengl -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build (Release)
-        shell: cmd
-        run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          cmake --build build
+        shell: pwsh
+        run: cmake --build build
 
       - name: Stage runtime bundle
         shell: bash
