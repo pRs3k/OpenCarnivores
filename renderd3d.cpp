@@ -4147,9 +4147,11 @@ void RenderWater()
       g_glRenderer->SetRenderStates(false, BLEND_INVSRCALPHA);
       // SOURCEPORT: water material — flush any pending batch, then capture the scene
       // colour/depth (the underwater world is fully drawn at this point) and enable
-      // the water branch in basic.frag. Retro water when disabled, underwater, or VR.
+      // the water branch in basic.frag. Retro water when disabled or underwater.
+      // SOURCEPORT: VR now sets per-eye camera uniforms, so the water shader's
+      // vWorldPos/uCameraPos are valid in stereo and the material is enabled there too.
       if (lpVertexG) d3dEndBufferG(FALSE);
-      g_glRenderer->BeginWaterPass(!UNDERWATER && !XR::StereoActive(),
+      g_glRenderer->BeginWaterPass(!UNDERWATER,
                                    (float)(RealTime % 600000) / 1000.f);
   }
 #endif

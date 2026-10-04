@@ -1631,6 +1631,15 @@ static void RunOptions(bool& appQuit) {
                 wsprintf(buf, "%d%%", OptSSFactor);
                 MT(buf, vx + slW + 8, y, 0x00C0C0C0);
             }
+            y += lnH;
+
+            // SOURCEPORT: VR post-processing (bloom/tone map/fog/SSAO per eye); off = faster
+            {
+                bool hot = gMI.x >= vx && gMI.x < vx+tvW && gMI.y >= y && gMI.y < y+lnH;
+                MTMed("Post Effects (VR Only)", ox, y, 0x00AC6D24);
+                MT(OptVRPostFX ? "On" : "Off", vx, y, hot ? 0x00FFFF40 : 0x00C0C0C0);
+                if (hot && gMI.lClick) OptVRPostFX = !OptVRPostFX;
+            }
         }
 
         // ── CONTROLS panel ─────────────────────────────────────────────────

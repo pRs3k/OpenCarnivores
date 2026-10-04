@@ -973,9 +973,21 @@ void RendererGL::EndFrame() {
 // Must be called after all 3D geometry is drawn but BEFORE any HUD/UI draws so that
 // compass, wind meter, health bar, etc. are composited clean on top.
 void RendererGL::ApplyPostProcess() {
+    ApplyPostProcess(0, 0, 0);
+}
+
+// SOURCEPORT: post-process into an arbitrary FBO (VR eye swapchain images).
+// w/h <= 0 means window size.  Uses the camera uniforms from the most recent
+// SetCameraWorldUniforms call, so callers set those per eye first.
+void RendererGL::ApplyPostProcess(unsigned int targetFBO, int w, int h) {
     if (m_postOverlayEnabled || m_toneMappingMode != 0 || m_cgEnabled || m_godRaysEnabled
         || m_heightFogEnabled || m_ssaoEnabled || m_nightHuntMode) {
+        m_postTargetFBO = (GLuint)targetFBO;
+        m_postTargetW   = w;
+        m_postTargetH   = h;
         RunPostOverlay();
+        m_postTargetFBO = 0;
+        m_postTargetW   = m_postTargetH = 0;
     }
 }
 
@@ -2748,6 +2760,7 @@ uniform float uFlashlightRadius;    // spotlight edge radius (aspect-corrected, 
 uniform float uFlashlightSoftness;  // falloff width around the edge
 uniform float uFlashlightAspect;    // width/height for circle-to-ellipse correction
 uniform float uFlashlightBrightness;// centre brightness multiplier (>1 boosts scene)
+uniform vec2  uFlashlightCenter;    // cone centre in UV (principal point; 0.5,0.5 flatscreen)
 
 // ACES filmic approximation (Hill/Narkowicz).
 // On LDR input [0,1]: lifts shadows, compresses highlights, adds mid contrast.
@@ -2798,7 +2811,8 @@ void main() {
     // SOURCEPORT: nighthunt flashlight applied in HDR space before tone mapping so
     // ACES/Reinhard compresses bright surfaces (water, sky) instead of clipping them.
     if (uFlashlight > 0.5) {
-        vec2 fc = vTexCoord - 0.5;
+        // SOURCEPORT: centre on the principal point so both VR eyes' cones fuse.
+        vec2 fc = vTexCoord - uFlashlightCenter;
         fc.x *= uFlashlightAspect;
         float d = length(fc);
         float cone = 1.0 - smoothstep(uFlashlightRadius - uFlashlightSoftness,
@@ -2855,7 +2869,7 @@ void main() {
     static GLint s_locCmpSat = -1,    s_locCmpContrast = -1;
     static GLint s_locCmpLift = -1,   s_locCmpGain = -1,     s_locCmpSharpen = -1;
     static GLint s_locCmpGodRays = -1, s_locCmpGRIntensity = -1, s_locCmpAODebug = -1;
-    static GLint s_locCmpFlashlight = -1, s_locCmpFlashlightR = -1, s_locCmpFlashlightS = -1, s_locCmpFlashlightA = -1, s_locCmpFlashlightB = -1;
+    static GLint s_locCmpFlashlight = -1, s_locCmpFlashlightR = -1, s_locCmpFlashlightS = -1, s_locCmpFlashlightA = -1, s_locCmpFlashlightB = -1, s_locCmpFlashlightC = -1;
     static GLint s_locGRMaskDepth = -1, s_locGRMaskSunPos = -1, s_locGRMaskColor = -1, s_locGRMaskAspect = -1;
     static GLint s_locGRBlurTex = -1,   s_locGRBlurSunPos = -1, s_locGRBlurDensity = -1, s_locGRBlurDecay = -1;
     static GLint s_locHFScene = -1, s_locHFDepth = -1, s_locHFScreenSize = -1;
@@ -2956,6 +2970,7 @@ void main() {
             s_locCmpFlashlightS  = glGetUniformLocation(s_progComposite, "uFlashlightSoftness");
             s_locCmpFlashlightA  = glGetUniformLocation(s_progComposite, "uFlashlightAspect");
             s_locCmpFlashlightB  = glGetUniformLocation(s_progComposite, "uFlashlightBrightness");
+            s_locCmpFlashlightC  = glGetUniformLocation(s_progComposite, "uFlashlightCenter");
             s_locGRMaskDepth  = glGetUniformLocation(s_progGRMask, "uDepth");
             s_locGRMaskSunPos = glGetUniformLocation(s_progGRMask, "uSunPos");
             s_locGRMaskColor  = glGetUniformLocation(s_progGRMask, "uSunColor");
@@ -3001,8 +3016,14 @@ void main() {
 
     if (!s_ready) return;
 
+    // SOURCEPORT: post target is the default framebuffer at window size unless
+    // ApplyPostProcess(fbo, w, h) redirected it (VR eye swapchain FBOs).
+    const GLuint dstFBO = m_postTargetFBO;
+    const int    W      = m_postTargetW > 0 ? m_postTargetW : m_width;
+    const int    H      = m_postTargetH > 0 ? m_postTargetH : m_height;
+
     // Recreate half-res FBOs if resolution changed
-    int bw = m_width / 2, bh = m_height / 2;
+    int bw = W / 2, bh = H / 2;
     if (bw != s_bloomW || bh != s_bloomH) {
         s_bloomW = bw; s_bloomH = bh;
 
@@ -3034,7 +3055,7 @@ void main() {
         // RGB16F not RGB8: the slow fog gradient quantizes to visible 1/255 contour
         // bands at 8 bits, which the composite sharpen then etches into distinct
         // lines that track the camera (iso-distance contours).
-        makeFBO(s_fogFBO, s_fogTex, m_width, m_height, GL_RGB16F);
+        makeFBO(s_fogFBO, s_fogTex, W, H, GL_RGB16F);
         fprintf(stdout, "[Bloom] FBOs resized to %dx%d\n", bw, bh);
     }
 
@@ -3054,10 +3075,10 @@ void main() {
     glBindVertexArray(s_vao);
 
     // ── Step A: copy backbuffer → sceneTex ───────────────────────────────────
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFBO);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, s_sceneTex);
-    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, m_width, m_height, 0);
+    glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, W, H, 0);
 
     // ── Step A2: project sun to screen + shared depth capture ────────────────
     // SOURCEPORT: god ray intensity is 0 whenever the sun is behind the camera or
@@ -3077,8 +3098,8 @@ void main() {
             // Same projection the depth shader inverts for world-pos reconstruction.
             float screenX = m_unifVideoCX + sunCamX * m_unifCameraW / facing;
             float screenY = m_unifVideoCY - sunCamY * m_unifCameraH / facing;
-            sunU = screenX / (float)m_width;
-            sunV = 1.0f - screenY / (float)m_height; // captured texture row 0 = screen bottom
+            sunU = screenX / (float)W;
+            sunV = 1.0f - screenY / (float)H; // captured texture row 0 = screen bottom
             // Fade rays out as the sun moves past the screen edge so they never pop.
             float offU = fmaxf(0.0f, fmaxf(-sunU, sunU - 1.0f));
             float offV = fmaxf(0.0f, fmaxf(-sunV, sunV - 1.0f));
@@ -3092,7 +3113,7 @@ void main() {
         // SOURCEPORT: capture scene depth while the default framebuffer is still
         // bound — shared by SSAO, height fog and god ray passes.
         glBindTexture(GL_TEXTURE_2D, s_depthTex);
-        glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 0, 0, m_width, m_height, 0);
+        glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, 0, 0, W, H, 0);
     }
 
     // ── Step A3a: SSAO (half-res: depth → raw AO → bilateral blur) ───────────
@@ -3102,7 +3123,7 @@ void main() {
         glUseProgram(s_progSSAO);
         glBindTexture(GL_TEXTURE_2D, s_depthTex);
         glUniform1i(s_locAODepth, 0);
-        glUniform2f(s_locAOScreenSize, (float)m_width, (float)m_height);
+        glUniform2f(s_locAOScreenSize, (float)W, (float)H);
         glUniform1f(s_locAOVCX, m_unifVideoCX);
         glUniform1f(s_locAOVCY, m_unifVideoCY);
         glUniform1f(s_locAOCW,  m_unifCameraW);
@@ -3132,7 +3153,7 @@ void main() {
     GLuint sceneSrc = s_sceneTex;
     if (fogActive || aoActive) {
         glBindFramebuffer(GL_FRAMEBUFFER, s_fogFBO);
-        glViewport(0, 0, m_width, m_height);
+        glViewport(0, 0, W, H);
         glUseProgram(s_progHeightFog);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, s_sceneTex);
@@ -3145,7 +3166,7 @@ void main() {
         glUniform1i(s_locHFAO, 2);
         glUniform1f(s_locHFAOStrength, aoActive ? m_ssaoStrength : 0.0f);
         glUniform1f(s_locHFAODebug, (aoActive && m_ssaoDebug) ? 1.0f : 0.0f);
-        glUniform2f(s_locHFScreenSize, (float)m_width, (float)m_height);
+        glUniform2f(s_locHFScreenSize, (float)W, (float)H);
         glUniform1f(s_locHFVCX, m_unifVideoCX);
         glUniform1f(s_locHFVCY, m_unifVideoCY);
         glUniform1f(s_locHFCW,  m_unifCameraW);
@@ -3175,7 +3196,7 @@ void main() {
         glUniform1i(s_locGRMaskDepth, 0);
         glUniform2f(s_locGRMaskSunPos, sunU, sunV);
         glUniform3f(s_locGRMaskColor, m_godRayColor[0], m_godRayColor[1], m_godRayColor[2]);
-        glUniform1f(s_locGRMaskAspect, (float)m_width / (float)m_height);
+        glUniform1f(s_locGRMaskAspect, (float)W / (float)H);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
         // Radial blur pass: march toward sun (fboC → fboD)
@@ -3219,9 +3240,9 @@ void main() {
         }
     }
 
-    // ── Step E: composite scene + bloom → default framebuffer ────────────────
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, m_width, m_height);
+    // ── Step E: composite scene + bloom → target framebuffer ─────────────────
+    glBindFramebuffer(GL_FRAMEBUFFER, dstFBO);
+    glViewport(0, 0, W, H);
     glUseProgram(s_progComposite);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, sceneSrc);
@@ -3248,8 +3269,10 @@ void main() {
     glUniform1f(s_locCmpFlashlight,  m_nightHuntMode ? 1.0f : 0.0f);
     glUniform1f(s_locCmpFlashlightR, m_flashlightRadius);
     glUniform1f(s_locCmpFlashlightS, m_flashlightSoftness);
-    glUniform1f(s_locCmpFlashlightA, m_height > 0 ? (float)m_width / (float)m_height : 1.0f);
+    glUniform1f(s_locCmpFlashlightA, H > 0 ? (float)W / (float)H : 1.0f);
     glUniform1f(s_locCmpFlashlightB, m_flashlightBrightness);
+    glUniform2f(s_locCmpFlashlightC, W > 0 ? m_unifVideoCX / (float)W : 0.5f,
+                                     H > 0 ? 1.0f - m_unifVideoCY / (float)H : 0.5f);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // ── Restore GL state ──────────────────────────────────────────────────────
@@ -3261,7 +3284,7 @@ void main() {
     glDepthMask(depthWrite);
     if (blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
     glBlendFunc(blendSrc, blendDst);
-    glViewport(0, 0, m_width, m_height);
+    glViewport(0, 0, W, H);
 }
 
 

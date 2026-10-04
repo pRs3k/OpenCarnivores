@@ -296,7 +296,7 @@ The real `pack.json` is a flat JSON file with these top-level keys:
 | `ssao_radius` | 50–300 | Sample radius in world units (120 ≈ 0.9 m) |
 | `ssao_intensity` | 0.5–3.0 | Occlusion gain; higher = darker crevices |
 | `ssao_debug` | true/false | Development aid: render the raw AO buffer instead of the scene |
-| `water_enabled` | true/false | Animated refractive water (GL only; no-op in VR and underwater) |
+| `water_enabled` | true/false | Animated refractive water (GL only; no-op underwater) |
 | `water_wave_strength` | 0.0–0.6 | Surface normal tilt from waves; 0 = perfectly flat mirror |
 | `water_clarity` | 0.001–0.02 | Absorption per GU of underwater depth; 0.005 ≈ teal at 1 m |
 | `water_deep_color_r/g/b` | 0.0–1.0 | Color of fully absorbed deep water |
@@ -318,8 +318,8 @@ The real `pack.json` is a flat JSON file with these top-level keys:
 Screen-space crepuscular rays: sky pixels around the sun's screen position are
 extracted using the captured depth buffer, then radially blurred toward the sun
 and added to the scene before tone mapping. Rays fade automatically when the sun
-moves behind the camera or off-screen, and are inactive in VR (post-processing
-runs flatscreen-only). Inactive at night in normal play; do **not** enable
+moves behind the camera or off-screen. In VR they run per eye (toggle with
+Options > Post Effects (VR Only)). Inactive at night in normal play; do **not** enable
 `godrays_*` in or alongside a night-only pack — the sun disc is suppressed at
 night but the projected sun position still exists, so rays would emanate from an
 invisible sun.
@@ -331,8 +331,8 @@ depth buffer and an exponential height-density fog is integrated analytically al
 each view ray. Fog is anchored at the map's lowest terrain, so it pools in valleys
 and thins with altitude; looking toward the sun tints the fog with `heightfog_suncolor`
 (Mie-style forward scattering). Applied before bloom and tone mapping. Layers on top
-of the game's retro distance fog — keep `heightfog_density` subtle. Inactive in VR;
-inactive at night unless a night-only pack (`nighthunt_mode`) is active.
+of the game's retro distance fog — keep `heightfog_density` subtle. Runs per eye in
+VR when Post Effects (VR Only) is on; inactive at night unless a night-only pack (`nighthunt_mode`) is active.
 
 ### ssao
 
@@ -355,7 +355,7 @@ the shore stay still (the sandy bottom is clearly visible), while deeper water
 shimmers. Schlick Fresnel adds a subtle sky reflection and sun glint. A narrow
 shoreline foam band can be enabled via `water_foam_width`.
 
-The water material is automatically disabled underwater, in VR stereo mode, and on
+The water material is automatically disabled underwater and on
 the D3D path — the original retro look is preserved in those contexts.
 
 **Shadows:** the CSM shadow is intentionally not applied directly to the water

@@ -936,7 +936,8 @@ EXTORNOT int  OptDisplayMode, OptVSync, OptResW, OptResH;
 // SOURCEPORT: graphics quality options (apply to flatscreen and VR)
 // OptAnisoLevel:   1=Low (2x), 2=Medium (4x), 3=High (8x), 4=Max (16x)
 // OptSSFactor:     100-200, supersampling multiplier for VR eye FBOs (100=no scaling)
-EXTORNOT int  OptAnisoLevel, OptSSFactor;
+// OptVRPostFX:     0/1, run the post-process stack per VR eye (bloom, tone map, fog, SSAO...)
+EXTORNOT int  OptAnisoLevel, OptSSFactor, OptVRPostFX;
 
 EXTORNOT BOOL SLOW, DEBUG, MORPHP, MORPHA;
 EXTORNOT HANDLE hlog;

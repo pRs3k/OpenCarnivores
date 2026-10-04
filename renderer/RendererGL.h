@@ -155,6 +155,7 @@ public:
     // SOURCEPORT: apply post-process effects (bloom, tone mapping, color grading) to the
     // current back-buffer.  Call after DrawScene() but before any HUD/UI rendering.
     void ApplyPostProcess();
+    void ApplyPostProcess(unsigned int targetFBO, int w, int h);
     void EnablePostOverlay(bool enable)   { m_postOverlayEnabled = enable; }
     bool IsPostOverlayEnabled() const     { return m_postOverlayEnabled; }
     void SetBloomThreshold(float t)       { m_bloomThreshold = t; }
@@ -372,6 +373,9 @@ private:
     float  m_cameraWorldPos[3]  = {};
     float  m_unifVideoCX = 0.f, m_unifVideoCY = 0.f;
     float  m_unifCameraW = 1.f, m_unifCameraH = 1.f;
+    // SOURCEPORT: RunPostOverlay target — 0/0/0 = default framebuffer at window size.
+    GLuint m_postTargetFBO = 0;
+    int    m_postTargetW = 0, m_postTargetH = 0;
     // Sun direction (world space, pointing TOWARD the sun)
     float  m_sunDirWorld[3] = {0.4f, 0.8f, 0.3f};
     // SOURCEPORT: true while the depth-only shadow pass owns DrawScene().

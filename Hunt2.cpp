@@ -2107,6 +2107,19 @@ void ProcessGame()
         g_vrBaseCamY = saveY;
         g_vrBaseCamZ = saveZ;
 
+        // SOURCEPORT: VR graphics parity with flatscreen — sun direction and height-fog
+        // anchor are view-independent, so upload once per frame before the eye loop.
+        // Camera uniforms (world-pos reconstruction for shadows/PBR/water/fog) are set
+        // per eye below; previously they were never set in VR, leaving PBR lighting,
+        // shadow lookups and post effects working from stale flatscreen values.
+        extern RendererGL* g_glRenderer;
+        const bool vrLitFX = g_glRenderer && (OptDayNight != 2 || g_glRenderer->GetNightHuntMode());
+        if (vrLitFX) {
+            g_glRenderer->SetSunDirection(Sun3dPos.x, Sun3dPos.y, Sun3dPos.z);
+            int _mmy = (MapMinY == 10241024) ? 0 : MapMinY;
+            g_glRenderer->SetHeightFogWorldParams((float)_mmy * ctHScale, (float)ctViewR * 256.0f);
+        }
+
         for (int xrEye = 0; xrEye < 2; ++xrEye) {
             unsigned int fbo = XR::AcquireEyeImage(xrEye);
             if (!fbo) continue;
@@ -2149,6 +2162,25 @@ void ProcessGame()
             }
             FOVK    = CameraW / (max((float)VideoCX, (float)(WinW - VideoCX)) * 1.25f); // SOURCEPORT: asymmetric VR FOV fix
 
+            // SOURCEPORT: per-eye camera uniforms so vWorldPos (PBR, CSM lookups, water,
+            // SSAO, height fog, god rays) reconstructs with this eye's projection.
+            if (vrLitFX)
+                g_glRenderer->SetCameraWorldUniforms(
+                    (float)VideoCX, (float)VideoCY, CameraW, CameraH,
+                    CameraX, CameraY, CameraZ, ca, sa, cb, sb, cg, sg);
+
+            // SOURCEPORT: CSM sun shadows in VR. Cascades are world-space ortho maps
+            // snapped to the light texel grid, so one pass (from eye 0) serves both
+            // eyes; the IPD offset is far below a cascade texel. Must run before the
+            // eye FBO is bound — EndWorldShadowPass leaves FBO 0 bound.
+            if (xrEye == 0 && g_glRenderer && g_glRenderer->GetShadowMode() > 0 && OptDayNight != 2) {
+                for (int _c = 0; _c < RendererGL::NUM_SHADOW_CASCADES_PUB; ++_c) {
+                    g_glRenderer->BeginWorldShadowPass(_c);
+                    DrawScene();
+                    g_glRenderer->EndWorldShadowPass(_c);
+                }
+            }
+
             // Bind the XR eye FBO; GL viewport maps CPU screen coords to eye pixels.
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fbo);
             glViewport(0, 0, (GLsizei)WinW, (GLsizei)WinH);
@@ -2182,6 +2214,12 @@ void ProcessGame()
             // alpha = 1.0; blocking further alpha writes keeps them at 1.0 throughout.
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
             DrawScene();
+
+            // SOURCEPORT: post stack (SSAO, height fog, god rays, bloom, tone mapping,
+            // colour grading, sharpen) into this eye's FBO before the HUD pass, matching
+            // the flatscreen order. Alpha writes stay masked for the compositor.
+            if (vrLitFX && OptVRPostFX)
+                g_glRenderer->ApplyPostProcess(fbo, WinW, WinH);
 
             // SOURCEPORT: HUD/weapon pass — rendered per-eye so the headset sees it.
             // Reset to head-centre (no IPD, no asymmetric principal point) so 2D HUD

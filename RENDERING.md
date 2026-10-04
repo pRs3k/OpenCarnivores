@@ -168,7 +168,7 @@ Any function that binds to `GL_TEXTURE0` must save and restore the previous bind
 
 ## Post-Process Pipeline (current)
 
-All effects run flatscreen-only (VR omitted for comfort/performance) and are skipped at night. Controlled via `shaderpacks/default/pack.json`. See [SHADER_PACKS.md](SHADER_PACKS.md) for the full parameter reference and [SHADER_DEVELOPMENT_NOTES.md](SHADER_DEVELOPMENT_NOTES.md) for design history.
+All effects run on flatscreen and, per eye, in VR (`ApplyPostProcess(fbo, w, h)` targets the eye swapchain FBO; gated by `OptVRPostFX`). They are skipped at night unless a night-only pack is active. Controlled via `shaderpacks/default/pack.json`. See [SHADER_PACKS.md](SHADER_PACKS.md) for the full parameter reference and [SHADER_DEVELOPMENT_NOTES.md](SHADER_DEVELOPMENT_NOTES.md) for design history.
 
 | Effect | Implementation | Notes |
 |--------|---------------|-------|

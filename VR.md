@@ -64,6 +64,20 @@ Loop bounds in `PreCashGroundModel()` are sufficient for the visible frustum. Ex
 
 Game world units: **~143 GU/m** (from `HeadY = 220 GU` ÷ 1.54 m effective eye height). Adjusted from ~133 GU/m to improve perceived detail and reduce "too large" sensation in VR. This scale is critical: changing it affects perceived world size and IPD-induced stereo disparity. Larger scales (e.g. 256 GU/m) shrink the perceived world and double IPD disparity, causing eye strain at close distances.
 
+## VR graphics parity with flatscreen
+
+Until v1.2 the VR eye loop rendered only the bare scene: no CSM sun shadows, no post-process stack, retro water, and **stale camera uniforms** (`SetCameraWorldUniforms` was never called in VR, so `vWorldPos` reconstruction in `basic.vert` — used by PBR lighting, shadow lookups, water and every depth-based post effect — ran with whatever flatscreen values were last uploaded). That gap is the main reason VR looked worse than flatscreen.
+
+**Now (`Hunt2.cpp` VR branch):**
+- Sun direction + height-fog anchor uploaded once per frame before the eye loop.
+- `SetCameraWorldUniforms` called **per eye** with that eye's `VideoCX/CY`, `CameraW/H` (including binocular zoom), IPD/room-offset position and orientation.
+- CSM shadow pass runs once on eye 0, before the eye FBO is bound (`EndWorldShadowPass` leaves FBO 0 bound). Cascades are world-space and texel-snapped, so one set serves both eyes. Costs 3 extra `DrawScene` calls per frame — follows the shader pack's shadow mode / Shift+S like flatscreen. Caveat: casters are culled against eye 0's frustum, so a caster visible only at eye 1's far temporal edge may lose its shadow.
+- `ApplyPostProcess(fbo, WinW, WinH)` runs per eye after `DrawScene` and before the HUD pass, same ordering as flatscreen. `RunPostOverlay` now reads/writes `m_postTargetFBO` at `m_postTargetW×H` instead of hard-coding FBO 0 and the window size. Alpha writes stay masked so the Quest compositor sees alpha = 1.
+- Nighthunt flashlight cone centres on each eye's principal point (`uFlashlightCenter`), not UV 0.5 — otherwise the asymmetric Quest 3 FOV puts the two cones ~10% apart and they never fuse.
+- Animated water material enabled in VR (`BeginWaterPass` no longer excludes stereo); it captures colour/depth from the eye FBO.
+
+**Toggle**: Options > Advanced Graphics > **Post Effects (VR Only)** (`OptVRPostFX`, persisted in `display.cfg` v4). Turn off if frame rate drops; shadows are controlled separately by the shader pack / Shift+S.
+
 ## VR Graphics Settings
 
 **Supersampling** (`OptSSFactor`, 100–200%):

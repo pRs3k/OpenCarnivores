@@ -778,6 +778,7 @@ void InitEngine()
     // SOURCEPORT: graphics quality options defaults
     OptAnisoLevel = 3;   // High (8x) — reduces anisotropic aliasing on oblique ground tiles
     OptSSFactor   = 100; // 100% (no supersampling)
+    OptVRPostFX   = 1;   // post-process stack on in VR (parity with flatscreen)
 
     // SOURCEPORT: load persisted display/graphics settings before command-line args so
     // -fullscreen/-windowed/etc. can still override individual settings at launch.
@@ -1804,7 +1805,7 @@ void SaveTrophy()
 // Uses Win32 WriteFile/ReadFile to match the rest of Game.cpp (no stdio dependency).
 // Format: 8 ints written sequentially with a magic header for version safety.
 static const DWORD kDisplayMagic = 0x44495350; // 'DISP'
-static const DWORD kDisplayVer   = 3; // bumped: v3 added VR graphics options
+static const DWORD kDisplayVer   = 4; // bumped: v4 added OptVRPostFX
 
 void SaveDisplayConfig()
 {
@@ -1825,6 +1826,8 @@ void SaveDisplayConfig()
     // SOURCEPORT: v3 — graphics quality options
     WriteFile(h, &OptAnisoLevel, 4, &l, nullptr);
     WriteFile(h, &OptSSFactor,   4, &l, nullptr);
+    // SOURCEPORT: v4 — VR post-processing toggle
+    WriteFile(h, &OptVRPostFX,   4, &l, nullptr);
     CloseHandle(h);
     PrintLog("Display config saved.\n");
 }
@@ -1858,6 +1861,8 @@ void LoadDisplayConfig()
         OptAnisoLevel = 3;   // High (8x) — reduces anisotropic aliasing on oblique ground tiles
         OptSSFactor = 100;   // 100% (no supersampling)
     }
+    if (ver >= 4) ReadFile(h, &OptVRPostFX, 4, &l, nullptr);
+    else          OptVRPostFX = 1;
     CloseHandle(h);
     // SOURCEPORT: validate loaded values — clamp mode to known range, and reject any
     // saved resolution that is implausibly small (could be a DPI-scaled logical value
@@ -1867,6 +1872,7 @@ void LoadDisplayConfig()
     // Validate quality options
     if (OptAnisoLevel < 1 || OptAnisoLevel > 4) OptAnisoLevel = 2;
     if (OptSSFactor < 100 || OptSSFactor > 200) OptSSFactor = 100;
+    OptVRPostFX = OptVRPostFX ? 1 : 0;
     PrintLog("Display config loaded.\n");
 }
 

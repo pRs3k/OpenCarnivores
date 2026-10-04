@@ -27,6 +27,7 @@
   - See [RENDERING.md](RENDERING.md) Phase 2 roadmap
 
 ## VR Enhancements
+- **VR graphics parity** ✅ — per-eye camera uniforms (PBR, water, fog reconstruction), CSM sun shadows, post-process stack per eye, animated water. See [VR.md](VR.md) "VR graphics parity".
 - **Next: Independent weapon aiming** — controller-relative pointing for true VR gun aiming (vs. camera-centered)
 
 ## Specialized domains
