@@ -2335,8 +2335,12 @@ void ReleaseEyeImage(int eye, bool symmetricFov)
         g_depthInfo[eye].subImage.imageRect.extent.height = (int32_t)g_eyeHeight;
         g_depthInfo[eye].minDepth = 1.0f;      // reversed depth: 1.0 → nearZ
         g_depthInfo[eye].maxDepth = 0.0f;      // reversed depth: 0.0 → farZ
-        g_depthInfo[eye].nearZ    = 0.01f;     // ~1.3 GU at 133 GU/m — near clip
-        g_depthInfo[eye].farZ     = 10000.0f;  // ~1,330,000 GU — beyond far terrain
+        // SOURCEPORT: window depth = (16/|z_GU|)/kScreenDepthFar, i.e. reversed 1/z with
+        // depth 1.0 at |z| = 16/kScreenDepthFar GU (64 GU ≈ 0.45 m). nearZ must be that
+        // distance in metres; the old 0.01 m told the compositor everything was ~11×
+        // closer than it is.
+        g_depthInfo[eye].nearZ    = (16.0f / kScreenDepthFar) / kGUperM;
+        g_depthInfo[eye].farZ     = 10000.0f;  // effectively infinite
         g_projViews[eye].next = &g_depthInfo[eye];
 
         // Release depth swapchain image back to the runtime.
@@ -2405,7 +2409,8 @@ void GetEyeCameraSetup(int eye,
     // World scale: HeadY=220 GU is standing eye-height ≈ 1.65 m → ~133 GU/m.
     // The original 256 was ~2× too large, doubling the virtual IPD and making
     // everything appear miniaturised with excessive near-object stereo disparity.
-    static constexpr float kGUperM = 220.f / 1.65f;  // ≈ 133
+    // SOURCEPORT: XR::kGUperM (≈143) — was a local 220/1.65 (≈133), which left the
+    // IPD/stereo scale out of step with the room-scale offset in Hunt2.cpp.
     float cx = (g_views[0].pose.position.x + g_views[1].pose.position.x) * 0.5f;
     float cy = (g_views[0].pose.position.y + g_views[1].pose.position.y) * 0.5f;
     float cz = (g_views[0].pose.position.z + g_views[1].pose.position.z) * 0.5f;

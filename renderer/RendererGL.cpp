@@ -1463,10 +1463,14 @@ void RendererGL::SetBrightness(float b) {
     // SOURCEPORT: runtime brightness applied in shader. b=1.0 = neutral, 0.0=black, 2.0=double.
     // Replaces the old BrightenTexture(OptBrightness) bake so the slider is live.
     m_brightness = b;
+    // SOURCEPORT: bind the main program first — called from menus/key handlers, where
+    // VR leaves program 0 bound after XR::EndFrame and the uniform write was dropped.
+    glUseProgram(m_shaderProgram);
     glUniform1f(m_locBrightness, b);
 }
 
 void RendererGL::SetDebugMode(int mode) {
+    glUseProgram(m_shaderProgram);   // SOURCEPORT: see SetBrightness
     if (m_locDebugMode >= 0) glUniform1i(m_locDebugMode, mode);
 }
 
@@ -2484,7 +2488,11 @@ out vec4 FragColor;
 uniform sampler2D uDepth;
 uniform vec2  uSunPos;    // sun position in UV space
 uniform vec3  uSunColor;
-uniform float uAspect;    // width/height for circular falloff
+// SOURCEPORT: tangent-space scale (UV → view-angle tangents, normalised so flatscreen
+// is unchanged). The glow falloff was in UV units with an aspect fix, so on a VR eye
+// (≈2× the field of view per UV unit) the sun glow covered a huge angular area and
+// the radial blur washed the whole image out.
+uniform vec2  uTanScale;
 void main() {
     float d = texture(uDepth, vTexCoord).r;
     // SOURCEPORT: hairline terrain cracks read as sky depth; without this fill the
@@ -2499,7 +2507,7 @@ void main() {
         if (max(min(dl, dr), min(du, dd)) > 0.0004) d = 1.0;  // crack ⟹ solid, not sky
     }
     float sky = (d < 0.0004) ? 1.0 : 0.0;
-    vec2 dv = (vTexCoord - uSunPos) * vec2(uAspect, 1.0);
+    vec2 dv = (vTexCoord - uSunPos) * uTanScale;
     float falloff = max(1.0 - dot(dv, dv) * 2.0, 0.0);
     FragColor = vec4(uSunColor * (sky * falloff * falloff), 1.0);
 }
@@ -2982,7 +2990,7 @@ void main() {
             s_locGRMaskDepth  = glGetUniformLocation(s_progGRMask, "uDepth");
             s_locGRMaskSunPos = glGetUniformLocation(s_progGRMask, "uSunPos");
             s_locGRMaskColor  = glGetUniformLocation(s_progGRMask, "uSunColor");
-            s_locGRMaskAspect = glGetUniformLocation(s_progGRMask, "uAspect");
+            s_locGRMaskAspect = glGetUniformLocation(s_progGRMask, "uTanScale");
             s_locGRBlurTex     = glGetUniformLocation(s_progGRBlur, "uTex");
             s_locGRBlurSunPos  = glGetUniformLocation(s_progGRBlur, "uSunPos");
             s_locGRBlurDensity = glGetUniformLocation(s_progGRBlur, "uDensity");
@@ -3113,6 +3121,13 @@ void main() {
             float offV = fmaxf(0.0f, fmaxf(-sunV, sunV - 1.0f));
             float edgeFade = fmaxf(0.0f, 1.0f - fmaxf(offU, offV) * 2.0f);
             grIntensity = m_godRayIntensity * edgeFade;
+            // SOURCEPORT: screen-space rays gather light from all visible sky around
+            // the sun. A VR eye sees ~2× the vertical extent of a flatscreen view
+            // (WinH/CameraH ≈ 2.4 vs the Hor+ constant 1.2), so the whole glow region
+            // fits on screen and the result was far stronger than flatscreen at the
+            // same heading. Scale by the vertical-extent ratio; exactly 1.0 on flatscreen.
+            float vExtent = (float)H / m_unifCameraH;
+            if (vExtent > 1.2f) grIntensity *= 1.2f / vExtent;
         }
     }
     bool fogActive = m_heightFogEnabled && m_heightFogDensity > 0.0f;
@@ -3204,7 +3219,10 @@ void main() {
         glUniform1i(s_locGRMaskDepth, 0);
         glUniform2f(s_locGRMaskSunPos, sunU, sunV);
         glUniform3f(s_locGRMaskColor, m_godRayColor[0], m_godRayColor[1], m_godRayColor[2]);
-        glUniform1f(s_locGRMaskAspect, (float)W / (float)H);
+        // Flatscreen Hor+ always gives WinH/CameraH = 1.2, so dividing by 1.2 keeps
+        // the original (aspect, 1) scaling there; VR eyes get their true FOV ratio.
+        glUniform2f(s_locGRMaskAspect, ((float)W / m_unifCameraW) / 1.2f,
+                                       ((float)H / m_unifCameraH) / 1.2f);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
         // Radial blur pass: march toward sun (fboC → fboD)

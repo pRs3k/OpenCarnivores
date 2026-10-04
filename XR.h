@@ -45,6 +45,16 @@ extern TVRMap VRMap;
 
 namespace XR {
 
+// SOURCEPORT: single world scale for every metres→game-units conversion in VR
+// (IPD eye offset, room-scale head offset, depth-layer distances). HeadY = 220 GU
+// at 1.54 m effective eye height ≈ 143 GU/m (see VR.md "World scale and IPD").
+constexpr float kGUperM = 220.f / 1.54f;
+
+// SOURCEPORT: projection far value for screen-space geometry (sz = -16/z mapped
+// [0,F] → window depth [0,1]). Must match RendererGL::BeginFrame so depth-based
+// effects (SSAO, height fog, god rays, water) read the same distances in VR.
+constexpr float kScreenDepthFar = 0.25f;
+
 // Populate VRMap with Quest-Touch defaults.  Call before Bindings::Load().
 void InitVRMap();
 

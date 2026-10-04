@@ -8,6 +8,20 @@ The Linux build loads `libopenxr_loader.so.1` and creates the session with `XrGr
 
 **`XR::EndFrame` layer lifetime fix** (all platforms): the projection/quad layer structs and the `layers[]` pointer array were block-scoped inside the `if` that built them, but `xrEndFrame` read them after the block ended. MSVC happened not to reuse the stack slots; GCC does, and the runtime rejected a garbage layer type (`XR_ERROR_LAYER_INVALID`). They now live at function scope.
 
+## VR visual-quality fixes found with the Monado simulated HMD
+
+Captured per-eye output from Monado's compositor (Linux build, Mesa llvmpipe) and compared against flatscreen at the same spawn/heading (`x=… y=…` args). Fixes:
+
+- **Depth mapping parity** (`Hunt2.cpp`, `XR::kScreenDepthFar`): the eye projection mapped `sz` with `F = 1.0` while flatscreen (`RendererGL::BeginFrame`) uses `F = 0.25`. Every effect that reads `16 / depth` (SSAO, height fog, god-ray sky mask, water refraction/absorption) therefore saw distances 4× larger in VR. Both now use `F = 0.25`.
+- **Depth-layer `nearZ`** (`XR.cpp`): depth 1.0 corresponds to `16 / F` GU = 64 GU ≈ 0.45 m, not 0.01 m. The old value told the compositor's depth reprojection everything was ~11× closer than it is.
+- **God rays washed out the whole view** (`RunPostOverlay`): the sun-glow mask fell off over a fixed UV radius, which spans ~2× the angle on a VR eye; the falloff is now in view-angle (tangent) space (`uTanScale`), and intensity is scaled by `1.2 / (WinH / CameraH)` because a taller view keeps the whole glow region on screen. Both reduce to exactly the old behaviour on flatscreen (Hor+ gives `WinH / CameraH = 1.2`).
+- **Near-camera cull radius** (`BackViewR`): sized in `ProcessControls` for a monitor whose bottom edge is ~30° below the view direction; a VR eye reaches ~50°, so tiles beside the feet were culled. Widened per eye from the eye's real bottom-edge angle, restored after the eye loop.
+- **Terrain vertex data** (`PreCashGroundModel`): the horizontal early-out `continue`d before writing Light/ALPHA, but near tiles (`DrawTPlaneClip`) ignore `DFlags`, so a triangle with a culled corner used stale vertex data. The vertex is now always populated; the cull still sets `DFlags = 128`.
+- **HUD gauge clip planes**: the wind gauge/compass shift `VideoCX/CY` ±0.48·CameraW in VR but `RenderModelClip` clipped against planes built for the eye centre; `InitClips()` is now re-run around each gauge and restored for the weapon pass.
+- **Brightness slider / F8 debug views had no effect in VR**: `SetBrightness`/`SetDebugMode` wrote uniforms without binding the main program; after `XR::EndFrame` program 0 is bound, so the write was dropped.
+
+**Known test-environment artefact (not a game bug, as far as can be determined):** under Mesa llvmpipe, flat grey/blue wedges appear at the bottom corners of each eye — and the same artefact appears in flatscreen corners on llvmpipe. Instrumentation showed the terrain triangles there are submitted with valid colour/UV/depth, write depth, but every `noperspective` varying (colour, alpha, `vTexCoordR/vRhw`) comes out corrupt only in the triangles GL must clip at the viewport corners; switching the varyings to `smooth` changes the symptom accordingly. That points to llvmpipe's clipper, not engine data. Confirm on GPU hardware; if it does appear there, the next step is software-clipping near tiles exactly to the screen edges (`InitClips` margins) so the GPU never has to clip them.
+
 ## Setup: openxr_loader.dll
 
 **VR mode requires `openxr_loader.dll`** (OpenXR runtime loader from Meta).
@@ -68,7 +82,7 @@ Loop bounds in `PreCashGroundModel()` are sufficient for the visible frustum. Ex
 
 ## World scale and IPD
 
-Game world units: **~143 GU/m** (from `HeadY = 220 GU` ÷ 1.54 m effective eye height). Adjusted from ~133 GU/m to improve perceived detail and reduce "too large" sensation in VR. This scale is critical: changing it affects perceived world size and IPD-induced stereo disparity. Larger scales (e.g. 256 GU/m) shrink the perceived world and double IPD disparity, causing eye strain at close distances.
+Game world units: **~143 GU/m** (from `HeadY = 220 GU` ÷ 1.54 m effective eye height). Adjusted from ~133 GU/m to improve perceived detail and reduce "too large" sensation in VR. The constant now lives in one place, `XR::kGUperM` (`XR.h`), used for the IPD eye offset, room-scale offset and depth-layer distances — previously the IPD offset in `XR.cpp` still used 220/1.65 (≈133), so the stereo scale never actually received the 143 change. This scale is critical: changing it affects perceived world size and IPD-induced stereo disparity. Larger scales (e.g. 256 GU/m) shrink the perceived world and double IPD disparity, causing eye strain at close distances.
 
 ## VR graphics parity with flatscreen
 

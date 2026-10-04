@@ -306,11 +306,13 @@ void PreCashGroundModel()
 
       rv = RotateVector(v[0]);
 
-      if (fabs(rv.x * hFovCull) > -rv.z + 1600) {
-		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].v = rv;
-		  VMap[VMAP_CENTER+y][VMAP_CENTER+x].DFlags = 128;
-		  continue;
-	  }
+      // SOURCEPORT: the horizontal early-out used to `continue` here, skipping the
+      // Light/Fog/ALPHA writes below. Near tiles go through DrawTPlaneClip, which
+      // ignores DFlags, so a triangle with one culled corner was drawn with that
+      // vertex's stale Light (0 → black). Off-screen on a 4:3 monitor; a VR eye's
+      // wide/tall FOV showed them as flat wedges in the bottom corners. Keep the
+      // cull result (DFlags 128) but always populate the vertex.
+      const bool hFovCulled = fabs(rv.x * hFovCull) > -rv.z + 1600;
 
 
   	  if (HARD3D)
@@ -370,9 +372,9 @@ void PreCashGroundModel()
 
 	  // SOURCEPORT: see VMap2 near-clip comment above — same fix for VMap.
 #ifdef _opengl
-	  if (v[0].z>-16.0f) DF+=128; else {
+	  if (hFovCulled || v[0].z>-16.0f) DF+=128; else {
 #else
-	  if (v[0].z>-256.0) DF+=128; else {
+	  if (hFovCulled || v[0].z>-256.0) DF+=128; else {
 #endif
 
 #ifdef _soft
@@ -609,6 +611,12 @@ void DrawPostObjects()
         VideoCX = WinW / 5;   // wind: original position
     }
 	VideoCY = hudCY;
+    // SOURCEPORT: rebuild the frustum clip planes for the shifted principal point.
+    // RenderModelClip clips against ClipA–D, which InitClips derived from the eye's
+    // own VideoCX/VideoCY. In VR the gauges sit ~0.48·CameraW off-centre, so stale
+    // planes let near/behind-camera vertices through and they projected as large
+    // flat wedges from the screen corners to the wind gauge and compass.
+    InitClips();
 	XRLOG("WindMorph");
 	CreateMorphedModel(WindModel.mptr, &WindModel.Animation[0], (int)(Wind.speed*50.f), 1.0);
     d3dSetHUDMode(TRUE);  // SOURCEPORT: HUD mode — wind/compass need opaque black pixels
@@ -622,6 +630,7 @@ void DrawPostObjects()
         VideoCX = WinW - WinW / 5;   // compass: original position
     }
 	VideoCY = hudCY;
+    InitClips();   // SOURCEPORT: see wind gauge above
 	XRLOG("CompassRender");
     RenderNearModel(CompasModel, +8, -38, -96, 192,  CameraAlpha,0);
     XRLOG("CompassDone");
@@ -631,6 +640,7 @@ void DrawPostObjects()
     // render uses the correct per-eye VideoCX/CY.
     VideoCX = callerCX;
     VideoCY = callerCY;
+    InitClips();   // SOURCEPORT: restore the eye's own clip planes for the weapon pass
     LOWRESTX = lr;
   }
 
@@ -2079,7 +2089,7 @@ void ProcessGame()
         {
             // SOURCEPORT: world scale adjusted slightly (from 133.33 to ~143 GU/m, ~7% smaller world)
             // to improve perceived resolution and reduce "too large" sensation in VR.
-            static constexpr float kGUperM = 220.f / 1.54f;
+            using XR::kGUperM;
             float hx, hy, hz;
             if (XR::GetHeadCenterPos(hx, hy, hz)) {
                 if (!g_vrHeadRefSet) {
@@ -2123,6 +2133,14 @@ void ProcessGame()
             g_glRenderer->SetHeightFogWorldParams((float)_mmy * ctHScale, (float)ctViewR * 256.0f);
         }
 
+        // SOURCEPORT: BackViewR (near-camera cull radius) is derived in ProcessControls
+        // from the flatscreen pitch, sized for a monitor whose bottom edge sits ~30°
+        // below the view direction. A VR eye reaches ~50° down even with the head level,
+        // so tiles beside the player's feet were culled as "behind the camera" and the
+        // bottom corners of each eye showed the clear colour as flat wedges. Widen it per
+        // eye below (same formula flatscreen uses when looking down) and restore after.
+        const float savedBackViewR = BackViewR;
+
         for (int xrEye = 0; xrEye < 2; ++xrEye) {
             unsigned int fbo = XR::AcquireEyeImage(xrEye);
             if (!fbo) continue;
@@ -2164,6 +2182,13 @@ void ProcessGame()
                 CameraH *= 3.0f;
             }
             FOVK    = CameraW / (max((float)VideoCX, (float)(WinW - VideoCX)) * 1.25f); // SOURCEPORT: asymmetric VR FOV fix
+            {
+                // Angle of this eye's bottom edge below the horizon (pitch + lower half-FOV).
+                float bottomEdge = atanf((float)(WinH - VideoCY) / CameraH) - CameraBeta;
+                if (bottomEdge > pi / 2) bottomEdge = pi / 2;
+                if (bottomEdge > 0.f)
+                    BackViewR = max(savedBackViewR, 320.f + 1024.f * sinf(bottomEdge));
+            }
 
             // SOURCEPORT: per-eye camera uniforms so vWorldPos (PBR, CSM lookups, water,
             // SSAO, height fog, god rays) reconstructs with this eye's projection.
@@ -2189,7 +2214,7 @@ void ProcessGame()
             glViewport(0, 0, (GLsizei)WinW, (GLsizei)WinH);
             {
                 float R = (float)WinW, B = (float)WinH;
-                const float N = 0.f, F = 1.0f;  // SOURCEPORT: typical depth range for screen-space geometry
+                const float N = 0.f, F = XR::kScreenDepthFar;  // SOURCEPORT: match flatscreen depth mapping (post FX / water read 16/depth)
                 float proj[16] = {
                      2.f/R, 0.f,    0.f,         0.f,
                      0.f,  -2.f/B,  0.f,         0.f,
@@ -2284,6 +2309,8 @@ void ProcessGame()
             XR::ReleaseEyeImage(xrEye);
         }
 
+        BackViewR = savedBackViewR;
+
         // SOURCEPORT: render companion window with proper flatscreen camera (centered, symmetric FOV).
         // VR eye FBOs use per-eye projection (asymmetric FOV, offset principal point) which causes
         // squished/offset output if blitted directly to monitor. Render scene again with flatscreen
@@ -2302,7 +2329,7 @@ void ProcessGame()
         glViewport(0, 0, WinW, WinH);
         {
             float R = (float)WinW, B = (float)WinH;
-            const float N = 0.f, F = 1.0f;  // SOURCEPORT: typical depth range for screen-space geometry
+            const float N = 0.f, F = XR::kScreenDepthFar;  // SOURCEPORT: match flatscreen depth mapping (post FX / water read 16/depth)
             float proj[16] = {
                  2.f/R, 0.f,    0.f,         0.f,
                  0.f,  -2.f/B,  0.f,         0.f,
