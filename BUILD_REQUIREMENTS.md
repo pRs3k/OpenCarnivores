@@ -82,6 +82,29 @@ cmake --build build --config Release
 
 Output: `build/OpenCarnivores.exe` + all runtime DLLs (SDL2.dll, OpenAL32.dll, openxr_loader.dll)
 
+### Linux (native)
+The same CMake project builds natively on Linux (tested: Ubuntu 24.04, GCC 13, Mesa). System packages replace the vendored Windows binaries; glad, Lua and stb stay vendored.
+
+```bash
+sudo apt install build-essential cmake ninja-build libsdl2-dev libopenal-dev \
+                 libgl-dev libx11-dev fonts-liberation
+# optional, for VR: libopenxr-loader1 (plus a runtime such as Monado or SteamVR)
+cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -B build
+cmake --build build
+```
+
+Run from the game folder (the one containing `HUNTDAT/`, `shaders/`, `shaderpacks/`), e.g. `cd /path/to/game && /path/to/build/OpenCarnivores`. Settings, saves and logs (`display.cfg`, `trophy0N.sav`, `render.log`) are written to the current directory, exactly as on Windows.
+
+How it works:
+- `compat/linux/windows.h` is put on the include path **only on non-Windows builds** and maps the Win32 subset the engine uses onto POSIX/SDL (implementation: `compat/linux/win32_compat.cpp`). Game sources are unchanged apart from `// SOURCEPORT:` portability fixes.
+  - Win32 types keep Windows (LLP64) sizes (`DWORD`/`LONG` = 32-bit) so the retail `.CAR/.3DF/.RSC/.MAP/.TGA/.WAV` loaders read identical layouts.
+  - `CreateFile`/`ReadFile`/`WriteFile`/`SetFilePointer` → stdio with **backslash + case-insensitive path resolution** (`OC_ResolvePath`); `VFS::ResolveRead` uses the same resolver, so retail mixed-case paths (`HUNTDAT\ship2a.car`) and mod files (`PISTOL_normal.png` for `pistol`) resolve.
+  - GDI text (`CreateFont`/`TextOut`/`GetTextExtentPoint32` into DIB sections) → stb_truetype (`deps/stb/stb_truetype.h`) with Liberation Sans (Arial-metric) or DejaVu Sans, pixel-snapped like hinted GDI. Override with `OPENCARNIVORES_FONT` / `OPENCARNIVORES_FONT_BOLD`.
+  - `rand()`/`srand()` reproduce the MSVC CRT generator (15-bit, same sequence) — the 1999 code's `rand() * N / RAND_MAX` expressions overflow with glibc's 31-bit `RAND_MAX`.
+  - `LoadLibrary("openxr_loader.dll")` → `dlopen("libopenxr_loader.so.1")`; other Windows-only DLLs (xinput, A3D/EAX drivers) return null.
+- The OpenXR session binds via `XrGraphicsBindingOpenGLXlibKHR` (GLX). SDL2 uses X11/GLX by default; under a Wayland session it runs through XWayland. If you force `SDL_VIDEODRIVER=wayland`, VR is unavailable (EGL).
+- Audio is OpenAL Soft through PulseAudio/PipeWire/ALSA; HRTF and EFX work as on Windows.
+
 ## Troubleshooting
 
 ### VR Not Launching

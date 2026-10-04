@@ -8,6 +8,7 @@
 - `Interface.cpp` — Menu system, HUD, UI rendering, asset loading.
 - `Resources.cpp` — _RES.txt parsing (game data definitions).
 - `mathematics.cpp` — Vector math, matrix ops, collision detection.
+- `compat/linux/windows.h`, `compat/linux/win32_compat.cpp` — Linux-only Win32 shim (file I/O with case-insensitive paths, GDI text via stb_truetype, MSVC `rand`, `LoadLibrary`→`dlopen`). On the include path only for non-Windows builds; see [BUILD_REQUIREMENTS.md](BUILD_REQUIREMENTS.md#linux-native).
 
 ## Domain-specific guides
 - [RENDERING.md](RENDERING.md) — All rendering backends and texture override system.

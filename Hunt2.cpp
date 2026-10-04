@@ -730,7 +730,10 @@ SKIPWIND:
   //==================== render weapon ===================//
    
 
-   Vector3d v = Sun3dPos;
+   // SOURCEPORT: split declaration/assignment — `goto SKIPWEAPON` above jumps past
+   // this line, and ISO C++ (GCC/Clang) rejects jumping over an initialization.
+   Vector3d v;
+   v = Sun3dPos;
    Sun3dPos = RotateVector(Sun3dPos);  
    XRLOG("CalcNormals");
    CalcNormals(wptr->chinfo[CurrentWeapon].mptr, wptr->normals); XRLOG("CalcNormalsDone");
@@ -2649,8 +2652,13 @@ int main(int  /*argc*/, char*  /*argv*/[])
         extern RendererGL* g_glRenderer;  // defined in renderd3d.cpp
         SDL_SysWMinfo wmInfo;
         SDL_VERSION(&wmInfo.version);
+#ifdef _WIN32
         if (g_glRenderer && SDL_GetWindowWMInfo(g_glRenderer->GetWindow(), &wmInfo))
             hwndMain = (HWND)wmInfo.info.win.window;
+#else
+        // SOURCEPORT: no HWND on Linux; the shim's MessageBox ignores the owner window.
+        (void)wmInfo;
+#endif
     }
     InitAudioSystem(hwndMain, hlog, OptSound);
 
@@ -2858,14 +2866,19 @@ int main(int  /*argc*/, char*  /*argv*/[])
                     g_sdlMouseDX += ev.motion.xrel;
                     g_sdlMouseDY += ev.motion.yrel;
                     break;
+                // SOURCEPORT: record mouse buttons under their VK codes so every binding
+                // that names a mouse button works (default Get weapon = Mouse2). Only the
+                // left button was handled, hard-wired to fkFire, so right-click did nothing.
                 case SDL_MOUSEBUTTONDOWN:
-                    if (ev.button.button == SDL_BUTTON_LEFT)
-                        KeyboardState[KeyMap.fkFire] |= 128;
-                    break;
-                case SDL_MOUSEBUTTONUP:
-                    if (ev.button.button == SDL_BUTTON_LEFT)
-                        KeyboardState[KeyMap.fkFire] &= ~128;
-                    break;
+                case SDL_MOUSEBUTTONUP: {
+                    int vk = ev.button.button == SDL_BUTTON_LEFT   ? VK_LBUTTON
+                           : ev.button.button == SDL_BUTTON_RIGHT  ? VK_RBUTTON
+                           : ev.button.button == SDL_BUTTON_MIDDLE ? VK_MBUTTON : 0;
+                    if (vk) {
+                        if (ev.type == SDL_MOUSEBUTTONDOWN) KeyboardState[vk] |= 128;
+                        else                                KeyboardState[vk] &= ~128;
+                    }
+                    break; }
                 case SDL_CONTROLLERDEVICEADDED:
                 case SDL_CONTROLLERDEVICEREMOVED:
                 case SDL_CONTROLLERBUTTONDOWN:

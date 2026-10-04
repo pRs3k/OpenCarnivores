@@ -9,7 +9,7 @@
 #include "stb_image.h"
 
 #include "TextureOverrides.h"
-#include "hunt.h"
+#include "Hunt.h"
 #include "VFS.h"
 
 #include <cstdio>

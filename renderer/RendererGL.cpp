@@ -718,6 +718,14 @@ void RendererGL::CompileShaders() {
     if (locNormal   >= 0)  glUniform1i(locNormal,    1);
     if (locMR       >= 0)  glUniform1i(locMR,        2);
     if (locAO       >= 0)  glUniform1i(locAO,        3);
+    // SOURCEPORT: give every sampler its own unit at link time. Samplers default to
+    // unit 0, and GL forbids samplers of different types (uTexture sampler2D vs
+    // uShadowMapArray sampler2DArrayShadow) sharing a unit — spec-strict drivers
+    // (Mesa, AMD, Intel) reject every draw with GL_INVALID_OPERATION until the
+    // shadow pass assigns unit 4. NVIDIA tolerates it, which hid the bug on Windows.
+    if (m_locShadowMapArray >= 0) glUniform1i(m_locShadowMapArray, 4);
+    if (m_locWaterScene     >= 0) glUniform1i(m_locWaterScene,     5);
+    if (m_locWaterDepth     >= 0) glUniform1i(m_locWaterDepth,     6);
     glUniform1i(m_locPBR, 0);
     glUniform1f(m_locMetallicFactor,  1.0f);
     glUniform1f(m_locRoughnessFactor, 1.0f);

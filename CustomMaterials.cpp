@@ -66,6 +66,9 @@ struct Material {
     Program                  prog;
     std::vector<TextureBinding> textures;
     std::vector<UniformVal>     uniforms;
+    // SOURCEPORT: false until GL resources exist. Materials can be registered
+    // before the GL context (direct `prj=` launch), so Get() realizes lazily.
+    bool                     realized = false;
 };
 
 } // namespace CustomMaterials
@@ -78,6 +81,8 @@ std::unordered_map<std::string, Program>                  g_progCache;  // NOLIN
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 void Log(const char* s) { std::fputs(s, stdout); }
+
+bool GLReady() { return glad_glCreateProgram != nullptr; }
 
 std::string SlurpFile(const char* path) {
     // SOURCEPORT: route shader/material reads through VFS for mod overrides.
@@ -266,6 +271,7 @@ bool ParseFile(const std::string& path, CustomMaterials::Material& m) {
 // Build GL resources for a parsed material: look up program, load textures,
 // cache uniform locations. Previously-owned textures are destroyed.
 void Realize(CustomMaterials::Material& m) {
+    m.realized = true;
     // Destroy old textures (program is cached, don't delete).
     for (auto& t : m.textures) {
         if (t.texId) glDeleteTextures(1, &t.texId);
@@ -309,14 +315,14 @@ bool TryRegisterSibling(void* key, const char* sourcePath) {
         g_reg.erase((uintptr_t)key);
         return false;
     }
-    Realize(*slot);
+    if (GLReady()) Realize(*slot);
     char msg[512];
     std::snprintf(msg, sizeof(msg),
         "[CustomMaterials] registered %s (shader=%s, %zu tex, %zu uniforms)\n",
         mpath.c_str(), slot->shaderName.c_str(),
         slot->textures.size(), slot->uniforms.size());
     Log(msg);
-    return slot->prog.id != 0;
+    return !slot->realized || slot->prog.id != 0;
 }
 
 bool TryRegisterWithExts(void* key, const char* basePath) {
@@ -334,13 +340,15 @@ bool TryRegisterWithExts(void* key, const char* basePath) {
         g_reg.erase((uintptr_t)key);
         return false;
     }
-    Realize(*slot);
-    return slot->prog.id != 0;
+    if (GLReady()) Realize(*slot);
+    return !slot->realized || slot->prog.id != 0;
 }
 
 const Material* Get(void* key) {
     auto it = g_reg.find((uintptr_t)key);
-    return it == g_reg.end() ? nullptr : it->second;
+    if (it == g_reg.end()) return nullptr;
+    if (!it->second->realized && GLReady()) Realize(*it->second);  // SOURCEPORT: deferred
+    return it->second;
 }
 
 const char* const* GetWatchPaths(const char* basePath) {

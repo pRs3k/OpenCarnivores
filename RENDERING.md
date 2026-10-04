@@ -162,6 +162,15 @@ Real-time sun shadow mapping implemented in `RendererGL.cpp` / `renderd3d.cpp`.
 - Mode 8: raw shadow-map depth at fragment's shadow UV (white=far/unwritten, black=near/geometry).
 - Mode 9: shadow UV as RG gradient — uniform colour means world-pos reconstruction is broken.
 
+## Spec-strict driver portability (Mesa / AMD / Intel)
+
+NVIDIA tolerates several GL usage errors that spec-strict drivers reject. Found while bringing up the Linux build on Mesa:
+
+- **Sampler units**: every sampler defaults to unit 0. `basic.frag`'s `uTexture` (sampler2D) and `uShadowMapArray` (sampler2DArrayShadow) sharing unit 0 makes every draw fail with `GL_INVALID_OPERATION`. `CompileShaders()` now assigns units 4/5/6 to the shadow array and water samplers at link time.
+- **Readback padding**: `glReadPixels(GL_RGB)` rows are padded to `GL_PACK_ALIGNMENT` (4). The sun-occlusion probe (`GetSkyK`) read a 9×9 RGB patch into a 243-byte buffer that needs 252 → stack overflow. It now reads `GL_RGBA`.
+- **GL before context**: PBR (`Materials`) and custom-material (`CustomMaterials`) registration can run before `Activate3DHardware` (direct `prj=` launch). Uploads/compiles are deferred to first `Get()` when glad isn't loaded yet.
+- **Shadow-pass polygon offset**: `RenderModelsList` set a per-object `glPolygonOffset` and then disabled `GL_POLYGON_OFFSET_FILL`, clobbering the CSM pass's slope/units bias (4, 8) for all later shadow draws. Per-object offsets are now main-pass only. (The per-object offsets also cost a JIT recompile per object on Mesa llvmpipe — harmless on GPUs, but it makes software-rendered testing very slow.)
+
 ## GL_TEXTURE0 unit discipline
 
 Any function that binds to `GL_TEXTURE0` must save and restore the previous binding (`glGetIntegerv(GL_TEXTURE_BINDING_2D)` + `glBindTexture` after). The world-space shadow batch (`FlushWorldSpaceShadow`) reads unit 0 for foliage alpha-test. A stale texture from a HUD/UI draw (e.g. `DrawTextWithFont`) will corrupt tree shadow alpha on the frame following the draw — manifesting as shadows changing whenever text, the map, or the weapon appears on screen. Functions that currently save/restore unit 0: `DrawBitmap`, `DrawTextWithFont`.

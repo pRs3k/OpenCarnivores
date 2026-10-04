@@ -1712,6 +1712,10 @@ void LoadTrophy()
 	HANDLE hfile = CreateFile(fname, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (hfile==INVALID_HANDLE_VALUE) {
 		PrintLog("===> Error loading trophy!\n");
+		// SOURCEPORT: still derive WinW/WinH (OptResW/H from display.cfg or the OptRes
+		// preset). Without this a fresh install launched with prj= reaches
+		// Activate3DHardware with a 0x0 window and renderer init fails.
+		SetupRes();
 		return;
 	}
 	ReadFile(hfile, &TrophyRoom, sizeof(TrophyRoom), &l, nullptr);

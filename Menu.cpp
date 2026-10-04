@@ -1525,8 +1525,9 @@ static void RunOptions(bool& appQuit) {
             int tvW = WinW * 130 / 800;  // clickable value column width
 
             // Audio / video driver (read-only)
-            MTMed("Audio Driver", ox, y, 0x00AC6D24); MT("OpenAL Soft",  vx, y, 0x00C0C0C0); y += lnH;
-            MTMed("Video Driver", ox, y, 0x00AC6D24); MT("OpenGL 4.1 Core",  vx, y, 0x00C0C0C0); y += lnH;
+            // SOURCEPORT: audio + video driver share one read-only row so the panel
+            // fits the "Post Effects (VR Only)" toggle above the BACK button.
+            MTMed("Drivers", ox, y, 0x00AC6D24); MT("OpenAL Soft / OpenGL 4.1 Core",  vx, y, 0x00C0C0C0); y += lnH;
 
             // Resolution — cycle presets for windowed/fullscreen; fixed at desktop for borderless
             {
@@ -2148,7 +2149,7 @@ static std::vector<std::string> EnumerateShaderPacks() {
 
 static std::set<std::string> LoadEnabledPacks() {
     std::set<std::string> enabled;
-    FILE* f = fopen("shaderpacks\\packs.cfg", "r");
+    FILE* f = fopen("shaderpacks/packs.cfg", "r");  // SOURCEPORT: '/' works on Windows and Linux
     if (!f) return enabled;
     char line[512];
     while (fgets(line, sizeof(line), f)) {
@@ -2163,7 +2164,7 @@ static std::set<std::string> LoadEnabledPacks() {
 
 static void SaveEnabledPacks(const std::vector<std::string>& packs,
                              const std::set<std::string>& enabled) {
-    FILE* f = fopen("shaderpacks\\packs.cfg", "w");
+    FILE* f = fopen("shaderpacks/packs.cfg", "w");  // SOURCEPORT: '/' works on Windows and Linux
     if (!f) return;
     fprintf(f, "# OpenCarnivores shader pack load order. One pack name per line.\n");
     fprintf(f, "# Packs apply in order; later packs override earlier for shared keys.\n");

@@ -7,17 +7,30 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "stb_image.h"  // STB_IMAGE_IMPLEMENTATION lives in TextureOverrides.cpp
 #include "VFS.h"
 
 namespace {
 
+// SOURCEPORT: decoded map awaiting GL upload. Assets can load before the GL
+// context exists (direct `prj=` launch loads the area before
+// Activate3DHardware), when glGenTextures is still a null glad pointer.
+struct PendingMap {
+    std::vector<unsigned char> rgba;
+    int  w = 0, h = 0;
+    bool srgb = false;
+};
+
 struct Entry {
     Materials::Material mat;
+    PendingMap pending[3];   // normal, mr, ao — uploaded on first Get()
 };
 
 std::unordered_map<uintptr_t, Entry> g_registry; // NOLINT(bugprone-throwing-static-initialization)
+
+bool GLReady() { return glad_glGenTextures != nullptr; }
 
 GLuint UploadRGBA(const unsigned char* rgba, int w, int h, bool srgb) {
     GLuint tex = 0;
@@ -51,20 +64,39 @@ static bool DetectHeightInAlpha(const unsigned char* px, int w, int h) {
     return false;
 }
 
-GLuint LoadMapFile(const char* path, bool srgb, bool* outHasHeight = nullptr) {
+// Returns true if the map exists. Uploads now when GL is ready (*outTex), else
+// stashes the pixels in *pending for Materials::Get() to upload later.
+bool LoadMapFile(const char* path, bool srgb, GLuint* outTex, PendingMap* pending,
+                 bool* outHasHeight = nullptr) {
+    *outTex = 0;
     // SOURCEPORT: resolve through VFS so mod folder PBR maps take priority.
     std::string resolved = VFS::ResolveRead(path);
-    if (!FileExists(resolved.c_str())) return 0;
+    if (!FileExists(resolved.c_str())) return false;
     int w = 0, h = 0, comp = 0;
     unsigned char* px = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
-    if (!px) return 0;
+    if (!px) return false;
     if (outHasHeight) *outHasHeight = DetectHeightInAlpha(px, w, h);
-    GLuint id = UploadRGBA(px, w, h, srgb);
+    if (GLReady()) {
+        *outTex = UploadRGBA(px, w, h, srgb);
+    } else {
+        pending->rgba.assign(px, px + (size_t)w * h * 4);
+        pending->w = w; pending->h = h; pending->srgb = srgb;
+    }
     stbi_image_free(px);
     char msg[512];
     std::snprintf(msg, sizeof(msg), "PBR map loaded: %s (%dx%d)\n", path, w, h);
     std::fputs(msg, stdout);
-    return id;
+    return true;
+}
+
+void FlushPending(Entry& e) {
+    uint32_t* ids[3] = { &e.mat.normalTex, &e.mat.mrTex, &e.mat.aoTex };
+    for (int i = 0; i < 3; ++i) {
+        PendingMap& pm = e.pending[i];
+        if (pm.rgba.empty()) continue;
+        *ids[i] = UploadRGBA(pm.rgba.data(), pm.w, pm.h, pm.srgb);
+        std::vector<unsigned char>().swap(pm.rgba);
+    }
 }
 
 bool RegisterFromStem(void* key, const std::string& stem) {
@@ -74,17 +106,20 @@ bool RegisterFromStem(void* key, const std::string& stem) {
 
     // SOURCEPORT: detect height-in-alpha while loading normal map.
     bool hasHeight = false;
-    GLuint n  = LoadMapFile(nrm.c_str(), /*srgb=*/false, &hasHeight);
-    GLuint mr = LoadMapFile(mrp.c_str(), /*srgb=*/false);
-    GLuint ao = LoadMapFile(aop.c_str(), /*srgb=*/false);
+    GLuint nId = 0, mrId = 0, aoId = 0;
+    PendingMap pend[3];
+    bool n  = LoadMapFile(nrm.c_str(), /*srgb=*/false, &nId,  &pend[0], &hasHeight);
+    bool mr = LoadMapFile(mrp.c_str(), /*srgb=*/false, &mrId, &pend[1]);
+    bool ao = LoadMapFile(aop.c_str(), /*srgb=*/false, &aoId, &pend[2]);
 
     if (!n && !mr && !ao) return false;
 
     Entry& e = g_registry[(uintptr_t)key];
     // Replace any prior entry (GL ids leak — acceptable at asset-load scope).
-    e.mat.normalTex       = n;
-    e.mat.mrTex           = mr;
-    e.mat.aoTex           = ao;
+    e.mat.normalTex       = nId;
+    e.mat.mrTex           = mrId;
+    e.mat.aoTex           = aoId;
+    for (int i = 0; i < 3; ++i) e.pending[i] = std::move(pend[i]);
     e.mat.metallicFactor  = mr ? 1.0f : 0.0f;
     e.mat.roughnessFactor = 1.0f; // SOURCEPORT: removed identical ternary branches — roughness is always 1.0 regardless of mr
     // SOURCEPORT: enable parallax only when height data detected in normal map alpha.
@@ -115,6 +150,7 @@ bool TryRegisterWithExts(void* key, const char* basePath) {
 const Material* Get(void* key) {
     auto it = g_registry.find((uintptr_t)key);
     if (it == g_registry.end()) return nullptr;
+    FlushPending(it->second);   // SOURCEPORT: deferred upload (no-op once uploaded)
     return &it->second.mat;
 }
 

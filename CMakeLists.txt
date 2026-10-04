@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
-project(OpenCarnivores LANGUAGES C CXX RC)
+# SOURCEPORT: RC (resource compiler) is Windows-only; Linux builds skip resource.rc.
+if(WIN32)
+    project(OpenCarnivores LANGUAGES C CXX RC)
+else()
+    project(OpenCarnivores LANGUAGES C CXX)
+endif()
 
 # SOURCEPORT: Reject Visual Studio generator to avoid creating hand-maintained .vcxproj files.
 # CMake is the source of truth; use Ninja or Unix Makefiles instead.
@@ -27,6 +32,12 @@ add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 if(MSVC)
     add_compile_options(/W3 /wd4996 /wd4244 /wd4267)
     add_link_options(/MAP)
+endif()
+
+# SOURCEPORT: GCC (Linux build) — same 1999-era string-literal-to-char* pattern the
+# Clang block below silences with -Wno-writable-strings.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Wno-write-strings>)
 endif()
 
 # SOURCEPORT: Clang on Windows has issues with SDL2 headers defining _m_prefetch.
@@ -75,21 +86,54 @@ if(RENDERER STREQUAL "opengl")
         ${LUA_SOURCES}
     )
 
-    set(RENDERER_INCLUDES
-        ${SDL2_DIR}/include
-        ${GLAD_DIR}/include
-        ${OPENAL_DIR}/include
-        ${STB_DIR}
-        ${LUA_DIR}/src
-        ${CMAKE_SOURCE_DIR}          # so renderer/ headers resolve from project root
-    )
+    if(WIN32)
+        set(RENDERER_INCLUDES
+            ${SDL2_DIR}/include
+            ${GLAD_DIR}/include
+            ${OPENAL_DIR}/include
+            ${STB_DIR}
+            ${LUA_DIR}/src
+            ${CMAKE_SOURCE_DIR}          # so renderer/ headers resolve from project root
+        )
 
-    set(RENDERER_LIBS
-        ${SDL2_DIR}/lib/x64/SDL2.lib
-        ${SDL2_DIR}/lib/x64/SDL2main.lib
-        ${OPENAL_DIR}/libs/Win64/OpenAL32.lib
-        opengl32
-    )
+        set(RENDERER_LIBS
+            ${SDL2_DIR}/lib/x64/SDL2.lib
+            ${SDL2_DIR}/lib/x64/SDL2main.lib
+            ${OPENAL_DIR}/libs/Win64/OpenAL32.lib
+            opengl32
+        )
+    else()
+        # SOURCEPORT: Linux — system SDL2/OpenAL/GL/X11; vendored glad, Lua and stb.
+        # compat/linux provides a windows.h shim (Win32 file I/O, GDI text, timers)
+        # so game sources build unchanged. The OpenXR loader is dlopen()ed at runtime
+        # (libopenxr_loader.so.1) exactly like openxr_loader.dll on Windows.
+        find_package(SDL2 REQUIRED)
+        find_package(OpenAL REQUIRED)
+        find_package(OpenGL REQUIRED)
+        find_package(X11 REQUIRED)
+        find_package(Threads REQUIRED)
+
+        list(APPEND RENDERER_SOURCES
+            compat/linux/win32_compat.cpp
+        )
+        set(RENDERER_INCLUDES
+            ${CMAKE_SOURCE_DIR}/compat/linux   # windows.h / winuser.h shims
+            ${SDL2_INCLUDE_DIRS}
+            ${OPENAL_INCLUDE_DIR}
+            ${GLAD_DIR}/include
+            ${STB_DIR}
+            ${LUA_DIR}/src
+            ${CMAKE_SOURCE_DIR}
+        )
+        set(RENDERER_LIBS
+            ${SDL2_LIBRARIES}
+            ${OPENAL_LIBRARY}
+            OpenGL::GL
+            ${X11_LIBRARIES}
+            Threads::Threads
+            ${CMAKE_DL_LIBS}
+        )
+    endif()
 
     # SDL2 needs SDL_main.h to redirect WinMain→main on Windows.
     # The executable must NOT be a WIN32 subsystem app for SDL_main to work
@@ -145,28 +189,37 @@ set(SOURCES
 
 # ─── Executable ──────────────────────────────────────────────────────────────
 
-add_executable(OpenCarnivores ${EXE_SUBSYSTEM}
-    ${SOURCES}
-    resource.rc
-)
+if(WIN32)
+    add_executable(OpenCarnivores ${EXE_SUBSYSTEM}
+        ${SOURCES}
+        resource.rc
+    )
+else()
+    add_executable(OpenCarnivores ${SOURCES})
+endif()
 
 target_include_directories(OpenCarnivores PRIVATE
     ${RENDERER_INCLUDES}
 )
 
 # Link against Windows system libraries
-target_link_libraries(OpenCarnivores PRIVATE
-    kernel32
-    user32
-    gdi32
-    winmm
-    ole32
-    ${RENDERER_LIBS}
-)
+if(WIN32)
+    target_link_libraries(OpenCarnivores PRIVATE
+        kernel32
+        user32
+        gdi32
+        winmm
+        ole32
+        ${RENDERER_LIBS}
+    )
+else()
+    target_link_libraries(OpenCarnivores PRIVATE ${RENDERER_LIBS})
+endif()
 
 # ─── Post-build: copy SDL2.dll next to the executable ────────────────────────
 
 if(RENDERER STREQUAL "opengl")
+    if(WIN32)
     add_custom_command(TARGET OpenCarnivores POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${SDL2_DIR}/lib/x64/SDL2.dll"
@@ -179,6 +232,7 @@ if(RENDERER STREQUAL "opengl")
             "$<TARGET_FILE_DIR:OpenCarnivores>/OpenAL32.dll"
         COMMENT "Copying OpenAL32.dll (soft_oal.dll)"
     )
+    endif()
     add_custom_command(TARGET OpenCarnivores POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/shaders"
@@ -192,7 +246,9 @@ if(RENDERER STREQUAL "opengl")
         COMMENT "Copying shaderpacks"
     )
 
-    # SOURCEPORT: openxr_loader.dll — required for VR runtime support.
+    # SOURCEPORT: openxr_loader.dll — required for VR runtime support (Windows).
+    # Linux uses the system libopenxr_loader.so.1 (package libopenxr-loader1).
+    if(WIN32)
     # This DLL is provided by Meta's OpenXR runtime (Meta Horizon Link/Meta Quest Link).
     # Build post-step attempts to locate and copy it; if not found, VR will not work.
     set(OPENXR_DLL_CANDIDATES
@@ -224,4 +280,5 @@ if(RENDERER STREQUAL "opengl")
             "See VR.md for setup instructions."
         )
     endif()
+    endif() # WIN32
 endif()

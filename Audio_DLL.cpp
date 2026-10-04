@@ -4,7 +4,7 @@
 // Audio_SDL.cpp directly and call it here instead.
 
 #include <windows.h>
-#include "hunt.h"
+#include "Hunt.h"
 
 // ─── Forward declarations from Audio_SDL.cpp ─────────────────────────────────
 bool SDL_Audio_Init();

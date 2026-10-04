@@ -2260,14 +2260,18 @@ float GetSkyK(int x, int y)
       const int cglx = x - CR;
       const int cgly = WinH - (y + CR) - 1;
       if (cglx >= 0 && cgly >= 0 && cglx + CW <= WinW && cgly + CW <= WinH) {
-          uint8_t rgb[CW * CW * 3];
-          glReadPixels(cglx, cgly, CW, CW, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+          // SOURCEPORT: read RGBA, not RGB. A 9-px GL_RGB row is 27 bytes, which the
+          // default GL_PACK_ALIGNMENT=4 pads to 28 — glReadPixels then wrote 252 bytes
+          // into a 243-byte stack buffer (stack smash; fatal under glibc's stack
+          // protector, silent corruption on MSVC). 4-byte pixels never need padding.
+          uint8_t rgba[CW * CW * 4];
+          glReadPixels(cglx, cgly, CW, CW, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
           long sumR = 0, sumG = 0, sumB = 0;
           const int n = CW * CW;
           for (int i = 0; i < n; ++i) {
-              sumR += rgb[i*3+0] - (int)SkyTR;
-              sumG += rgb[i*3+1] - (int)SkyTG;
-              sumB += rgb[i*3+2] - (int)SkyTB;
+              sumR += rgba[i*4+0] - (int)SkyTR;
+              sumG += rgba[i*4+1] - (int)SkyTG;
+              sumB += rgba[i*4+2] - (int)SkyTB;
           }
           float dev = (float)std::sqrt((double)(sumR*sumR + sumG*sumG + sumB*sumB)) / n;
           if (dev > 80.f) dev = 80.f;
@@ -3657,19 +3661,24 @@ void RenderModelsList()
 #ifdef _opengl
   // SOURCEPORT: enable polygon offset and increment per-model so overlapping
   // parts (e.g. bush leaves + stalk) render in consistent depth order.
-  glEnable(GL_POLYGON_OFFSET_FILL);
+  // SOURCEPORT: not during the shadow pass — BeginWorldShadowPass owns the
+  // polygon offset there (slope 4 / units 8 shadow bias). Overriding it per
+  // object, then disabling GL_POLYGON_OFFSET_FILL below, left every later
+  // shadow-pass draw in the cascade with no depth bias (shadow acne).
+  const bool perObjectOffset = !(g_glRenderer && g_glRenderer->IsShadowPassActive());
+  if (perObjectOffset) glEnable(GL_POLYGON_OFFSET_FILL);
 #endif
 
   for (int o=0; o<ORLCount; o++) {
 #ifdef _opengl
-    glPolygonOffset(0.5f, (float)o * 0.5f);
+    if (perObjectOffset) glPolygonOffset(0.5f, (float)o * 0.5f);
 #endif
     _RenderObject(ORList[o].x, ORList[o].y);
   }
   ORLCount=0;
 
 #ifdef _opengl
-  glDisable(GL_POLYGON_OFFSET_FILL);
+  if (perObjectOffset) glDisable(GL_POLYGON_OFFSET_FILL);
 #endif
 
   d3dEndBufferG(TRUE);

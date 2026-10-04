@@ -14,7 +14,7 @@
 //   step 7: xrSyncActions input layer (controllers → KeyboardState feed)
 
 #include "XR.h"
-#include "hunt.h"   // PrintLog
+#include "Hunt.h"   // PrintLog
 #include <glad/gl.h>
 #include <windows.h>
 #include <stdint.h>
@@ -126,6 +126,7 @@ typedef enum XrStructureType {
     XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO      = 60,
     XR_TYPE_SPACE_LOCATION                       = 42,
     XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR    = 1000023000,
+    XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR     = 1000023001,
     XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR           = 1000023004,
     XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR     = 1000023005,
     // XR_KHR_composition_layer_depth
@@ -295,12 +296,44 @@ typedef struct XrSwapchainImageReleaseInfo {
 } XrSwapchainImageReleaseInfo;
 
 // XR_KHR_opengl_enable
+#ifdef _WIN32
 typedef struct XrGraphicsBindingOpenGLWin32KHR {
     XrStructureType type;
     const void*     next;
     HDC             hDC;
     HGLRC           hGLRC;
 } XrGraphicsBindingOpenGLWin32KHR;
+#else
+// SOURCEPORT: Linux — SDL2's X11 backend creates a GLX context, so bind via Xlib.
+// GLX entry points are declared by hand with opaque handle types: <GL/glx.h>
+// pulls in <GL/gl.h>, which clashes with glad's loader header.
+typedef struct _XDisplay            Display;
+typedef struct __GLXcontextRec*     GLXContext;
+typedef struct __GLXFBConfigRec*    GLXFBConfig;
+typedef unsigned long               GLXDrawable;
+extern "C" {
+    Display*     glXGetCurrentDisplay(void);
+    GLXContext   glXGetCurrentContext(void);
+    GLXDrawable  glXGetCurrentDrawable(void);
+    int          glXQueryContext(Display*, GLXContext, int, int*);
+    GLXFBConfig* glXChooseFBConfig(Display*, int, const int*, int*);
+    int          glXGetFBConfigAttrib(Display*, GLXFBConfig, int, int*);
+    int          XFree(void*);
+}
+#define OC_GLX_FBCONFIG_ID 0x8013
+#define OC_GLX_VISUAL_ID   0x800B
+#define OC_GLX_SCREEN      0x800C
+
+typedef struct XrGraphicsBindingOpenGLXlibKHR {
+    XrStructureType type;
+    const void*     next;
+    Display*        xDisplay;
+    uint32_t        visualid;
+    GLXFBConfig     glxFBConfig;
+    GLXDrawable     glxDrawable;
+    GLXContext      glxContext;
+} XrGraphicsBindingOpenGLXlibKHR;
+#endif
 
 typedef struct XrGraphicsRequirementsOpenGLKHR {
     XrStructureType type;
@@ -1597,12 +1630,32 @@ namespace {
     bool CreateSession() {
         if (!g_xrCreateSession) return false;
 
+#ifdef _WIN32
         HDC   hdc   = wglGetCurrentDC();
         HGLRC hglrc = wglGetCurrentContext();
         if (!hdc || !hglrc) {
             Log("XR: no current GL context at session-create time — skipping.\n");
             return false;
         }
+#else
+        Display*    dpy  = glXGetCurrentDisplay();
+        GLXContext  ctx  = glXGetCurrentContext();
+        GLXDrawable draw = glXGetCurrentDrawable();
+        if (!dpy || !ctx) {
+            Log("XR: no current GLX context at session-create time (Wayland/EGL? run with SDL_VIDEODRIVER=x11) — skipping.\n");
+            return false;
+        }
+        int fbId = 0, screen = 0;
+        glXQueryContext(dpy, ctx, OC_GLX_FBCONFIG_ID, &fbId);
+        glXQueryContext(dpy, ctx, OC_GLX_SCREEN, &screen);
+        const int fbAttrs[] = { OC_GLX_FBCONFIG_ID, fbId, 0 };
+        int nCfg = 0;
+        GLXFBConfig* cfgs = glXChooseFBConfig(dpy, screen, fbAttrs, &nCfg);
+        GLXFBConfig fbConfig = (cfgs && nCfg > 0) ? cfgs[0] : nullptr;
+        int visualId = 0;
+        if (fbConfig) glXGetFBConfigAttrib(dpy, fbConfig, OC_GLX_VISUAL_ID, &visualId);
+        if (cfgs) XFree(cfgs);
+#endif
 
         // Runtime advertises the GL version range it supports.
         if (g_xrGetGLReqs) {
@@ -1618,10 +1671,20 @@ namespace {
             }
         }
 
+#ifdef _WIN32
         XrGraphicsBindingOpenGLWin32KHR bind = {};
         bind.type  = XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR;
         bind.hDC   = hdc;
         bind.hGLRC = hglrc;
+#else
+        XrGraphicsBindingOpenGLXlibKHR bind = {};
+        bind.type        = XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR;
+        bind.xDisplay    = dpy;
+        bind.visualid    = (uint32_t)visualId;
+        bind.glxFBConfig = fbConfig;
+        bind.glxDrawable = draw;
+        bind.glxContext  = ctx;
+#endif
 
         XrSessionCreateInfo sci = {};
         sci.type     = XR_TYPE_SESSION_CREATE_INFO;
@@ -1651,7 +1714,7 @@ bool Init()
 
     g_loaderDll = LoadLibraryA("openxr_loader.dll");
     if (!g_loaderDll) {
-        Log("XR: openxr_loader.dll not found — running flat-screen.\n");
+        Log("XR: OpenXR loader (openxr_loader.dll / libopenxr_loader.so.1) not found — running flat-screen.\n");
         return false;
     }
 
@@ -1793,7 +1856,11 @@ void PollEvents()
     // Lazy session create: happens the first time PollEvents runs after
     // the GL context is current.
     if (g_session == XR_NULL_HANDLE && g_systemId != XR_NULL_SYSTEM_ID) {
+#ifdef _WIN32
         if (wglGetCurrentContext()) CreateSession();
+#else
+        if (glXGetCurrentContext()) CreateSession();
+#endif
     }
 
     for (;;) {
@@ -1929,19 +1996,24 @@ void EndFrame()
     fei.displayTime          = g_predictedTime;
     fei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 
+    // SOURCEPORT: layer structs and the pointer array live at function scope.
+    // They were block-scoped inside the if/else below while fei.layers kept
+    // pointing at them through xrEndFrame — a dangling read that MSVC happened to
+    // tolerate; GCC reuses the stack slots and the runtime saw a garbage layer type.
+    XrCompositionLayerProjection layer = {};
+    XrCompositionLayerQuad       quad  = {};
+    const XrCompositionLayerBaseHeader* pLayers[1] = { nullptr };
+
     if (g_projViewsBuilt) {
         // Step 6: submit the stereo projection layer.
         g_projViewsBuilt   = false;
         g_projViewReady[0] = g_projViewReady[1] = false;
-        XrCompositionLayerProjection layer = {};
         layer.type      = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
         layer.space     = g_refSpace;
         layer.viewCount = 2;
         layer.views     = g_projViews;
 
-        const XrCompositionLayerBaseHeader* pLayers[1] = {
-            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer)
-        };
+        pLayers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&layer);
         fei.layerCount = 1;
         fei.layers     = pLayers;
     } else if (g_menuLayerReady && g_menuSwapchain != XR_NULL_HANDLE) {
@@ -1949,7 +2021,6 @@ void EndFrame()
         // The same 2D image is displayed to both eyes from a fixed world pose,
         // so there is no stereo disparity and the menu doesn't move with the head.
         g_menuLayerReady = false;
-        XrCompositionLayerQuad quad = {};
         quad.type             = XR_TYPE_COMPOSITION_LAYER_QUAD;
         quad.space            = g_refSpace;
         quad.eyeVisibility    = XR_EYE_VISIBILITY_BOTH;
@@ -1963,11 +2034,9 @@ void EndFrame()
         // Physical size: 2.0 m wide × 1.5 m tall (4:3 at a comfortable scale).
         quad.size             = {2.0f, 1.5f};
 
-        const XrCompositionLayerBaseHeader* layers[1] = {
-            reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad)
-        };
+        pLayers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad);
         fei.layerCount = 1;
-        fei.layers     = layers;
+        fei.layers     = pLayers;
     } else {
         // No stereo render this frame — present nothing (keeps session alive).
         fei.layerCount = 0;
@@ -2004,6 +2073,7 @@ void EndFrame()
     glFlush();
 
     XrResult r = (XrResult)-1;
+#ifdef _MSC_VER   // SEH (__try/__except) is an MSVC/clang-cl extension
     EXCEPTION_POINTERS* ep = nullptr;
     __try {
         r = g_xrEndFrame(g_session, &fei);
@@ -2016,6 +2086,10 @@ void EndFrame()
                (unsigned long long)faultAddr,
                (unsigned long long)faultInfo);
     }
+#else
+    // SOURCEPORT: no SEH outside MSVC (Linux/MinGW); a runtime fault here crashes like any other.
+    r = g_xrEndFrame(g_session, &fei);
+#endif
     if (r != XR_SUCCESS && r != (XrResult)-1) LogResult("xrEndFrame", r);
 }
 

@@ -17,7 +17,7 @@
 #include <climits>
 #include <cstring>
 #include <unordered_map>
-#include "hunt.h"
+#include "Hunt.h"
 
 // SOURCEPORT: terrain raycast occlusion uses the game's GetLandH() to sample
 // ground height between listener and source. CameraX/Y/Z are world-space

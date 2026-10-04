@@ -12,6 +12,10 @@
 // the namespaced VFS functions below don't accidentally qualify it.
 extern "C" { /* nothing */ }
 extern void PrintLog(const char*);
+#ifndef _WIN32
+// SOURCEPORT: compat/linux — backslash + case-insensitive path resolution.
+extern const char* OC_ResolvePath(const char* path);
+#endif
 
 namespace {
 
@@ -44,6 +48,16 @@ std::string Join(const std::string& prefix, const char* path) {
     while (*p == '/' || *p == '\\') ++p;
     out.append(p);
     return out;
+}
+
+// SOURCEPORT: map a game path onto the host filesystem. Windows is case-insensitive
+// and accepts backslashes natively; elsewhere resolve each component case-insensitively.
+std::string NativePath(const std::string& p) {
+#ifdef _WIN32
+    return p;
+#else
+    return OC_ResolvePath(p.c_str());
+#endif
 }
 
 } // namespace
@@ -92,17 +106,17 @@ bool IsMounted(const char* modName) {
 
 std::string ResolveRead(const char* path) {
     if (!path || !*path) return std::string();
-    if (g_mounts.empty()) return std::string(path);
+    if (g_mounts.empty()) return NativePath(path);
 
     namespace fs = std::filesystem;
     std::error_code ec;
     for (auto& mount : g_mounts) {
-        std::string candidate = Join(mount, path);
+        std::string candidate = NativePath(Join(mount, path));
         if (fs::exists(candidate, ec) && !fs::is_directory(candidate, ec)) {
             return candidate;
         }
     }
-    return std::string(path);
+    return NativePath(path);
 }
 
 std::FILE* fopen(const char* path, const char* mode) {

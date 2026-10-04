@@ -2,7 +2,7 @@
 // See ModelOverrides.h for scope and rationale.
 
 #include "ModelOverrides.h"
-#include "hunt.h"
+#include "Hunt.h"
 #include "VFS.h"
 
 #include <cstdio>

@@ -35,6 +35,10 @@
 - [AUDIO.md](AUDIO.md) — EFX reverb zones, HRTF, terrain occlusion.
 - [VR.md](VR.md) — full VR pipeline, OpenXR, comfort features, graphics settings.
 
+## Platforms
+- **Linux native build** ✅ — CMake Linux branch + `compat/linux` Win32 shim; menus, hunt, input, audio (OpenAL), saves, mods and shader packs verified on Mesa. OpenXR binds via GLX (Monado/SteamVR).
+- macOS: same shim approach should apply; blockers are the GL 4.1 core ceiling (engine already targets 4.1) and no OpenXR runtime.
+
 ## Development infrastructure
 - GitHub Actions CI for Windows + Linux + macOS builds per commit.
 - Unit tests for `mathematics.cpp` (pure functions, easy win).

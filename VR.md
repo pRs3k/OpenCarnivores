@@ -2,6 +2,12 @@
 
 OpenXR stereo rendering is fully implemented. The stereo eye loop lives in `Hunt2.cpp` (`ShowVideo` VR branch) and renders the scene twice per frame with per-eye projection matrices into runtime-allocated swapchain FBOs.
 
+## Linux
+
+The Linux build loads `libopenxr_loader.so.1` and creates the session with `XrGraphicsBindingOpenGLXlibKHR` (display, GLX context, drawable and FBConfig of SDL's current GLX context). Verified against Monado's simulated HMD: instance, session, colour + depth swapchains, menu quad and stereo session all come up. Requires SDL's X11 video driver (default; works under XWayland).
+
+**`XR::EndFrame` layer lifetime fix** (all platforms): the projection/quad layer structs and the `layers[]` pointer array were block-scoped inside the `if` that built them, but `xrEndFrame` read them after the block ended. MSVC happened not to reuse the stack slots; GCC does, and the runtime rejected a garbage layer type (`XR_ERROR_LAYER_INVALID`). They now live at function scope.
+
 ## Setup: openxr_loader.dll
 
 **VR mode requires `openxr_loader.dll`** (OpenXR runtime loader from Meta).
