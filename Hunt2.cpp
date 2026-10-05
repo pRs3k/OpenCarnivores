@@ -471,21 +471,12 @@ void DrawScene()
    if (!DBG_NO_SKY) {
        drawSceneStage = "SkyPlane";
        if (XR::StereoActive()) {
-           // SOURCEPORT: lock sky to world-space (body yaw only, no head rotation).
-           // Compute the locked rotation values BEFORE RenderSkyPlane so RotateVVector uses them.
-           float saveAlpha = CameraAlpha, saveBeta = CameraBeta, saveGamma = CameraGamma;
-           float saveCa = ca, saveSa = sa, saveCb = cb, saveSb = sb, saveCg = cg, saveSg = sg;
-           CameraAlpha = g_vrBodyYaw;
-           CameraBeta = 0.f;
-           CameraGamma = 0.f;
-           // Pre-compute rotation values so RotateVVector uses locked angles, not stale globals
-           ca = cosf(CameraAlpha); sa = sinf(CameraAlpha);
-           cb = cosf(CameraBeta);  sb = sinf(CameraBeta);
-           cg = cosf(CameraGamma); sg = sinf(CameraGamma);
-           RenderSkyPlane();
-           // Restore original values
-           CameraAlpha = saveAlpha; CameraBeta = saveBeta; CameraGamma = saveGamma;
-           ca = saveCa; sa = saveSa; cb = saveCb; sb = saveSb; cg = saveCg; sg = saveSg;
+           // SOURCEPORT: world-locked 3D sky dome in VR. The previous approach rendered
+           // RenderSkyPlane with pitch/roll forced to 0 (body yaw only), which pinned the
+           // sky to the head: it followed the view when looking up and exposed the clear
+           // colour below its edge. The dome uses the real per-eye camera.
+           extern void RenderSkyDomeVR();
+           RenderSkyDomeVR();
        } else {
            RenderSkyPlane();
        }

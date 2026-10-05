@@ -8,7 +8,7 @@
 - Dinosaurs are getting stuck on seemingly nothing, occasionally.
 - Dinosaurs killed swimming in water should sink to the ground
 - The sky renders correctly when looking straight up, but ripples/waves distort it when it gets very close to the horizon/furthest away from the player
-- **In VR, sky textures shift when turning head.** Root cause: flat-plane UV math couples sky appearance to camera yaw. Attempted fixes (cylindrical UV, fixed world position, pitch-only vbase) all failed. Solution: replace with 3D dome model rendered at fixed world position through normal geometry pipeline.
+- ~~**In VR, sky textures shift when turning head.**~~ Fixed: world-locked `RenderSkyDomeVR` dome (see VR.md). Needs confirmation on a headset.
 - Remove any dead code
 
 ## Graphics Fixes

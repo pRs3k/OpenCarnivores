@@ -2333,14 +2333,17 @@ void ReleaseEyeImage(int eye, bool symmetricFov)
         g_depthInfo[eye].subImage.imageRect.offset.y   = 0;
         g_depthInfo[eye].subImage.imageRect.extent.width  = (int32_t)g_eyeWidth;
         g_depthInfo[eye].subImage.imageRect.extent.height = (int32_t)g_eyeHeight;
-        g_depthInfo[eye].minDepth = 1.0f;      // reversed depth: 1.0 → nearZ
-        g_depthInfo[eye].maxDepth = 0.0f;      // reversed depth: 0.0 → farZ
-        // SOURCEPORT: window depth = (16/|z_GU|)/kScreenDepthFar, i.e. reversed 1/z with
-        // depth 1.0 at |z| = 16/kScreenDepthFar GU (64 GU ≈ 0.45 m). nearZ must be that
-        // distance in metres; the old 0.01 m told the compositor everything was ~11×
-        // closer than it is.
-        g_depthInfo[eye].nearZ    = (16.0f / kScreenDepthFar) / kGUperM;
-        g_depthInfo[eye].farZ     = 10000.0f;  // effectively infinite
+        // SOURCEPORT: window depth = (16/|z_GU|)/kScreenDepthFar — reversed 1/z with
+        // depth 1.0 at |z| = 16/kScreenDepthFar GU (64 GU ≈ 0.45 m) and depth 0 at
+        // infinity. Per XR_KHR_composition_layer_depth, minDepth ≤ maxDepth; nearZ is
+        // the distance at minDepth and farZ at maxDepth, and nearZ > farZ marks reversed
+        // depth. This previously passed minDepth=1/maxDepth=0 with nearZ=0.01 m, which
+        // the runtime's positional timewarp could misread as surfaces at the wrong
+        // distance (warping/flashing on small head movements).
+        g_depthInfo[eye].minDepth = 0.0f;      // depth 0 → far
+        g_depthInfo[eye].maxDepth = 1.0f;      // depth 1 → 64 GU
+        g_depthInfo[eye].nearZ    = 10000.0f;  // distance at minDepth (effectively infinite)
+        g_depthInfo[eye].farZ     = (16.0f / kScreenDepthFar) / kGUperM;  // distance at maxDepth
         g_projViews[eye].next = &g_depthInfo[eye];
 
         // Release depth swapchain image back to the runtime.

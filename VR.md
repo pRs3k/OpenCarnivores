@@ -55,9 +55,12 @@ Due to asymmetric FOV and IPD offset, close objects near the nasal edge can appe
 
 **Flatscreen**: Uses damped camera-relative plane positioning + yaw/pitch rotation to produce visually pleasing perspective without artifacts.
 
-**VR (unsolved)**: Sky textures shift visibly when turning head, rather than staying locked to world position. Root cause: flat-plane perspective math inherently couples sky appearance to camera yaw. Previous attempts (cylindrical UV, fixed world position, pitch-only vbase) all failed. Head-centre camera position is used to eliminate IPD parallax.
+**VR (`RenderSkyDomeVR`, `renderd3d.cpp`)**: The old VR path forced `CameraBeta/Gamma = 0` before `RenderSkyPlane`, so the sky followed head pitch/roll ("sky locked to view", blue band exposed when looking up). It is replaced by a world-locked dome: 18 elevation rings (-30°..90°) × 48 azimuth steps, each direction rotated by the full head pose (`RotateVector`) and projected through the per-eye camera. The UVs come from ray-intersecting the original cloud plane (`4*512*16` GU up, same `0.002` scale and `SKYDTime` scroll), so it looks like the flatscreen sky. Horizon fog is driven through specular alpha (full fog at ≤0°, clear at ≥8°). Rays are direction-only, which removes IPD parallax, and the dome is drawn at `sz = 0.0001` with Z writes off.
 
-**Recommended future approach**: Replace flat-plane sky with 3D dome/hemisphere model at fixed world position, rendered through normal geometry pipeline. This provides correct perspective and true world-locking without special-case UV math.
+### Jitter fixes
+
+- **Depth layer** (`XR.cpp`): `XrCompositionLayerDepthInfoKHR` now uses `minDepth=0, maxDepth=1` (the spec requires min ≤ max) and `nearZ > farZ` to signal reversed-Z. `farZ = (16/kScreenDepthFar)/kGUperM`. Invalid ranges broke Meta positional timewarp reprojection, which made surfaces shimmer on small head movements.
+- **Stable polygon offsets** (`RenderModelsList`): the per-object `glPolygonOffset` units are hashed from the object's map cell rather than its list index. List order changed with head yaw, which made the offsets churn and coplanar decals flicker.
 
 **`FOVK` / `hFovCull`** — horizontal early-cull threshold: uses temporal FOV (wider side) with margin to safely exclude geometry that would be off-screen without clipping geometry that's actually visible. Prevents the nasal edge from over-culling.
 

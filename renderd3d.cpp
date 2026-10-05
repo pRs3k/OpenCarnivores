@@ -3671,7 +3671,16 @@ void RenderModelsList()
 
   for (int o=0; o<ORLCount; o++) {
 #ifdef _opengl
-    if (perObjectOffset) glPolygonOffset(0.5f, (float)o * 0.5f);
+    // SOURCEPORT: derive the offset from the object's map cell, not its index in this
+    // frame's render list. The index changes whenever culling adds/removes an object
+    // (every head micro-movement in VR, and differently per eye), so offsets of up to
+    // hundreds of units reshuffled each frame and overlapping objects flickered in front
+    // of/behind each other. A stable small cell hash keeps neighbouring models on
+    // different offsets (the original intent) without the churn.
+    if (perObjectOffset) {
+        int cellHash = (ORList[o].x * 7 + ORList[o].y * 13) & 15;
+        glPolygonOffset(0.5f, (float)cellHash * 0.5f);
+    }
 #endif
     _RenderObject(ORList[o].x, ORList[o].y);
   }
@@ -6117,6 +6126,108 @@ void RenderFogLayers()
    // Guard against shadow-pass calls now and when fog volumes are implemented.
    if (g_glRenderer && g_glRenderer->IsShadowPassActive()) return;
    // TODO: implement fog volume geometry rendering through the model pipeline
+}
+
+
+// SOURCEPORT: VR sky dome. RenderSkyPlane is a screen-space technique (strips from
+// the top of the screen to a computed horizon line, UVs solved per scanline from the
+// camera pitch). In a headset that ties the sky to the display: it was rendered with
+// pitch/roll forced to 0, so the sky followed the head and looking up exposed the clear
+// colour below its edge. Here the sky is real geometry: a tessellated hemisphere of
+// directions around the head, rotated by the per-eye camera (RotateVector, same as the
+// terrain) and projected with the eye's own principal point/focal lengths, so it is
+// world-locked and correct for any head pitch/roll. UVs are where each view ray meets
+// the same virtual cloud plane RenderSkyPlane uses (height 4*512*16, scale 0.002, same
+// scroll), so the clouds look the same. Below ~8° the sky fades to the fog colour and
+// continues under the horizon so no clear colour shows behind distant terrain.
+void RenderSkyDomeVR()
+{
+#ifdef _opengl
+   if (!g_glRenderer || g_glRenderer->IsShadowPassActive()) return;
+   extern float g_vrCamCenterX, g_vrCamCenterZ;
+
+   d3dSetTexture(SkyPic, 256, 256);
+   if (hTexture) {
+       glBindTexture(GL_TEXTURE_2D, (GLuint)hTexture);
+       glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, 16.0f);
+       glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, -0.5f);
+   }
+
+   SKYDTime = RealTime & ((1<<17) - 1);
+   const float dtt     = (float)SKYDTime / 512.f;
+   const float planeH  = 4.f * 512.f * 16.f;       // RenderSkyPlane's cloud-plane height
+   const float uvScale = 0.002f;                   // RenderSkyPlane's tx/ty scale
+   const float offU    =  g_vrCamCenterX / 128.f;  // damped parallax while walking (as flatscreen)
+   const float offV    = -g_vrCamCenterZ / 128.f;
+   const DWORD baseCol = (OptDayNight == 2) ? 0x001C1C1Cu : 0x00FFFFFFu;
+
+   // Elevation rings (degrees): dense near the horizon where the plane UVs change fastest.
+   static const float kElev[] = { -30.f, -12.f, -4.f, 0.f, 2.f, 4.f, 6.f, 9.f, 13.f, 18.f,
+                                   24.f, 31.f, 39.f, 48.f, 58.f, 69.f, 80.f, 90.f };
+   const int   nElev = (int)(sizeof(kElev) / sizeof(kElev[0]));
+   const int   nAz   = 48;
+   const float minUvElev = 3.f * pi / 180.f;       // clamp plane distance near the horizon
+
+   struct DomeV { float sx, sy, z; float tu, tv; DWORD col, spec; };
+   auto makeV = [&](float elDeg, float az) -> DomeV {
+       DomeV o{};
+       float el = elDeg * pi / 180.f;
+       Vector3d d;
+       d.x = cosf(el) * sinf(az);
+       d.y = sinf(el);
+       d.z = cosf(el) * cosf(az);
+       Vector3d c = RotateVector(d);
+       o.z = c.z;
+       if (c.z < -0.0001f) {
+           o.sx = (float)VideoCX - c.x / c.z * CameraW;
+           o.sy = (float)VideoCY + c.y / c.z * CameraH;
+       }
+       float elUv = el > minUvElev ? el : minUvElev;
+       float t = planeH / sinf(elUv);
+       float hx = cosf(elUv) * sinf(az) * t, hz = cosf(elUv) * cosf(az) * t;
+       o.tu = (uvScale * (hx + offU) + dtt) / 256.f;
+       o.tv = (uvScale * (hz + offV) - dtt) / 256.f;
+       // Fog ramp: full fog at/below the horizon, clear above 8°.
+       float k = elDeg <= 0.f ? 1.f : (elDeg >= 8.f ? 0.f : 1.f - elDeg / 8.f);
+       int fog = (int)(255.f * k);
+       o.col  = 0xFF000000u | baseCol;
+       o.spec = (DWORD)(255 - fog) << 24;
+       return o;
+   };
+
+   g_glRenderer->SetZBufferEnabled(false);
+   d3dStartBufferG();
+   for (int e = 0; e + 1 < nElev; ++e) {
+       for (int a = 0; a < nAz; ++a) {
+           float az0 = 2.f * pi * (float)a / nAz, az1 = 2.f * pi * (float)(a + 1) / nAz;
+           DomeV q[4] = { makeV(kElev[e], az0), makeV(kElev[e], az1),
+                          makeV(kElev[e+1], az1), makeV(kElev[e+1], az0) };
+           // Directions behind the eye can't be projected; at this tessellation such
+           // quads lie well outside any HMD field of view.
+           if (q[0].z > -0.05f || q[1].z > -0.05f || q[2].z > -0.05f || q[3].z > -0.05f) continue;
+           // Cheap screen reject: quad entirely off one side.
+           float minx = q[0].sx, maxx = q[0].sx, miny = q[0].sy, maxy = q[0].sy;
+           for (int i = 1; i < 4; ++i) {
+               minx = min(minx, q[i].sx); maxx = max(maxx, q[i].sx);
+               miny = min(miny, q[i].sy); maxy = max(maxy, q[i].sy);
+           }
+           if (maxx < 0 || minx > WinW || maxy < 0 || miny > WinH) continue;
+           if (GVCnt + 6 > 4000) { d3dEndBufferG(FALSE, TRUE); d3dStartBufferG(); }
+           static const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+           for (int i = 0; i < 6; ++i) {
+               const DomeV& v = q[idx[i]];
+               lpVertexG->sx = v.sx; lpVertexG->sy = v.sy;
+               lpVertexG->sz = 0.0001f; lpVertexG->rhw = 1.f;   // same depth as the flat sky
+               lpVertexG->color = v.col; lpVertexG->specular = v.spec;
+               lpVertexG->tu = v.tu; lpVertexG->tv = v.tv;
+               lpVertexG++;
+           }
+           GVCnt += 6;
+       }
+   }
+   d3dEndBufferG(FALSE, TRUE);   // noSnapUV: bilinear sky, like RenderSkyPlane
+   g_glRenderer->SetZBufferEnabled(true);
+#endif
 }
 
 

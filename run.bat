@@ -23,7 +23,7 @@ if not defined EXE (
 )
 
 set "ARGS=%*"
-if "%~1"=="" set "ARGS=prj=HUNTDAT\AREAS\AREA1 din=1 wep=1 -nosnd"
+if "%~1"=="" set "ARGS=prj=HUNTDAT\AREAS\AREA1 din=1 wep=1"
 
 if exist crash.log del crash.log
 echo Starting %EXE% %ARGS%
